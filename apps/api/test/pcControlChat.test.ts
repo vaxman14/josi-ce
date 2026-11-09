@@ -8,6 +8,8 @@ import { executeSettingsChangeTool } from '../../../packages/agent/src/settingsC
 import { executePcDesktopTool, pcDesktopToolAvailability } from '../../../packages/agent/src/pcDesktopTools.js';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
+import {pcExecutorHeaders} from './pcExecutorFixture.js';
+import {createHash,generateKeyPairSync,randomBytes,sign} from 'node:crypto';
 
 const rawKey=Buffer.alloc(32,47),key=new MasterKey(rawKey),password='synthetic-chat-pc-owner';
 const scope={kind:'folder' as const,target:'C:\\Project'};
@@ -26,7 +28,8 @@ beforeEach(async()=>{
 });
 afterAll(async()=>{await new Promise<void>(r=>server.close(()=>r()));});
 async function call(path:string,method='GET',body?:unknown,bearer=token,pcId='win-other-client'){
-  const res=await fetch(base+path,{method,headers:{authorization:`Bearer ${bearer}`,'x-josi-client':'native','x-josi-pc':pcId,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+  const signed=path.startsWith('/admin/pc-control/executor')?await pcExecutorHeaders(db,owner,pcId,method,'/api'+path,body):{};
+  const res=await fetch(base+path,{method,headers:{authorization:`Bearer ${bearer}`,'x-josi-client':'native','x-josi-pc':pcId,'content-type':'application/json',...signed},body:body===undefined?undefined:JSON.stringify(body)});
   return {status:res.status,body:await res.json() as any};
 }
 async function propose(body:Record<string,unknown>,params:Record<string,unknown>={pcId:'win-target'},area='pc_control_scope'){
@@ -35,6 +38,40 @@ async function propose(body:Record<string,unknown>,params:Record<string,unknown>
 }
 
 describe('chat-managed PC permission foundation',()=>{
+  it('rejects unsigned, replayed and body-tampered executor requests',async()=>{
+    const path='/admin/pc-control/executor/presence',body={connected:false},headers={authorization:`Bearer ${token}`,'x-josi-client':'native','content-type':'application/json'};
+    expect((await fetch(base+path,{method:'PUT',headers,body:JSON.stringify(body)})).status).toBe(403);
+    const signed=await pcExecutorHeaders(db,owner,'win-target','PUT','/api'+path,body);
+    const send=(value:unknown)=>fetch(base+path,{method:'PUT',headers:{...headers,...signed},body:JSON.stringify(value)});
+    expect((await send({connected:true})).status).toBe(403);
+    expect((await send(body)).status).toBe(200);expect((await send(body)).status).toBe(403);
+  });
+  it('applies the exact full-access chat card once with password approval, retaining the separate administrator denial',async()=>{
+    await control.setEnabled(owner,true);
+    const proposal=await propose({access:'full',administrator:false,mode:'always'},{pcId:'win-target'},'pc_control_preset');
+    expect(proposal.ok).toBe(true);
+    const path=`/settings-changes/${proposal.proposalId}/pc-apply`;
+    expect((await call(path,'POST',{})).status).toBe(401);
+    expect((await call(path,'POST',{password})).status).toBe(200);
+    const policies=(await control.snapshot(owner)).policies;
+    expect(policies.some(p=>p.action==='command.run'&&p.scope.target==='*'&&p.mode==='always')).toBe(true);
+    expect(policies.some(p=>p.action==='administrator.elevate'&&p.mode==='never')).toBe(true);
+    expect((await call(path,'POST',{password})).status).toBe(409);
+  });
+  it('verifies an owner-bound passkey signature for the immutable permission card and refuses replay',async()=>{
+    const pair=generateKeyPairSync('ec',{namedCurve:'prime256v1'}),credentialId=randomBytes(24).toString('base64url');
+    await db.query('insert into auth_passkeys(user_id,credential_id,public_key,algorithm,name) values($1,$2,$3,-7,$4)',[owner,credentialId,pair.publicKey.export({format:'der',type:'spki'}).toString('base64'),'Synthetic PC approval']);
+    const proposal=await propose({action:'folder.read',scope,mode:'always'}),prefix=`/settings-changes/${proposal.proposalId}`;
+    const challenge=await call(prefix+'/pc-passkey/options','POST',{});expect(challenge.status).toBe(200);
+    expect(challenge.body.options.allowCredentials.map((c:any)=>c.id)).toEqual([credentialId]);
+    const clientData=Buffer.from(JSON.stringify({type:'webauthn.get',challenge:challenge.body.options.challenge,origin:'http://localhost',crossOrigin:false}));
+    const authData=Buffer.concat([createHash('sha256').update('localhost').digest(),Buffer.from([5,0,0,0,1])]);
+    const signature=sign('sha256',Buffer.concat([authData,createHash('sha256').update(clientData).digest()]),pair.privateKey);
+    const body={challengeId:challenge.body.id,passkey:{id:credentialId,rawId:credentialId,type:'public-key',clientExtensionResults:{},response:{clientDataJSON:clientData.toString('base64url'),authenticatorData:authData.toString('base64url'),signature:signature.toString('base64url')}}};
+    expect((await call(prefix+'/pc-apply','POST',body)).status).toBe(200);
+    expect((await control.snapshot(owner)).policies).toHaveLength(1);
+    expect((await call(prefix+'/pc-apply','POST',body)).status).toBe(409);
+  });
   it('binds execution leases and results to the claiming PC and notices changes from another service',async()=>{
     await control.setEnabled(owner,true);await control.savePolicy(owner,{action:'folder.read',scope,mode:'always'});
     const plan:PcPlan={requirements:[{action:'folder.read',scope}],description:'Read the test folder',payload:{kind:'desktop.folder',folder:scope.target}};
@@ -55,7 +92,7 @@ describe('chat-managed PC permission foundation',()=>{
     expect((await pcDesktopToolAvailability(db,owner,key)).map(t=>t.def.name)).toEqual(['pc_get_permissions']);
     const result=await executePcDesktopTool(db,owner,key,'pc_get_permissions',{}) as any;
     expect(result.ok).toBe(true);expect(result.selected.pcId).toBe('win-target');expect(result.selected.enabled).toBe(false);
-    expect(result.selected.activity).toBeUndefined();expect(result.semanticsVersion).toBe('pc-control-chat.1');
+    expect(result.selected.activity).toBeUndefined();expect(result.semanticsVersion).toBe('pc-control-chat.2');
   });
   it('requires explicit selection with multiple devices and refuses unknown devices',async()=>{
     await new PcControl(db,key,'win-second').snapshot(owner);
@@ -115,12 +152,12 @@ describe('chat-managed PC permission foundation',()=>{
     let runs=0;await control.execute(owner,pending.id,input,async()=>{runs++;});
     await expect(control.execute(owner,pending.id,input,async()=>{runs++;})).rejects.toThrow();expect(runs).toBe(1);
   });
-  it('rejects unsupported restrictions and unimplemented persistent elevation grants',async()=>{
+  it('rejects unsupported restrictions and prepares separate administrator grants without applying them',async()=>{
     expect((await propose({action:'folder.read',scope:{...scope,elevate:false},mode:'always'})).ok).toBe(false);
     expect((await propose({action:'folder.read',scope:{...scope,application:'C:\\OnlyThis.exe'},mode:'always'})).ok).toBe(false);
     expect((await propose({action:'folder.read',scope,mode:'always',expiresAt:new Date(Date.now()+30000).toISOString()})).ok).toBe(false);
-    const elevation=await propose({action:'administrator.elevate',scope:{kind:'system',target:'administrator'},mode:'always'});
-    expect(elevation.ok).toBe(false);expect(elevation.message).toMatch(/not implemented/);
+    const elevation=await propose({action:'administrator.elevate',scope:{kind:'system',target:'host'},mode:'always'});
+    expect(elevation.ok).toBe(true);
     expect((await control.snapshot(owner)).policies).toEqual([]);
   });
   it('prepares an exact one-time decision in chat without saving a standing grant',async()=>{

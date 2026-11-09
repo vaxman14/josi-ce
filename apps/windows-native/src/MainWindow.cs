@@ -115,16 +115,21 @@ namespace Josi.Native {
       var paused = scripted != null ? scripted == "paused" : executor.Paused;
       var working = scripted != null ? scripted == "working" : executor.Busy || PcTerminals.Count > 0;
       if (scripted != null) takenOver = scripted == "takeover";
-      if (executor.Busy) pcStopped = false;
+      if (executor.Busy && !executor.Paused && !executor.PendingStop) pcStopped = false;
+      var stopped = pcStopped || executor.PendingStop;
       var show = working || paused || takenOver || controlOverlay?.IsShowing == true;
-      Automation.Pc = !show ? (pcStopped ? "stopped" : "off") : paused ? "paused" : takenOver ? "takeover" : "working";
+      Automation.Pc = stopped ? "stopped" : !show ? "off" : paused ? "paused" : takenOver ? "takeover" : working ? "working" : "ready";
+      if (controlOverlay != null) controlOverlay.Stopped = stopped;
       controlOverlay?.Update(show, working, paused, takenOver, scripted != null || executor.ScreenControl, executor.Busy ? executor.Activity : PcTerminals.Count > 0 ? PcTerminals.Count + " terminal session(s) running" : executor.Activity);
       if (!show) { controlBar.Visibility = Visibility.Collapsed; controlBar.Child = null; return; }
       Action pause = () => { if (scripted != null) { demoPc = "paused"; RenderControlBar(); } else executor.Pause(); };
-      Action resume = () => { if (scripted != null) { demoPc = "working"; RenderControlBar(); } else executor.Resume(); };
+      Action resume = () => { pcStopped = false; if (scripted != null) { demoPc = "working"; RenderControlBar(); } else executor.Resume(); };
       Automation.BeginScope("pc-control");
       UIElement status; var actions = Ui.Wrap(); string sentence;
-      if (paused) {
+      if (stopped) {
+        sentence = "PC control is stopped. You are in control.";
+        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
+      } else if (paused) {
         sentence = "Josi is paused on this PC.";
         status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
         actions.Children.Add(Automation.Id(Ui.Pill("Resume", resume, true), "josi.pc-control.resume"));
@@ -133,6 +138,9 @@ namespace Josi.Native {
         status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
         actions.Children.Add(Automation.Id(Ui.Pill("Resume", resume), "josi.pc-control.continue"));
         actions.Children.Add(Automation.Id(Ui.Pill("Pause Josi", pause), "josi.pc-control.pause"));
+      } else if (!working) {
+        sentence = "Josi is ready. You are in control.";
+        status = Ui.T(sentence, 13.5, FontWeights.Medium);
       } else {
         sentence = "Josi is using this PC: " + (scripted != null ? "demo activity" : executor.Activity) + ". Move the mouse or type to take over.";
         status = Ui.Working(sentence, true, 20);
@@ -149,7 +157,7 @@ namespace Josi.Native {
 
     void StopPcControl() {
       pcStopped = true;
-      if (Automation.Demo && demoPc != null) { demoPc = null; RenderControlBar(); return; }
+      if (Automation.Demo && demoPc != null) { demoPc = "stopped"; RenderControlBar(); return; }
       // Local cancellation is synchronous and never waits for the network.
       DesktopExecutor.Current.Stop();
       Model.Run(async () => { var api = Model.Api; if (api != null) { await api.Request("/admin/pc-control/stop", "POST", Wires.O()); DesktopExecutor.Current.StopAcknowledged(); } });
@@ -183,7 +191,7 @@ namespace Josi.Native {
       if (Flags.LocalWorkspace) controlOverlay = new PcControlOverlay(
         () => { if (Automation.Demo && demoPc != null) { demoPc = "takeover"; RenderControlBar(); } else DesktopExecutor.Current.TakeOver(); },
         () => { if (Automation.Demo && demoPc != null) { demoPc = "paused"; RenderControlBar(); } else DesktopExecutor.Current.Pause(); },
-        () => { if (Automation.Demo && demoPc != null) { demoPc = "working"; RenderControlBar(); } else DesktopExecutor.Current.Resume(); },
+        () => { pcStopped = false; if (Automation.Demo && demoPc != null) { demoPc = "working"; RenderControlBar(); } else DesktopExecutor.Current.Resume(); },
         StopPcControl, () => { Show(); WindowState = WindowState.Normal; Activate(); Model.Section = "chat"; workspace?.Go("chat"); });
       Automation.Changed += () => { statusLine.Text = Automation.Summary; System.Windows.Automation.AutomationProperties.SetName(statusLine, Automation.Summary); };
 

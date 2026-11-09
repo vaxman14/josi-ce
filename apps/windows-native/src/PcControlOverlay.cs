@@ -14,6 +14,7 @@ namespace Josi.Native {
   sealed class PcControlOverlay : IDisposable {
     public static PcControlOverlay Current { get; private set; }
     public bool IsShowing => visible;
+    public bool Stopped { get; set; }
     public void ShowControls() {
       var executor = DesktopExecutor.Current;
       Update(true,executor.Busy||PcTerminals.Count>0,executor.Paused,executor.TakenOver,executor.ScreenControl,executor.Activity);
@@ -40,21 +41,21 @@ namespace Josi.Native {
 
     public void Update(bool show, bool working, bool paused, bool takenOver, bool onScreen, string activity) {
       if (disposed) return;
-      visible = show; screenControl = onScreen && working && !paused && !takenOver;
+      visible = show; screenControl = onScreen && working && !paused && !takenOver && !Stopped;
       if (!show) {
         foreach (var frame in frames) frame.Hide();
         strip?.Hide();
         return;
       }
       EnsureStrip();
-      status.Text = paused ? "Paused · You are in control" : takenOver ? "You are in control" : !working ? "Ready · You are in control" : onScreen ? "Josi is using this PC" : "Josi is working in the background";
-      detail.Text = paused ? "Choose Resume when you are ready." : takenOver
+      status.Text = Stopped ? "Stopped · You are in control" : paused ? "Paused · You are in control" : takenOver ? "You are in control" : !working ? "Ready · You are in control" : onScreen ? "Josi is using this PC" : "Josi is working in the background";
+      detail.Text = Stopped ? "PC control is stopped. Manage access through Permissions." : paused ? "Choose Resume when you are ready." : takenOver
         ? (working ? "Background work continues. Screen control waits for Resume." : "Screen control waits for you to choose Resume.")
-        : (string.IsNullOrWhiteSpace(activity) ? "Move your mouse or type to take over." : activity);
-      takeOverButton.IsEnabled = !takenOver && !paused;
-      pauseButton.IsEnabled = !paused;
+        : (!working ? "Ready when you ask Josi to work." : string.IsNullOrWhiteSpace(activity) ? "Move your mouse or type to take over." : activity);
+      takeOverButton.IsEnabled = !takenOver && !paused && !Stopped;
+      pauseButton.IsEnabled = !paused && !Stopped;
       resumeButton.IsEnabled = paused || takenOver;
-      ghost.Set(working && !paused && !takenOver ? GhostState.Waiting : GhostState.Resting);
+      ghost.Set(working && !paused && !takenOver && !Stopped ? GhostState.Waiting : GhostState.Resting);
       Position();
       strip.Show();
       foreach (var frame in frames) { if (screenControl) frame.Show(); else frame.Hide(); }

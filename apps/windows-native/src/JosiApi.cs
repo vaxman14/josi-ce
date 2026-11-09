@@ -123,7 +123,7 @@ namespace Josi.Native {
     /// The server whose certificate Windows refused on the last attempt, if any.
     public static UntrustedServer TakeUntrusted() { lock (untrustedGate) { var u = untrusted; untrusted = null; return u; } }
     static string PinFile(string host) {
-      var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi", "trusted");
+      var folder = Path.Combine(AppLinks.StateDirectory, "trusted");
       Directory.CreateDirectory(folder);
       return Path.Combine(folder, Regex.Replace(host.ToLowerInvariant(), "[^a-z0-9.-]", "_") + ".crt");
     }
@@ -171,7 +171,7 @@ namespace Josi.Native {
     public static readonly string DeviceId = LoadDeviceId();
     static string LoadDeviceId() {
       try {
-        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi");
+        var folder = AppLinks.StateDirectory;
         var file = Path.Combine(folder, "device-id");
         if (File.Exists(file)) { var saved = File.ReadAllText(file).Trim(); if (Regex.IsMatch(saved, "^win-[a-f0-9]{32}$")) return saved; }
         Directory.CreateDirectory(folder);

@@ -82,7 +82,7 @@ export const PC_DESKTOP_TOOLS: ToolSpec[] = [
     parameters: shape({ path }) }, actionClass: null },
   { def: { name: 'pc_write_file',
     description: 'Write a text file on this PC (UTF-8), replacing it, or appending with append: true. Creates the file if it does not exist. Needs "Folder create/edit access" for the file\'s folder, Full control, or the owner\'s approval. Read a file before changing it, and never write secrets.',
-    parameters: shape({ path, content: { type: 'string', maxLength: 200000 }, append: { type: 'boolean' }, expected_sha256: {type:'string',pattern:'^[a-f0-9]{64}$',description:'The sha256 from pc_read_file. Refuses the write if the file has changed.'} }, ['path', 'content']) }, actionClass: 'automation_control' },
+    parameters: shape({ path, content: { type: 'string', maxLength: 200000 }, append: { type: 'boolean' }, expected_sha256: {type:'string',maxLength:64,pattern:'^[a-f0-9]{64}$',description:'The sha256 from pc_read_file. Refuses the write if the file has changed.'} }, ['path', 'content']) }, actionClass: 'automation_control' },
   { def: { name: 'desktop_check_request',
     description: 'Check a desktop, command or file request that was waiting for the owner\'s approval, and get its result once it ran. Never resend the request instead.',
     parameters: shape({ request_id: id }) }, actionClass: null },

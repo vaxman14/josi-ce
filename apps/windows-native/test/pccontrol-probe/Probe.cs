@@ -28,6 +28,8 @@ static class Probe {
 
   static async Task Run(string evidence) {
     josi = Assembly.LoadFrom(Path.Combine(AppContext.BaseDirectory, "Josi.dll"));
+    var ui = josi.GetType("Josi.Native.Ui");ui.GetMethod("Load").Invoke(null,null);
+    Application.Current.Resources.MergedDictionaries.Add((ResourceDictionary)ui.GetField("Resources").GetValue(null));
     executorType = josi.GetType("Josi.Native.DesktopExecutor");
     overlayType = josi.GetType("Josi.Native.PcControlOverlay");
     executor = executorType.GetField("Current").GetValue(null);

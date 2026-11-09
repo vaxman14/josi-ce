@@ -1,6 +1,6 @@
 # Windows computer control status — November 8, 2026
 
-**Current work:** read [WINDOWS_PC_CONTROL_BUILD_NOTES.md](WINDOWS_PC_CONTROL_BUILD_NOTES.md) for preview.2 source changes, build-only instructions and remaining limits. The owner requires explicit approval before any tests, application launches, overlays or desktop takeover. Continue only in the approved workspace below.
+**Current work:** read [WINDOWS_PC_CONTROL_ACCEPTANCE.md](WINDOWS_PC_CONTROL_ACCEPTANCE.md) for preview.3 fixes, focused test results and signed installer status. The owner explicitly authorized testing and desktop control for this session on November 8, 2026. Continue only in the approved workspace below. [WINDOWS_PC_CONTROL_BUILD_NOTES.md](WINDOWS_PC_CONTROL_BUILD_NOTES.md) preserves the preview.2 feature scope and remaining design limits.
 
 ## Historical preview.1 record
 

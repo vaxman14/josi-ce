@@ -115,7 +115,10 @@ namespace Josi.Native {
           if (!UpdateProcThreadAttribute(attributes, 0, new IntPtr(0x20016), pseudo, new IntPtr(IntPtr.Size), IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
           jobValue = Marshal.AllocHGlobal(IntPtr.Size); Marshal.WriteIntPtr(jobValue, job);
           if (!UpdateProcThreadAttribute(attributes, 0, new IntPtr(0x2000D), jobValue, new IntPtr(IntPtr.Size), IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
-          var startup = new StartupEx { Info = new Startup { Size = Marshal.SizeOf<StartupEx>() }, Attributes = attributes };
+          // Explicit null standard handles make Windows attach the child to
+          // ConPTY instead of inheriting a launcher's redirected pipes.
+          // https://github.com/microsoft/terminal/discussions/15814
+          var startup = new StartupEx { Info = new Startup { Size = Marshal.SizeOf<StartupEx>(), Flags = 0x100 }, Attributes = attributes };
           ProcessInfo info;
           if (!CreateProcess(shell, new StringBuilder("\"" + shell + "\" " + arguments), IntPtr.Zero, IntPtr.Zero, false, 0x80000, IntPtr.Zero, cwd, ref startup, out info)) throw new Win32Exception();
           process = info.Process; CloseHandle(info.Thread);

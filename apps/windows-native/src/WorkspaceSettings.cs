@@ -10,7 +10,7 @@ namespace Josi.Native {
   /// Small per-PC app preferences, kept in %LOCALAPPDATA%\Josi\settings.json.
   /// Not secrets: those live in Windows Credential Manager or the server Vault.
   static class LocalSettings {
-    static string File { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi",
+    static string File { get { return Path.Combine(AppLinks.StateDirectory,
       AppLinks.Testing ? "settings-test" + AppLinks.Instance + ".json" : "settings.json"); } }
     static Dictionary<string, object> Read() {
       try { var value = Wires.Parse(System.IO.File.ReadAllText(File)).Raw as Dictionary<string, object>; if (value != null) return value; } catch (Exception) { }

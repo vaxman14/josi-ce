@@ -25,6 +25,9 @@ namespace Josi.Native {
       return Environment.GetEnvironmentVariable("JOSI_TEST_NO_BROWSER") == "1" ? ".Test." + Guid.NewGuid().ToString("N") : "";
     }
     public static bool Testing { get { return Instance.Length > 0; } }
+    // Demo acceptance keeps files beside its fixture, never in the owner's profile.
+    public static string StateDirectory => Automation.Demo ? Path.Combine(Automation.DemoRoot, "state", "native")
+      : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi");
     static string PipeName { get { return "Josi.Native.Windows.Links" + Instance + "." + WindowsIdentity.GetCurrent().User.Value; } }
 
     public static bool IsMessage(string value) {

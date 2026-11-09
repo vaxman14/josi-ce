@@ -17,6 +17,26 @@ async function enable(){await control.setEnabled(owner,true);}
 async function task(who=owner){return (await db.query<{id:string}>(`insert into tasks(owner_user_id,template_key,state) values($1,'follow_up','ready') returning id`,[who]))[0].id;}
 
 describe('PC permission revisions and atomic approval',()=>{
+  it('applies timed broad access, preserves exclusions and expires it without restoring the old everyday toggle',async()=>{
+    await enable();await control.setFullControl(owner,true);
+    await control.applyPreset(owner,{access:'full',administrator:false,mode:'temporary',expiresAt:new Date(clock+10000).toISOString()});
+    const shell=requirement('command.run',{kind:'command',target:'C:\\Project',application:'C:\\Windows\\System32\\cmd.exe'});
+    expect((await control.propose(owner,plan(shell))).state).toBe('approved');
+    expect((await control.propose(owner,plan(requirement('administrator.elevate',{kind:'system',target:'host'})))).state).toBe('denied');
+    expect((await control.snapshot(owner)).fullControl).toBe(false);
+    await allow(requirement('app.control',{kind:'application',target:'C:\\Private.exe'}),'never');
+    expect((await control.propose(owner,plan(shell))).state).toBe('denied');
+    expect((await control.propose(owner,plan())).state).toBe('approved');
+    clock+=11000;expect((await control.propose(owner,plan())).state).toBe('pending');
+  });
+  it('ties a once-approved terminal to its opening request and revokes it when policy changes',async()=>{
+    await enable();const command=requirement('command.run',{kind:'command',target:'C:\\Project',application:'C:\\Windows\\System32\\cmd.exe'});
+    const opening=plan(command,{payload:{kind:'desktop.terminal.open',timeoutSeconds:60}}),request=await control.propose(owner,opening);
+    await control.decide(owner,request.id,true);await control.execute(owner,request.id,opening,async()=>({sessionId:request.id}));
+    expect((await control.terminalAuthorization(owner,request.id)).authorized).toBe(true);
+    expect((await control.propose(owner,plan(command,{payload:{kind:'desktop.terminal.input',sessionId:request.id,text:'echo fixture'}}))).state).toBe('approved');
+    await allow(command,'never');expect((await control.terminalAuthorization(owner,request.id)).authorized).toBe(false);
+  });
   it('does not let atomic once approval outlive its saved temporary allowance',async()=>{
     await enable();const input=plan(),q=await control.propose(owner,input);
     await control.savePolicy(owner,{...read,mode:'temporary',expiresAt:new Date(clock+10000).toISOString()},{approveRequestId:q.id});
@@ -76,7 +96,7 @@ describe('PC permission revisions and atomic approval',()=>{
     await expect(control.savePolicy(owner,{...command,mode:'always'},{approveRequestId:q.id})).rejects.toThrow(/no longer active/);
     clock-=11*60*1000;
     await expect(new PcControl(db,key,'pc-two',()=>clock).savePolicy(owner,{...command,mode:'always'},{approveRequestId:q.id})).rejects.toThrow(/not found/);
-    const remove=requirement('file.delete',folder),deletion=await control.propose(owner,plan(remove));
+    const remove=requirement('secret.access',{kind:'secret',target:'protected-fixture'}),deletion=await control.propose(owner,plan(remove));
     await expect(control.savePolicy(owner,{...remove,mode:'always'},{approveRequestId:deletion.id})).rejects.toThrow(/cannot be approved/);
     expect((await control.snapshot(owner)).policies).toEqual([]);
   });
@@ -134,16 +154,17 @@ describe('Windows exact PC scope authorization',()=>{
     expect((await control.propose(owner,plan(run))).state).toBe('pending');
     await allow(run,'always');
     expect((await control.propose(owner,plan(run))).state).toBe('approved');
-    // The grant is exact: another shell or another folder asks again.
+    // Another shell asks; the approved starting folder includes descendants.
     expect((await control.propose(owner,plan(requirement('command.run',{...shell,application:'C:\\Windows\\System32\\cmd.exe'})))).state).toBe('pending');
-    expect((await control.propose(owner,plan(requirement('command.run',{...shell,target:'C:\\Users\\Roman\\Desktop'})))).state).toBe('pending');
-    // Other high-risk actions cannot be pre-approved this way.
+    expect((await control.propose(owner,plan(requirement('command.run',{...shell,target:'C:\\Users\\Roman\\Desktop'})))).state).toBe('approved');
+    expect((await control.propose(owner,plan(requirement('command.run',{...shell,target:'C:\\Users\\Romana'})))).state).toBe('pending');
+    // Deletion has a separate grant; it never inherits the command grant.
     const remove=requirement('file.delete',folder);await allow(remove,'always');
-    expect((await control.propose(owner,plan(remove))).state).toBe('pending');
+    expect((await control.propose(owner,plan(remove))).state).toBe('approved');
     await allow(run,'never');
     expect((await control.propose(owner,plan(run))).state).toBe('denied');
     expect((await control.snapshot(owner)).catalog.find(c=>c.action==='command.run')?.grantable).toBe(true);
-    expect((await control.snapshot(owner)).catalog.find(c=>c.action==='file.delete')?.grantable).toBe(false);
+    expect((await control.snapshot(owner)).catalog.find(c=>c.action==='file.delete')?.grantable).toBe(true);
   });
   it('matches browser executable, profile AND exact origin independently',async()=>{
     const view=requirement('browser.view',browser);await allow(view);await enable();
@@ -151,9 +172,10 @@ describe('Windows exact PC scope authorization',()=>{
     for(const scope of [{...browser,application:'C:\\Browsers\\Edge.exe'},{...browser,profile:'Work'},{...browser,target:'https://other.test'},{...browser,target:'http://example.test'},{...browser,target:'https://sub.example.test'}])expect((await control.propose(owner,plan(requirement('browser.view',scope)))).state).toBe('pending');
     expect((await control.propose(owner,plan(requirement('browser.fill',browser)))).state).toBe('pending');
   });
-  it('never inherits folder grants or grants another action, application, PC or owner',async()=>{
+  it('inherits folder descendants but never another action, application, PC or owner',async()=>{
     await allow();await enable();
-    for(const target of ['C:\\Work','C:\\Work\\Reports\\Private','C:\\Work\\Reports-other'])expect((await control.propose(owner,plan(requirement('folder.read',{kind:'folder',target})))).state).toBe('pending');
+    for(const target of ['C:\\Work','C:\\Work\\Reports-other'])expect((await control.propose(owner,plan(requirement('folder.read',{kind:'folder',target})))).state).toBe('pending');
+    expect((await control.propose(owner,plan(requirement('folder.read',{kind:'folder',target:'C:\\Work\\Reports\\Private'})))).state).toBe('approved');
     expect((await control.propose(owner,plan(requirement('file.delete',folder)))).state).toBe('pending');
     const app=requirement('app.launch',{kind:'application',target:'C:\\Apps\\One.exe'});await allow(app);
     expect((await control.propose(owner,plan(requirement('app.launch',{kind:'application',target:'C:\\Apps\\Two.exe'})))).state).toBe('pending');

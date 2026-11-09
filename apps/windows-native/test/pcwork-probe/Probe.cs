@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Text.Json;
+using System.Diagnostics;
 using System.Threading;
 
 // Calls PcWork in the built Josi.dll with the same Wire payloads and scopes the
@@ -40,7 +42,7 @@ static class Probe {
   }
   static string Q(string s) { return "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""; }
 
-  static int Main() {
+  static int Main(string[] args) {
     var dll = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "Josi.dll"));
     josi = Assembly.LoadFrom(dll);
     wire = josi.GetType("Josi.Native.Wire"); wires = josi.GetType("Josi.Native.Wires"); work = josi.GetType("Josi.Native.PcWork");
@@ -48,7 +50,9 @@ static class Probe {
     var scratch = Path.Combine(Path.GetTempPath(), "josi-pcwork-probe-" + Guid.NewGuid().ToString("N").Substring(0, 8));
     Directory.CreateDirectory(scratch); var sub = Path.Combine(scratch, "sub"); Directory.CreateDirectory(sub);
     var none = CancellationToken.None;
+    string Scope(string shell, string root) { return "{\"kind\":\"command\",\"target\":" + Q(root) + ",\"application\":" + Q(shell) + "}"; }
     try {
+      if (Array.IndexOf(args,"--terminal-only") < 0) {
       var env = Run("environment", "Environment_");
       Expect("environment names the user and shells", env, "\"user\":" ); Expect("environment lists powershell", env, "powershell.exe");
 
@@ -57,7 +61,6 @@ static class Probe {
       var noapps = Run("find nothing", "FindApps", "zzqqxx-no-such-program");
       Expect("no match is ok with empty list", noapps, "\"apps\":[]");
 
-      string Scope(string shell, string root) { return "{\"kind\":\"command\",\"target\":" + Q(root) + ",\"application\":" + Q(shell) + "}"; }
       var echo = Run("powershell echo", "Command", Parse("{\"kind\":\"desktop.command\",\"shell\":\"powershell\",\"command\":\"Write-Output (Get-Location).Path; Write-Output 'héllo wörld'; Write-Error 'warned'; exit 3\",\"cwd\":" + Q(sub) + ",\"scopeFolder\":" + Q(scratch) + ",\"timeoutSeconds\":30}"), Parse(Scope(ps, scratch)), none);
       Expect("exit code 3", echo, "\"exitCode\":3"); Expect("cwd is the subfolder", echo, sub.Replace("\\", "\\\\")); Expect("unicode survives", echo, "h" + "\\" + "u00E9llo w" + "\\" + "u00F6rld"); Expect("stderr captured as plain text", echo, "warned"); ExpectNot("no CLIXML noise", echo, "CLIXML");
 
@@ -101,6 +104,25 @@ static class Probe {
       Expect("folder created and written", made, "\"created\":true");
       var deep = Run("write refuses missing parent chain", "WriteFile", Parse("{\"kind\":\"desktop.writefile\",\"path\":" + Q(Path.Combine(scratch, "no", "deeper", "a.txt")) + ",\"content\":\"x\",\"append\":false}"), Parse("{\"kind\":\"folder\",\"target\":" + Q(Path.Combine(scratch, "no", "deeper")) + "}"));
       Expect("refused folder_missing", deep, "folder_missing");
+      }
+      // Exercise the new persistent shell, not a console UI or another app.
+      var terminals = josi.GetType("Josi.Native.PcTerminals");
+      var session = Guid.NewGuid().ToString();
+      string Terminal(string kind, string text = "") {
+        var payload = Parse(JsonSerializer.Serialize(new { kind="desktop.terminal."+kind, sessionId=session, shell="powershell", cwd=scratch, timeoutSeconds=30, text }));
+        var tuple = terminals.GetMethod("Execute").Invoke(null,new[]{(object)session,payload,Parse(Scope(ps,scratch))});
+        return (string)wires.GetMethod("Serialize").Invoke(null,new[]{tuple.GetType().GetProperty("Item2").GetValue(tuple)});
+      }
+      try {
+        Expect("persistent terminal opens",Terminal("open"),"\"running\":true");
+        Terminal("input","$josiProbeValue = 6 * 7\r");
+        Terminal("input","Write-Output ('JOSI-PERSIST-' + $josiProbeValue)\r");
+        var wait = Stopwatch.StartNew(); string output;
+        do {Thread.Sleep(100);output=Terminal("read");} while(!output.Contains("JOSI-PERSIST-42")&&wait.ElapsedMilliseconds<8000);
+        Expect("PowerShell state persists between inputs",output,"JOSI-PERSIST-42");
+        if(!output.Contains("JOSI-PERSIST-42"))Console.WriteLine(output.Length>1800?output.Substring(0,1800):output);
+        Expect("terminal closes its owned process",Terminal("close"),"\"running\":false");
+      } finally { terminals.GetMethod("StopAll").Invoke(null,null); }
     } finally { try { Directory.Delete(scratch, true); } catch (IOException) { } }
     Console.WriteLine(failures == 0 ? "ALL PASSED" : failures + " FAILED");
     return failures == 0 ? 0 : 1;

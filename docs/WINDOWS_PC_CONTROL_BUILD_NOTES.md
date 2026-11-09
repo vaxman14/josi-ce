@@ -1,5 +1,7 @@
 # Windows computer control preview.2 — November 8, 2026
 
+**Historical preview.2 record.** The owner subsequently authorized focused tests and desktop control. See [WINDOWS_PC_CONTROL_ACCEPTANCE.md](WINDOWS_PC_CONTROL_ACCEPTANCE.md) for preview.3 fixes, completed checks and the fresh installer. The restrictions and untested labels below describe the earlier build, not the current session.
+
 ## Owner instructions
 
 Work only in `C:\Users\vaxma\Desktop\Windows Josi Native Redesign\Josi Windows PC control`.

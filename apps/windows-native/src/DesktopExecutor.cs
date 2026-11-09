@@ -53,7 +53,7 @@ namespace Josi.Native {
 
     public void Start(Dispatcher dispatcher, string localStateFile = null) {
       ui = dispatcher;
-      stateFile = localStateFile ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi", "pc-control-pause" + AppLinks.Instance + ".json");
+      stateFile = localStateFile ?? Path.Combine(AppLinks.StateDirectory, "pc-control-pause" + AppLinks.Instance + ".json");
       try {
         if (File.Exists(stateFile)) {
           var stored = Wires.Parse(File.ReadAllText(stateFile));
