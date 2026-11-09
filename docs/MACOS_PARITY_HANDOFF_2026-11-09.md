@@ -63,8 +63,37 @@ What was built for Windows in `07449b3`:
   button: PUT `/admin/pc-control/policies` with `mode: always` for that action
   and exact browser scope. The account password is needed only for high-risk
   actions. Windows: `Chat.cs` `RenderCards`.
-- **Safari** still needs its containing app (the build emits `safari/`). Its
-  ID is `safariId` in `apps/browser-extension/development-identity.json`.
+- **Safari** still needs its containing app. To start it:
+  1. `node scripts/unified/build-browser-extensions.mjs <new empty folder>`
+     writes `safari/`, the web extension part, with
+     `config.js` `{family:'safari', extensionId}`.
+  2. Wrap it with Xcode's converter
+     (`xcrun safari-web-extension-converter <folder>/safari`) inside the Mac
+     app. The bundle ID is `safariId` in
+     `apps/browser-extension/development-identity.json`
+     (`com.heyjosi.ce.unified.workspace-safari`).
+  3. On Safari, `native-channel.js` uses `runtime.sendNativeMessage` to
+     `com.heyjosi.ce.unified`, the containing app's handler, not a
+     `connectNative` port. That handler is the Mac host described above.
+  Since `4ff7e36`, the manifest asks for all-site host permissions at install
+  (Safari asks the person per site or for all sites in its own settings).
+  The extension also has an `openTab` command: with no tab attached,
+  `browser_open_page` opens a new tab that becomes the attached one.
+  The Mac host needs to dispatch `open` as `openTab` while no tab is attached
+  (Windows: `BrowserBridge.Dispatch`). See also `docs/MACOS_CATCHUP_HANDOFF.md`
+  (`7cb66f3`), written from the Mac side.
+
+## Live run on Windows (preview.17 and preview.18)
+
+Passed on the installed build: link with no tab (13 tabs listed from chat);
+attach from chat (with the one-time site grant on 0.9.0, gone since 4ff7e36);
+read; photo described from the real image; open in a new tab with no tab
+attached; select (Option 2, confirmed on re-read); download (file landed in
+Downloads); Pause mid-task; Stop mid-task (control off, no retry); a hard Josi
+restart with the tab re-attached by itself. Fixed after the run (in the next
+installer): a successful download's file name was flagged as invented by the
+narrated-search guard (`assistantAgent.ts`), and while paused the browser tools
+told the person to click the extension instead of pressing Resume.
 
 ## Tests to run on the Mac
 

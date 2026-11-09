@@ -867,7 +867,10 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       const dataReceiptsThisTurn: DataToolReceipt[] = actions
         .filter((a) => DATA_CLAIM_TOOLS.has(a.tool))
         .map((a) => ({ tool: a.tool, result: a.result }));
-      const narratedVerdict = checkNarratedSearchWithoutTool(reply, dataReceiptsThisTurn);
+      // A browser, PC or desktop tool that succeeded this turn is real evidence
+      // (a downloaded file's name, a page's text): never call that invented.
+      const pcEvidence = actions.some((a) => /^(browser|pc|desktop)_/.test(a.tool) && (a.result as { ok?: unknown } | null)?.ok === true);
+      const narratedVerdict = pcEvidence ? { fabricated: false, reasons: [] as string[] } : checkNarratedSearchWithoutTool(reply, dataReceiptsThisTurn);
       if (narratedVerdict.fabricated) {
         if (!narratedSearchGuardReprompted) {
           narratedSearchGuardReprompted = true;

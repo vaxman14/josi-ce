@@ -164,7 +164,7 @@ export async function executePcBrowserTool(db: Db, owner: string, key: MasterKey
     if (name === 'browser_check_request') return await settle(control, owner, String(input.request_id), 20_000);
     const browser: PcBrowserPresence | null = await control.presence(owner);
     if (!browser || !PC_BROWSER_FAMILIES.includes(browser.family)) return { ok: false, code: 'browser_not_linked',
-      message: 'No browser is linked to Josi right now. Ask the owner to open their browser with the Josi extension installed while Josi is open on this PC.' };
+      message: 'The browser is not available to Josi right now: either Josi is paused on this PC (then the owner presses Resume in Josi; nothing in the browser needs clicking) or Josi or the browser is closed. Say exactly that; do not ask them to click the extension.' };
     const scope = (origin: string) => ({ kind: 'browser' as const, target: origin, application: browser.application, profile: browser.profile });
     const tabs = browser.tabs ?? [];
     if (name === 'browser_list_tabs') {
