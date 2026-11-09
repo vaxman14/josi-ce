@@ -68,6 +68,28 @@ and delivered in chat is not finished.
      protected flow (a payment form filled by the Vault, not by her) without
      ever seeing it. Members get the same for their own items only.
 
+8. **"My World": everything about the person, in the Vault, fed by chat.**
+   - A button at the top of the menu (and on the chat screen) named **My World**
+     (working name; alternatives: About Me; tagline on the page "Who am I?").
+     It opens a form tied to the Vault: names, addresses (several), family
+     members with names and relationships, cards, passports and IDs, vehicles,
+     homes and apartments, each with its dates (bought, registered, renews).
+   - Josi fills it from conversation. "I just bought a 2026 Ford Explorer." →
+     "That's great, congrats! Added it to your World. Want to give me the plate?
+     Is there a loan? Anything else for the car?" Each follow-up that is a
+     secret (card number, passport number, VIN, loan account) comes as a
+     protected card the person types into; everything else Josi writes herself.
+   - What Josi knows versus what she holds: she may know that a thing exists
+     and its non-secret facts (a 2026 Ford Explorer, Dana is a daughter, the
+     Murrieta address), so she can be useful. She never holds the secret
+     fields; those live only in the Vault, shown only on the page behind the
+     person's password or Hello (rule 7), never in chat, never on voice.
+   - Default field sensitivity per type (card and account numbers, passport
+     and ID numbers, VINs and plates, loan numbers are secret; names, models,
+     cities, dates are not), adjustable by the person.
+   - Members have their own World; the admin sees nothing of it. A child's
+     World can be viewed by a parent only where parental controls say so.
+
 ## Implementation plan (in order)
 
 | Step | What | Where |
@@ -77,7 +99,8 @@ and delivered in chat is not finished.
 | C | Owner default: connector availability for the owner is always allowed; the member ceiling stays. | `packages/connectors/src/*` capability policy, `connectorRoutes.ts` |
 | D | Member requests: `request_connector_access` creates an approval the admin can decide from chat (card), the app (Approvals) or a phone notification; decision notifies the member's thread and continues the flow. | `settingsChangeTools.ts` (new area `member_connector_request`), approvals routes, notifications, mobile push |
 | E | Prompt: Josi is told she is the way to configure Josi; never "check your Josi app". | `assistantAgent.ts` |
-| F | Show the hidden pages again (Connectors, Apps, Storage) so what Josi talks about is visible. | `Flags.cs` (`Integrations = true`, flipped locally, uncommitted) |
+| F | Show the hidden pages again (Connectors, Apps, Storage) so what Josi talks about is visible. | `Flags.cs` (`Integrations = true`, committed in `28973e3`) |
+| G | My World: Vault-backed personal records (people, places, documents, vehicles, properties, cards) with typed fields and per-field sensitivity; a page behind password or Hello; chat tools to add and update non-secret facts and to request a protected card for secret fields; Josi's memory references items by name, never by value. | `packages/core/src/vaultRecords.ts` (extend), new routes, `apps/windows-native/src` page and menu button, agent tools |
 
 Verification is the same as PC control: a live chat on the installed build,
 driven step by step, recorded in the acceptance doc.
