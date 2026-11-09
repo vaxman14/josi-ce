@@ -158,6 +158,10 @@ export async function executeCredentialCardTool(db: Db, userId: string, name: st
     if (!mayConnect({ mode: (policy?.mode ?? 'not_allowed') as 'not_allowed' | 'everyone' | 'specific_users', allowedUserIds: allowed.map((a) => a.user_id) }, userId))
       return { ok: false, code: 'needs_admin_approval', message: `The owner has not allowed ${providerName(provider as DeveloperService)} for this person yet. Ask for it with request_connector_access; the owner decides in chat, in the app or on their phone.` };
   }
+  // One card per credential at a time: an earlier card for the same route
+  // that was never filled in is superseded, so "open it again" never leaves
+  // a trail of popups behind.
+  await db.query(`update settings_change_proposals set state = 'expired' where proposer_user_id = $1 and area = $2 and path = $3 and state = 'proposed'`, [userId, CREDENTIAL_CARD_AREA, prepared.path]);
   const [row] = await db.query<{ id: string }>(
     `insert into settings_change_proposals(proposer_user_id, scope, area, sensitive, title, summary, method, path, body, thread_id)
      values ($1, $2, $3, false, $4, $5, $6, $7, $8, $9) returning id`,

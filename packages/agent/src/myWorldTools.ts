@@ -95,10 +95,12 @@ export async function executeMyWorldTool(db: Db, userId: string, name: string, i
       const label = known?.label ?? field;
       const card = { kind: 'my_world_secret', provider: item.kind, title: `${label} for ${item.label}`, intro: `Type the ${label.toLowerCase()} of ${item.label}. It is sealed into your World in the Vault; Josi never sees it, and it is shown again only on the My World page behind your password.`,
         fields: [{ key: 'value', label, type: 'secret', required: true }], help: { text: 'Only you can read this back, on the My World page.', url: null }, done: `${label} for ${item.label} is in your World.` };
+      const path = `/my-world/items/${item.id}/secrets/${encodeURIComponent(field)}`;
+      await db.query(`update settings_change_proposals set state = 'expired' where proposer_user_id = $1 and area = $2 and path = $3 and state = 'proposed'`, [userId, CREDENTIAL_CARD_AREA, path]);
       const [row] = await db.query<{ id: string }>(
         `insert into settings_change_proposals(proposer_user_id, scope, area, sensitive, title, summary, method, path, body, thread_id)
          values ($1, 'personal', $2, false, $3, $4, 'PUT', $5, $6, $7) returning id`,
-        [userId, CREDENTIAL_CARD_AREA, card.title, card.intro, `/my-world/items/${item.id}/secrets/${encodeURIComponent(field)}`, json({ card, fixed: {} }), threadId]);
+        [userId, CREDENTIAL_CARD_AREA, card.title, card.intro, path, json({ card, fixed: {} }), threadId]);
       return { ok: true, cardId: row.id, state: 'card_open', message: `A protected card for the ${label.toLowerCase()} of ${item.label} is open in the Josi app. Say so and wait; a note here will say when it is saved. Never ask for the value in chat.` };
     }
     if (name === 'my_world_note') {

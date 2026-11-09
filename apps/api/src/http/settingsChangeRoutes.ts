@@ -226,6 +226,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     await db.query(`update settings_change_proposals set state = $2, applied_by = $3, applied_at = now(), error = $4 where id = $1`,
       [row.id, ok ? 'applied' : 'failed', user.id, ok ? null : error ?? 'The change could not be applied.']);
     const card = isCredentialCard(row) ? cardOf(row) as { done?: string; title?: string } | null : null;
+    if (card && ok) await db.query(`update settings_change_proposals set state = 'expired' where proposer_user_id = $2 and area = $3 and path = $4 and state = 'proposed' and id <> $1`, [row.id, row.proposer_user_id, row.area, row.path]);
     await tell(row, card ? (ok ? `Saved: ${card.done ?? card.title ?? row.title}` : `Not saved (${card.title ?? row.title}): ${error ?? 'the credential was not accepted.'}`)
       : row.area === 'member_connector_request' ? (ok ? `Approved: the owner says you may connect ${serviceOf(row)}. Ask me to connect it and I will open the card for your token.` : `Not approved: the permission could not be saved. ${error ?? ''}`.trim())
       : ok ? `Done: this change is now live. ${row.summary}` : `Not applied: ${error ?? 'the change could not be applied.'} ${row.summary}`);
