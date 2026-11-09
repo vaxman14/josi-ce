@@ -55,6 +55,16 @@ during this run are in `e5951c8` and ship in `1.2.5-preview.6`.
 - Haiku's wording after a wait for approval.
 - The takeover (`fb7365c`) is in the build after preview.7.
 
+## preview.7 and preview.8, same evening
+
+| Step | Result |
+|---|---|
+| preview.7 (silent install) | 2 min 44 s from first step to Done (18:54:28 to 18:57:12). Phases: unpack 50 s, file check 23 s, copy 30 s, database and services 80 s. Still "Unpacking" for every component: the record read had a PowerShell array quirk (`bd03715` fixed the read). |
+| preview.8 (silent install) | Same shape, 2 min 46 s. Still unpacking: the record's paths had lost their backslashes (`ab216d8`), and the archives are zipped afresh per release so archive hashes never match (`8290eac` compares file inventories instead; measured: 7 of 8 components identical between releases, Python decided in 262 ms). |
+| Takeover | preview.8 replaced the hidden dev build on launch (one process). |
+| Chat after preview.8 | Plain chat worked; every PC request failed after minutes with a provider error. Cause: the old app saved "paused" as it quit; the new app loaded it; approved work was never claimed; the model timed out. Fixed in `554e654` (no pause saved on exit; a paused app sends no presence so tools fail fast with the reason; readiness card shows Paused with Resume). Verified: card said "Paused on this PC / Not ready: pcPresence", Resume made it Ready, then Notepad, Downloads and `git log` ran from chat. |
+| Model capability check | Passed in about 40 s (chat, tools, images, structured answers) while chat PC work was failing, which separated the model path from the executor path. |
+
 ## Owner feedback carried forward
 
 - Fewer steps, always: the setup step now pairs and enables in one go; the
