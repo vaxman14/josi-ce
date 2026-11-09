@@ -374,9 +374,9 @@ describe('storing a connection', () => {
 });
 
 describe('enabling a capability', () => {
-  async function connect(grantedScopes: string) {
+  async function connect(grantedScopes: string, owner = alice) {
     return upsertConnection(db, key, {
-      ownerUserId: alice, provider: 'google',
+      ownerUserId: owner, provider: 'google',
       tokens: { accessToken: 'AT', refreshToken: 'RT', expiresIn: 3600, grantedScopes },
       accountEmail: null, providerAccountId: null, requestedCapabilities: [],
     });
@@ -403,28 +403,32 @@ describe('enabling a capability', () => {
       .toEqual({ allowed: true, state: 'on' });
   });
 
-  it('is refused when an administrator has forbidden it', async () => {
-    const connection = await connect('https://www.googleapis.com/auth/gmail.send');
+  it('is refused for a member when an administrator has forbidden it, and never gates the administrator', async () => {
+    const theirs = await connect('https://www.googleapis.com/auth/gmail.send', bob);
+    const mine = await connect('https://www.googleapis.com/auth/gmail.send');
     await db.query(
       `insert into admin_capability_policy (capability, allowed, note)
        values ('google.mail.send', false, 'not on this installation')`,
     );
     await expect(setCapability(db, {
-      connection, capability: 'google.mail.send', enabled: true, actorUserId: alice,
+      connection: theirs, capability: 'google.mail.send', enabled: true, actorUserId: bob,
     })).rejects.toThrow(/administrator/);
+    // Rule 2 of JOSI_IS_THE_INTERFACE: the ceiling the owner sets is for members.
+    await setCapability(db, { connection: mine, capability: 'google.mail.send', enabled: true, actorUserId: alice });
+    expect((await can(db, { ownerUserId: alice, capability: 'google.mail.send' }))).toEqual({ allowed: true, state: 'on' });
   });
 
-  it('is switched off by an administrator even after the user enabled it', async () => {
-    const connection = await connect('https://www.googleapis.com/auth/gmail.send');
+  it('is switched off for a member by an administrator even after they enabled it', async () => {
+    const connection = await connect('https://www.googleapis.com/auth/gmail.send', bob);
     await setCapability(db, {
-      connection, capability: 'google.mail.send', enabled: true, actorUserId: alice,
+      connection, capability: 'google.mail.send', enabled: true, actorUserId: bob,
     });
-    expect((await can(db, { ownerUserId: alice, capability: 'google.mail.send' })).allowed).toBe(true);
+    expect((await can(db, { ownerUserId: bob, capability: 'google.mail.send' })).allowed).toBe(true);
 
     await db.query(
       `insert into admin_capability_policy (capability, allowed) values ('google.mail.send', false)`,
     );
-    expect((await can(db, { ownerUserId: alice, capability: 'google.mail.send' })))
+    expect((await can(db, { ownerUserId: bob, capability: 'google.mail.send' })))
       .toEqual({ allowed: false, state: 'blocked_by_admin' });
   });
 
