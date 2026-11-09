@@ -1,5 +1,8 @@
 # Current handoff — November 8, 2026 (America/Los_Angeles)
 
+> **Update, same evening:** the owner lifted the stop for planning. The recovery plan that supersedes the "next steps" here is [PC_CONTROL_RECOVERY_PLAN.md](PC_CONTROL_RECOVERY_PLAN.md): five work packages, in order, ending in a live chat acceptance on the installed build. Implementation starts when the owner says so.
+
+
 ## Stop instruction
 
 The owner's latest instruction is: **“dont do anything. commit everything you know to the repo and then stop.”** This checkpoint records existing findings only. Do not continue implementation, testing, desktop control or building until the owner resumes the work. Earlier permission to test/take over does not override this stop.
