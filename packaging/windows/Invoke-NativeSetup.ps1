@@ -8,6 +8,13 @@ $ErrorActionPreference='Stop';Set-StrictMode -Version Latest;$env:PSModulePath='
 # Progress for the installer window, one line per step on stdout. Cancel is
 # honoured only until the first change to this PC; after that the host says so.
 $script:changing=$false;$script:cancelNoted=$false;$source=$null
+function Note([string]$Text){
+    # A line in the timing log only (not the progress bar): why a step went the way it did.
+    try{
+        $log=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) ('Josi CE Server\installer\setup-timing-'+$Version+'.log')
+        if(Test-Path -LiteralPath (Split-Path $log)){[IO.File]::AppendAllText($log,([DateTime]::Now.ToString('HH:mm:ss.fff')+'      '+$Text+"`r`n"))}
+    }catch{}
+}
 function Step([int]$Percent,[string]$Text){
     [Console]::Out.WriteLine('JOSI-PROGRESS|'+$Percent+'|'+$Text);[Console]::Out.Flush()
     # Phase timing for the owner and the next build: readable, no private values.
@@ -220,13 +227,15 @@ try{
     # an update becomes a fraction of a fresh install.
     $reusable=@{};$priorProgram=$null
     if($prior -and $Operation -ceq 'upgrade'){
-        $priorProgram=Join-Path $product ('versions'+$prior.version)
-        $recorded=Join-Path $product ('installer'+$prior.version+'\installed-components.json')
+        $priorProgram=Join-Path $product ('versions\'+$prior.version)
+        $recorded=Join-Path $product ('installer\'+$prior.version+'\installed-components.json')
+        Note ('Reuse record '+$(if(Test-Path -LiteralPath $recorded){'found'}else{'missing'})+': '+$recorded+'; installed version folder '+$(if(Test-Path -LiteralPath $priorProgram){'present'}else{'missing'}))
         if((Test-Path -LiteralPath $recorded) -and (Test-Path -LiteralPath $priorProgram)){
             # ConvertFrom-Json hands a JSON array to the pipeline as one object in
             # Windows PowerShell; enumerate the parsed value, not the pipeline.
             $parsedRecord=Get-Content -LiteralPath $recorded -Raw | ConvertFrom-Json
             foreach($item in [array]$parsedRecord){if($item -and $item.id -is [string]){$reusable[$item.id]=$item}}
+            Note ('Reuse record lists '+$reusable.Count+' component(s)')
         }
     }
     $unpacked=0;$count=@($manifest.components).Count;$reused=@{}
@@ -238,7 +247,9 @@ try{
         # (path, size, SHA-256 of each file) is what decides whether the
         # installed version already has exactly these files.
         $known=$reusable[$component.id]
-        if($known -and (Test-NativePayload $component $archive) -and (Test-SameInventory (Read-ArchiveInventory $component $archive) $known)){
+        $same=$known -and (Test-NativePayload $component $archive) -and (Test-SameInventory (Read-ArchiveInventory $component $archive) $known)
+        Note ((Name-Of $component.id)+': '+$(if(!$known){'no record'}elseif($same){'same files as installed'}else{'files changed'}))
+        if($same){
             Step (5+[int](50*$unpacked/$count)) ('Keeping '+(Name-Of $component.id)+' from version '+$prior.version+' ('+$unpacked+' of '+$count+')')
             try{Link-InstalledComponent $component $known $priorProgram $source;foreach($f in @($known.files)){$reused[[string]$f.path]=$true};continue}
             catch{
