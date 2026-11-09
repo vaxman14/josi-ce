@@ -1,5 +1,6 @@
 // Chat reads the actual device policy, then prepares a human-approved change.
 // The target, owner and policy revision are fixed before any client applies it.
+import { existsSync } from 'node:fs';
 import { normalizePcPolicy, normalizePcPreset, PcControl, PcControlError, type Db, type MasterKey, type PcPolicy, type PcPreset } from '@josi-ce/core';
 
 export const PC_CHAT_PERMISSION_SEMANTICS = 'pc-control-chat.2';
@@ -8,9 +9,10 @@ export const PC_SETTING_AREAS = new Set(['pc_control_enabled', 'pc_control_full_
 export async function pcPermissionState(db:Db,owner:string,key:MasterKey,requested?:unknown) {
   const [user]=await db.query<{role:string}>(`select role from users where id=$1`,[owner]);
   if(user?.role!=='super_admin')throw new PcControlError(403,'Only the owner can manage PC permissions.');
-  const devices=await db.query<{pcId:string;enabled:boolean;connected:boolean}>(
-    `select s.pc_id as "pcId",s.enabled,coalesce(p.expires_at>now(),false) as connected
+  const devices=await db.query<{pcId:string;enabled:boolean;connected:boolean;paired:boolean}>(
+    `select s.pc_id as "pcId",s.enabled,coalesce(p.expires_at>now(),false) as connected,(i.public_key is not null) as paired
      from pc_control_settings s left join pc_control_presence p on p.owner_user_id=s.owner_user_id and p.pc_id=s.pc_id
+     left join pc_executor_identity i on i.owner_user_id=s.owner_user_id and i.pc_id=s.pc_id
      where s.owner_user_id=$1 order by s.pc_id`,[owner]);
   if(requested!==undefined&&(typeof requested!=='string'||!/^[a-z0-9-]{1,80}$/.test(requested)))
     throw new PcControlError(400,'Choose a PC id from pc_get_permissions.');
@@ -31,8 +33,10 @@ export async function preparePcPermissionChange(db:Db,owner:string,key:MasterKey
   if(area==='pc_control_enabled'||area==='pc_control_full_control'){
     if(typeof body.enabled!=='boolean')throw new PcControlError(400,'Choose on or off.');
     normalized={enabled:body.enabled};
+    const device=state.devices.find(d=>d.pcId===current.pcId);
     detail=area==='pc_control_enabled'
-      ? body.enabled?'Enable PC control. This alone does not grant access to applications, files, or commands.':'Disable PC control and revoke temporary and task grants. Completed work is not undone.'
+      ? body.enabled?'Enable PC control. This alone does not grant access to applications, files, or commands.'+(device&&!device.paired?' Josi on this PC will then ask you once to approve the PC with your password.':'')
+        :'Disable PC control and revoke temporary and task grants. Completed work is not undone.'
       : body.enabled?'Enable everyday control for browsers, folders and applications. Commands, deletion, purchases, credentials, installs, security changes and elevation still ask. Existing Never rules remain blocked.'
         :'Disable everyday full control. Exact saved permissions still apply.';
   } else if(area==='pc_control_preset'){
@@ -85,4 +89,46 @@ export async function preparePcPermissionChange(db:Db,owner:string,key:MasterKey
   if(summary.length>2000)throw new PcControlError(400,'The exact permission description is too long to display. Use a shorter scope.');
   const query=new URLSearchParams({pcId:current.pcId,ownerId:owner,revision:String(current.revision)});
   return {body:normalized,summary,path:path+'?'+query.toString()};
+}
+
+/** One fact per link of the chain from a chat request to work on the PC, so a
+ * failure names itself instead of ending in "Josi says it can't". Read by the
+ * PC Control screen, the readiness route and pc_get_permissions. */
+export type ReadinessFact={ok:boolean|null;detail:string};
+export async function pcControlReadiness(db:Db,owner:string,requested?:unknown):Promise<{facts:Record<string,ReadinessFact>;ready:boolean;summary:string}> {
+  const facts:Record<string,ReadinessFact>={};
+  const [model]=await db.query<{provider:string;model:string;cap_tool_calling:boolean|null;cap_vision:boolean|null;probed_at:string|null;activated_at:string|null}>(
+    `select provider,model,cap_tool_calling,cap_vision,probed_at,activated_at from llm_providers where role='primary'`);
+  facts.model=!model?{ok:false,detail:'No language model is configured. Choose one under Models.'}
+    :model.cap_tool_calling===true?{ok:true,detail:`${model.model} (${model.provider}) can call tools${model.cap_vision?' and see images':''}; checked ${model.probed_at??'never'}.`}
+    :model.probed_at?{ok:false,detail:`${model.model} (${model.provider}) did not pass the tool-calling check on ${model.probed_at}, so Josi cannot act on this PC or change settings with it. Run Check Again under Models, or pick a model that can call tools.`}
+    :{ok:false,detail:`${model.model} (${model.provider}) has not been checked yet. Run Check Again under Models.`};
+  const configured=process.env.JOSI_MCP_SERVER?.trim();
+  facts.toolServer=configured?(existsSync(configured)?{ok:true,detail:'The Josi tool server is installed at '+configured+'.'}:{ok:false,detail:'JOSI_MCP_SERVER points at a missing file: '+configured+'. Repair the installation.'})
+    :{ok:null,detail:'JOSI_MCP_SERVER is not set; the tool server is looked up at its default location.'};
+  const devices=await db.query<{pcId:string;enabled:boolean;connected:boolean;paired:boolean;fullControl:boolean}>(
+    `select s.pc_id as "pcId",s.enabled,s.full_control as "fullControl",coalesce(p.expires_at>now(),false) as connected,(i.public_key is not null) as paired
+     from pc_control_settings s left join pc_control_presence p on p.owner_user_id=s.owner_user_id and p.pc_id=s.pc_id
+     left join pc_executor_identity i on i.owner_user_id=s.owner_user_id and i.pc_id=s.pc_id where s.owner_user_id=$1 order by s.pc_id`,[owner]);
+  const pcId=typeof requested==='string'?requested:devices.length===1?devices[0].pcId:devices.find(d=>d.connected)?.pcId;
+  const pc=devices.find(d=>d.pcId===pcId);
+  facts.pcRegistered=pc?{ok:true,detail:'This PC is registered as '+pc.pcId+'.'}
+    :devices.length?{ok:false,detail:'Several PCs are registered and none is selected: '+devices.map(d=>d.pcId).join(', ')+'.'}
+    :{ok:false,detail:'No PC is registered to this account. Open Josi on the PC and sign in as the owner; it registers itself.'};
+  facts.pcPaired=!pc?{ok:false,detail:'Not paired.'}:pc.paired?{ok:true,detail:'The PC approved its executor key.'}
+    :{ok:false,detail:'This PC has not approved its executor key. In Josi on that PC, open PC Control and choose Approve This PC (your password, once).'};
+  facts.controlEnabled=!pc?{ok:false,detail:'PC control is off.'}:pc.enabled?{ok:true,detail:'PC control is on'+(pc.fullControl?' with everyday full control.':'.')}
+    :{ok:false,detail:'PC control is off. Turn it on under PC Control, or ask Josi in chat to turn it on.'};
+  facts.pcPresence=!pc?{ok:false,detail:'Josi is not announcing itself from any PC.'}:pc.connected?{ok:true,detail:'Josi is open on the PC and ready to work.'}
+    :pc.enabled&&pc.paired?{ok:false,detail:'Josi on the PC is not announcing itself. Is the app open and signed in as the owner on its Workspace screen?'}
+    :{ok:false,detail:'Josi announces itself once the PC is paired and control is on.'};
+  if(pc){
+    const [counts]=await db.query<{grants:string;pending:string}>(
+      `select (select count(*) from pc_control_policies where owner_user_id=$1 and pc_id=$2 and mode in ('always','temporary','task')) as grants,
+              (select count(*) from pc_control_requests where owner_user_id=$1 and pc_id=$2 and state='pending' and expires_at>now()) as pending`,[owner,pc.pcId]);
+    facts.grants={ok:null,detail:`${counts.grants} saved allowance(s), ${counts.pending} request(s) waiting for approval.`};
+  }
+  const blocking=Object.entries(facts).filter(([,f])=>f.ok===false).map(([k])=>k);
+  const summary=blocking.length?'Not ready: '+blocking.join(', ')+'.':'Ready: Josi can work on this PC.';
+  return {facts,ready:blocking.length===0,summary};
 }

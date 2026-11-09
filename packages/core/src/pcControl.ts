@@ -182,6 +182,12 @@ export class PcControl {
     await db.query(`update pc_control_settings set epoch=epoch+1 where owner_user_id=$1 and pc_id=$2`,[owner,this.pcId]);
     await db.query(`update pc_control_requests set state='revoked' where owner_user_id=$1 and pc_id=$2 and state in ('pending','approved')`,[owner,this.pcId]);
   }
+  /** Makes this PC known to the account before it is paired or enabled, so
+   * chat can list it and prepare "turn on PC control" for it. Grants nothing. */
+  async register(owner:string){
+    if(!uuid(owner))fail('Invalid owner.');
+    await this.db.query(`insert into pc_control_settings(owner_user_id,pc_id) values($1,$2) on conflict do nothing`,[owner,this.pcId]);
+  }
   async setEnabled(owner:string,enabled:boolean,expectedRevision?:number){
     if(typeof enabled!=='boolean')fail('Choose on or off.');
     if(!enabled)return this.stop(owner);

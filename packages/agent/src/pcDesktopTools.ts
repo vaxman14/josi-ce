@@ -11,7 +11,7 @@ import { win32 } from 'node:path';
 import { LOCAL_WINDOWS_PC, livePcId, PcControl, PcControlError, type Db, type MasterKey, type PcAction, type PcScope } from '@josi-ce/core';
 import { settle } from './pcBrowserTools.js';
 import type { ToolSpec } from './tools.js';
-import { pcPermissionState } from './pcPermissionSettings.js';
+import { pcControlReadiness, pcPermissionState } from './pcPermissionSettings.js';
 
 const id = { type: 'string', format: 'uuid' };
 const shape = (fields: Record<string, unknown>, required = Object.keys(fields)) => ({ type: 'object', properties: fields, required, additionalProperties: false });
@@ -168,7 +168,12 @@ async function commandGrants(control: PcControl, owner: string) {
 export async function executePcDesktopTool(db: Db, owner: string, key: MasterKey | null, name: string, input: Record<string, unknown>, taskId?:string) {
   if (!key) return { ok: false, code: 'desktop_unavailable', message: 'Desktop control is unavailable on this installation.' };
   try {
-    if (name === 'pc_get_permissions') return { ok: true, ...await pcPermissionState(db, owner, key, input.pc_id) };
+    if (name === 'pc_get_permissions') {
+      const state = await pcPermissionState(db, owner, key, input.pc_id);
+      // The readiness facts say exactly which link is missing (model, pairing,
+      // control, presence), so the answer names the step instead of refusing.
+      return { ok: true, ...state, readiness: await pcControlReadiness(db, owner, input.pc_id ?? state.selected?.pcId) };
+    }
     const control = await service(db, key, owner, input.pc_id);
     if (name === 'desktop_check_request') return await settle(control, owner, String(input.request_id), 20_000, 'desktop_check_request');
     if (!await control.presence(owner)) return { ok: false, code: 'josi_not_open',

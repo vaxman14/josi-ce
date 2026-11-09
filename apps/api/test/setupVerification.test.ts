@@ -99,6 +99,7 @@ async function wizardTo(stopBefore: string) {
     ['llm', { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-key-0001', externalAcknowledged: true }],
     ['smtp', { skip: true }],
     ['security', {}],
+    ['pc_control', { skip: true }],
     ['telemetry', {}],
     ['review', {}],
   ];
@@ -283,6 +284,7 @@ describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
     expect(smtp.body.verification.status).toBe('failed');
 
     await call('/api/setup/steps/security', { method: 'POST', body: {} });
+    await call('/api/setup/steps/pc_control', { method: 'POST', body: { skip: true } });
     await call('/api/setup/steps/telemetry', { method: 'POST', body: {} });
     await call('/api/setup/steps/review', { method: 'POST', body: {} });
     await call('/api/setup/verify/llm', { method: 'POST', body: {} });
@@ -405,6 +407,7 @@ describe('LB6.4 — a step holding configuration can be corrected', () => {
       ['owner', { ...OWNER, email: 'attacker@ce.test', username: 'attacker' }],
       ['domain', { domain: 'evil.example.test', tlsMode: 'bundled_caddy' }],
       ['security', {}],
+      ['pc_control', { skip: true }],
       ['telemetry', { enabled: true }],
     ] as const) {
       const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });

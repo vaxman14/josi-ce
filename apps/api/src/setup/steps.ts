@@ -15,6 +15,7 @@ export const SETUP_STEPS = [
   'llm',
   'smtp',
   'security',
+  'pc_control',
   'telemetry',
   'review',
 ] as const;
@@ -142,6 +143,12 @@ export const STEP_DESCRIPTORS: Record<SetupStep, StepDescriptor> = {
     title: 'Security and privacy',
     summary: 'What Josi is allowed to reach, and what that exposes.',
     skippable: false,
+  },
+  pc_control: {
+    id: 'pc_control',
+    title: 'Josi on this PC',
+    summary: 'Lets Josi work on this computer (commands, files, programs, windows) with your permission for each step. Pairs this PC to your account.',
+    skippable: true,
   },
   telemetry: {
     id: 'telemetry',

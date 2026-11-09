@@ -3,6 +3,7 @@ import { verifyPassword, checkLoginRate, recordLoginAttempt } from '@josi-ce/aut
 import { verifyPcExecutor } from './pcExecutorIdentity.js';
 import { clientIp } from './cookies.js';
 import { disablePcControl, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
+import { pcControlReadiness } from '@josi-ce/agent';
 import { requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
@@ -50,6 +51,10 @@ export function pcControlRoutes(ctx:Ctx):Router {
         :'Permissions can be saved here. Browser control starts when the Josi app is open and a tab is attached with the Josi browser extension.',
       uac:'Windows UAC always requires its own approval. Josi cannot approve future prompts.'});
   }));
+  // The app makes its PC known as soon as the owner signs in, before pairing
+  // and before control is on, so chat can list it and offer to turn it on.
+  r.put('/register',handle(async(req,res)=>{await control(req).register(req.user!.id);return res.json({ok:true,pcId:control(req).pcId});}));
+  r.get('/readiness',handle(async(req,res)=>res.json(await pcControlReadiness(ctx.db,req.user!.id,req.query.pcId===undefined?control(req).pcId:targetPc(req)))));
   r.get('/identity',handle(async(req,res)=>{
     const [identity]=await ctx.db.query<{public_key:string}>('select public_key from pc_executor_identity where owner_user_id=$1 and pc_id=$2',[req.user!.id,targetPc(req)]);
     return res.json({publicKey:identity?.public_key??null,enabled:(await control(req).snapshot(req.user!.id)).enabled});

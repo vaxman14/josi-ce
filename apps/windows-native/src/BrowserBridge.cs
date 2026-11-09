@@ -202,7 +202,7 @@ namespace Josi.Native {
     /// work goes to the extension, desktop work to the desktop executor.
     async void Execute(AppModel model) {
       string lastPresence = null; var presenceAt = DateTime.MinValue; var checkedAt = DateTime.MinValue;
-      var announced = new HashSet<string>();
+      var announced = new HashSet<string>(); string registeredFor = null; var approvalAsked = false;
       while (true) {
         await Task.Delay(1000);
         var api = model.Api;
@@ -213,7 +213,24 @@ namespace Josi.Native {
             DesktopExecutor.Current.StopAcknowledged();
           }
           api.BindPc(model.User["id"].Text);
-          if (!await api.PcAuthority.Ensure(api, System.Windows.Application.Current.MainWindow)) continue;
+          // Known to the account before pairing or enabling, so chat can list this
+          // PC and offer to turn control on for it.
+          var registration = api.OriginText + "|" + model.User["id"].Text;
+          if (registeredFor != registration) {
+            // An older server has no register route; pairing and presence still work without it.
+            try { await api.Request("/admin/pc-control/register", "PUT", Wires.O()); } catch (JosiException) { }
+            registeredFor = registration;
+          }
+          if (!await api.PcAuthority.Ensure(api)) {
+            // Approval happens where the person is (PC Control, or the chat card
+            // that turned control on), never as a surprise sheet from here.
+            if (api.PcAuthority.NeedsApproval && !approvalAsked && (await api.Request("/admin/pc-control/identity"))["enabled"].Flag) {
+              approvalAsked = true;
+              Raise();
+              if (!model.Active) Notifications.Show("Approve this PC for Josi", "PC control is on, but this PC has not been approved yet. Open PC Control in Josi and choose Approve This PC.");
+            }
+            continue;
+          }
           Dictionary<string, object> presence; bool live;
           lock (gate) {
             live = Live();

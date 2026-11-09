@@ -7,7 +7,7 @@ import { isAbsolute } from 'node:path';
  * stream-json user message whose content holds real image blocks next to the
  * text. Claude Code accepts stream-json input only with stream-json output,
  * which in print mode requires --verbose; the result envelope is the same. */
-export function claudeSubscriptionArgs(model: string, mcpConfigPath?: string | null, structured = false): string[] {
+export function claudeSubscriptionArgs(model: string, mcpConfigPath?: string | null, structured = false, systemPromptPath?: string | null): string[] {
   return [
     ...(structured
       ? ['--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose']
@@ -19,6 +19,10 @@ export function claudeSubscriptionArgs(model: string, mcpConfigPath?: string | n
     '--settings', '{"disableAllHooks":true,"disableClaudeAiConnectors":true,"syncClaudeAiPlugins":false}',
     '--strict-mcp-config', '--mcp-config', mcpConfigPath || '{"mcpServers":{}}',
     ...(mcpConfigPath ? ['--allowed-tools', 'mcp__josi'] : []),
+    // Josi's own instructions REPLACE the CLI's coding-assistant prompt. On
+    // stdin they were just more user text, and the model answered as Claude
+    // Code ("I'm a text-based assistant..."). The file is private and per turn.
+    ...(systemPromptPath ? ['--system-prompt-file', systemPromptPath] : []),
   ];
 }
 
@@ -31,6 +35,9 @@ export function validClaudeSubscriptionArgs(args: string[]): boolean {
     || /[\x00-\x1f\x7f]/.test(model) || configIndex < 0 || typeof config !== 'string') return false;
   const path = config === '{"mcpServers":{}}' ? null : config;
   if (path !== null && (!isAbsolute(path) || /[\x00-\x1f\x7f]/.test(path))) return false;
+  const systemIndex = args.indexOf('--system-prompt-file');
+  const systemPath = systemIndex < 0 ? null : args[systemIndex + 1];
+  if (systemPath !== null && (typeof systemPath !== 'string' || !isAbsolute(systemPath) || /[\x00-\x1f\x7f]/.test(systemPath))) return false;
   const structured = args[1] === '--input-format';
-  return JSON.stringify(args) === JSON.stringify(claudeSubscriptionArgs(model, path, structured));
+  return JSON.stringify(args) === JSON.stringify(claudeSubscriptionArgs(model, path, structured, systemPath));
 }

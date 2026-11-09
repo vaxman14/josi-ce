@@ -205,7 +205,7 @@ namespace Josi.Native {
     string renderedKey;
     string provider = "";
     List<Wire> discovered = new List<Wire>();
-    CheckBox enabled, recoverySaved;
+    CheckBox enabled, recoverySaved, pcEnable;
     NewPassword ownerPassword;
     PasswordInput resumePassword;
     Button createOwner;
@@ -224,6 +224,7 @@ namespace Josi.Native {
       {"llm", new[] {"Pick Josi's brain", "The AI model she thinks with. Your subscription or your own key both work."}},
       {"smtp", new[] {"Email, if you want it", "Lets Josi send invitations and password resets. You can skip this for now."}},
       {"security", new[] {"Your folders", "Choose whether people here may give Josi access to folders."}},
+      {"pc_control", new[] {"Let Josi use this PC", "Commands, programs, files and windows on this computer, with your permission for each. You can skip this."}},
       {"telemetry", new[] {"Help improve Josi", "Completely optional, and it never includes your conversations."}},
       {"review", new[] {"Almost there", "One last look at what you chose."}},
       {"", new[] {"All set", "Josi is ready when you are."}},
@@ -447,6 +448,23 @@ namespace Josi.Native {
           enabled = enabled ?? Automation.Id(Ui.Toggle("Allow people to choose folders for Josi to read"), "josi.setup.enabled");
           list.Add(Detach(enabled)); list.Add(Ui.Secondary("Each person still needs to approve their own folders."));
           list.Add(Next(() => Wires.O("folderMappingEnabled", enabled.IsChecked == true)));
+          break;
+        case "pc_control":
+          list.Add(Ui.T("Josi can work on this PC the way an assistant at the keyboard would: run commands and scripts, open programs, read and write files and use windows. Every action goes through PC Control: you choose which shells, folders and programs are allowed, once or until revoked, and a control bar with Stop is always visible while it works."));
+          pcEnable = pcEnable ?? Automation.Id(Ui.Toggle("Turn PC control on now", true), "josi.setup.pc-enable");
+          list.Add(Detach(pcEnable));
+          list.Add(Ui.Secondary("Approving pairs this PC to your account with the key it just made; your new password confirms it. Nothing is allowed yet: that comes in PC Control or by asking Josi in chat."));
+          list.Add(Ui.Row(10,
+            Automation.Id(Ui.Pill("Approve This PC and Continue", () => {
+              var ownerId = model.SetupState["ownerId"].Text; var api = model.Api;
+              if (api == null || !Wires.IsUuid(ownerId)) { model.Error = "Create your account first."; model.Notify(); return; }
+              bool hardware; var point = PcAuthority.PublicPointFor(api.OriginText, ownerId, out hardware);
+              var password = Dialogs.AskPassword(owner, "Approve computer control on " + Environment.MachineName,
+                "PC: " + JosiApi.DeviceId + "\nKey: " + ProtectedWire.Digest(point).Substring(0, 24) + "\n" + (hardware ? "Windows hardware key" : "Windows protected software key") + "\n\nEnter the password of the account you just created.", "Approve this PC");
+              if (password == null) return;
+              Submit(Wires.O("pcId", JosiApi.DeviceId, "publicKey", point, "password", password, "enable", pcEnable.IsChecked == true));
+            }, true), "josi.setup.pc-approve"),
+            Automation.Id(Ui.Pill("Skip for Now", () => Submit(Wires.O("skip", true))), "josi.setup.pc-skip")));
           break;
         case "telemetry":
           enabled = enabled ?? Automation.Id(Ui.Toggle("Send anonymous usage counts"), "josi.setup.enabled");

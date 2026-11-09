@@ -148,6 +148,7 @@ async function runWizard(stopBefore?: string): Promise<void> {
     ['llm', { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-llm-key-DO-NOT-USE-0001', externalAcknowledged: true }],
     ['smtp', SMTP_BODY],
     ['security', { folderMappingEnabled: true }],
+    ['pc_control', { skip: true }],
     ['telemetry', {}],
     ['review', {}],
   ];
@@ -376,7 +377,7 @@ describe('the state machine cannot be driven by the client', () => {
         role: 'member',                    // must not change the created role
         id: '00000000-0000-0000-0000-000000000001',
         completed: true,                   // must not finish setup
-        completedSteps: [...['host_checks', 'owner', 'domain', 'llm', 'smtp', 'security', 'telemetry', 'review']],
+        completedSteps: [...['host_checks', 'owner', 'domain', 'llm', 'smtp', 'security', 'pc_control', 'telemetry', 'review']],
         install_id: '11111111-1111-1111-1111-111111111111',
         nextStep: 'review',
       },
@@ -899,7 +900,7 @@ describe('Google and Microsoft are not part of installation', () => {
     const ids = (res.body.steps as Array<{ id: string }>).map((s) => s.id);
     expect(ids).not.toContain('connectors');
     expect(ids).toEqual([
-      'host_checks', 'owner', 'domain', 'llm', 'smtp', 'security', 'telemetry', 'review',
+      'host_checks', 'owner', 'domain', 'llm', 'smtp', 'security', 'pc_control', 'telemetry', 'review',
     ]);
   });
 
@@ -932,6 +933,34 @@ describe('Google and Microsoft are not part of installation', () => {
 });
 
 // ------------------------------------------------------------------- 13
+describe('the PC step pairs the Josi app to the owner', () => {
+  const point = Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 7)]).toString('base64');
+  it('is skippable and writes nothing when skipped', async () => {
+    await runWizard('pc_control');
+    expect((await call('/api/setup/steps/pc_control', { method: 'POST', body: { skip: true } })).status).toBe(200);
+    expect((await db.query(`select 1 from pc_control_settings`)).length).toBe(0);
+    expect((await db.query(`select 1 from pc_executor_identity`)).length).toBe(0);
+  });
+  it('registers and pairs the PC with the new password, and can turn control on', async () => {
+    await runWizard('pc_control');
+    const state = await call('/api/setup/state');
+    expect(state.body.ownerExists).toBe(true);
+    expect(typeof state.body.ownerId).toBe('string');
+    expect((await call('/api/setup/steps/pc_control', { method: 'POST', body: { pcId: 'win-test', publicKey: point, password: 'wrong', enable: true } })).status).toBe(401);
+    expect((await call('/api/setup/steps/pc_control', { method: 'POST', body: { pcId: 'win-test', publicKey: 'AAAA', password: OWNER.password } })).status).toBe(400);
+    expect((await call('/api/setup/steps/pc_control', { method: 'POST', body: { pcId: 'Bad PC!', publicKey: point, password: OWNER.password } })).status).toBe(400);
+    const ok = await call('/api/setup/steps/pc_control', { method: 'POST', body: { pcId: 'win-test', publicKey: point, password: OWNER.password, enable: true } });
+    expect(ok.status).toBe(200);
+    expect(ok.body.nextStep).toBe('telemetry');
+    const [settings] = await db.query<{ enabled: boolean; pc_id: string }>(`select enabled, pc_id from pc_control_settings`);
+    expect(settings).toMatchObject({ enabled: true, pc_id: 'win-test' });
+    const [identity] = await db.query<{ public_key: string }>(`select public_key from pc_executor_identity where pc_id='win-test'`);
+    expect(identity.public_key).toBe(point);
+    // Not revisable: pairing cannot be replayed into a different key later.
+    expect((await call('/api/setup/steps/pc_control', { method: 'POST', body: { pcId: 'win-test', publicKey: point, password: OWNER.password } })).status).toBe(409);
+  });
+});
+
 describe('telemetry is off unless affirmatively enabled', () => {
   const cases: Array<[string, unknown]> = [
     ['omitted', {}],

@@ -534,7 +534,10 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : pcDesktopTools.some(t=>t.def.name!=='pc_get_permissions') ? `\n\n${PC_BROWSER_ABSENT_PROMPT}` : '')
     + (computerTools.length ? `\n\n${COMPUTER_PROMPT}` : '')
     + (pcDesktopTools.length ? `\n\n${PC_DESKTOP_PROMPT}` : '')
-    + (capabilities.toolCalling ? `\n\n${SETTINGS_CHANGE_PROMPT}` : '');
+    + (capabilities.toolCalling ? `\n\n${SETTINGS_CHANGE_PROMPT}`
+      // Honest about the gap: without tool calling nothing can act, and the
+      // owner needs to hear which model to change, not a generic refusal.
+      : `\n\nThis model (${stored?.model ?? 'the configured model'}) did not pass Josi's tool-calling check, so in this conversation you cannot act on the PC, run commands, read files or change Josi's settings. If asked to, say exactly that and tell the owner to run Check Again or choose a model with tool calling under Models in Josi.`);
 
   // Approved skills and memory rules, and long work kept as a goal. Best
   // effort: missing guidance costs polish, never the turn.

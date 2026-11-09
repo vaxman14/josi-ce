@@ -33,10 +33,12 @@ namespace Josi.Native {
     }
     readonly Action refresh;
     protected override void OnLeave() { timer.Stop(); BrowserBridge.Current.Changed -= refresh; foreach (var p in passwords.Values) p.Clear(); }
+    Wire readiness = Wire.Null;
     protected override async Task Load() {
       var api = Api; var stamp = Stamp; var s = await api.Request("/admin/pc-control");
+      Wire r; try { r = await api.Request("/admin/pc-control/readiness"); } catch (JosiException) { r = Wire.Null; }
       if (!Current(stamp)) return;
-      state = s;
+      state = s; readiness = r;
       var catalog = s["catalog"].List;
       actionPick.ItemsSource = catalog.Select(c => c["label"].Text).ToList();
       if (action.Length == 0 && catalog.Count > 0) action = catalog[0]["action"].Text;
@@ -49,6 +51,7 @@ namespace Josi.Native {
       var page = Page(Ui.HeadingWith("PC Control", null, Ui.Row(8,Ui.Pill("Show Control Bar",()=>PcControlOverlay.Current?.ShowControls()),Ui.Pill("Terminals",()=>PcTerminalView.Show(owner)),Ui.Pill("Refresh", StartLoad))));
       if (state.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading PC permissions…" : "PC permissions have not loaded."), 0); return page; }
       var enabled = state["enabled"].Flag; var full = state["fullControl"].Flag;
+      Ui.Add(page, ReadinessCard(), 0);
       var master = Automation.Id(Ui.Toggle("Allow Josi to control this PC", enabled), "josi.pc-control.enabled");
       master.Click += delegate { var on = master.IsChecked == true; Perform(async (api, stamp) => await api.Request("/admin/pc-control/enabled", "PUT", Wires.O("enabled", on))); };
       Ui.Add(page, Ui.CardBox(null, Ui.Secondary(state["availability"].Text), master,
@@ -134,6 +137,36 @@ namespace Josi.Native {
       Ui.Add(page, new Disclosure("Activity log", () => activity), 0);
       Ui.Add(page, Note(), 0);
       return page;
+    }
+    /// Is Josi able to work on this PC? One line per link of the chain, from
+    /// the model's tool calling to this PC announcing itself, each green or
+    /// red with the exact fix, plus Approve This PC when that is the missing
+    /// link. The owner reads this instead of guessing.
+    UIElement ReadinessCard() {
+      var items = new List<UIElement>();
+      var authority = Api != null ? Api.PcAuthority : null;
+      if (readiness.IsNull) items.Add(Ui.Caption("Readiness could not be loaded from the server."));
+      else {
+        items.Add(Ui.T(readiness["summary"].Text, 14, FontWeights.Medium, readiness["ready"].Flag ? Ui.Green : Ui.Accent));
+        var facts = readiness["facts"];
+        foreach (var key in new[] { "model", "toolServer", "pcRegistered", "pcPaired", "controlEnabled", "pcPresence", "grants" }) {
+          var fact = facts[key]; if (fact.IsNull) continue;
+          var ok = fact["ok"];
+          items.Add(Ui.Row(8, Ui.Icon(ok.IsNull ? Glyph.Circle : ok.Flag ? Glyph.Check : Glyph.Warning, 13, ok.IsNull ? Ui.Muted : ok.Flag ? Ui.Green : Ui.Error), Ui.T(fact["detail"].Text, 13)));
+        }
+      }
+      if (authority != null && (authority.NeedsApproval || (!readiness.IsNull && readiness["facts"]["pcPaired"]["ok"].IsNull == false && !readiness["facts"]["pcPaired"]["ok"].Flag))) {
+        items.Add(Ui.Caption(authority.KeyChanged
+          ? "The server knows a different key for this PC. Revoke its old identity, then approve it again."
+          : "Approving binds this PC's key to your account. Your password, once. It grants no permissions by itself."));
+        var buttons = Ui.Wrap(Automation.Id(Ui.Pill("Approve This PC", () => Perform(async (api, stamp) => { await api.PcAuthority.Approve(api, owner); }), true), "josi.pc-control.approve-pc"));
+        if (authority.KeyChanged) buttons.Children.Add(Automation.Id(Ui.Pill("Revoke Old Identity", () => {
+          if (Dialogs.Confirm(owner, "Revoke this PC's old identity?", "Stops control on this PC and forgets its previous key. Then approve the PC again.", "Revoke"))
+            Perform(async (api, stamp) => await api.Request("/admin/pc-control/identity", "DELETE", null));
+        }), "josi.pc-control.revoke-identity"));
+        items.Add(buttons);
+      }
+      return Ui.CardBox("Is Josi able to work on this PC?", items.ToArray());
     }
     /// One switch instead of a permission per site: everyday actions in allowed
     /// browsers, folders and applications stop asking. The server lists what
