@@ -129,9 +129,9 @@ function Test-SameInventory([string]$Text,$Known){
 }
 function Link-InstalledComponent($Component,$Known,[string]$PriorProgram,[string]$Destination){
     # Rebuild one component in the staging folder from the installed version:
-    # its inventory, then every listed file as a hard link (same volume) or a
-    # copy. Each file is still hashed against the inventory afterwards, so a
-    # changed or missing installed file fails the check or this fallback.
+    # its inventory, then every listed file copied. Sizes and shapes are checked
+    # afterwards like every other file; the hashes were verified when that
+    # version was installed.
     $files=@($Known.files)
     if($files.Count -eq 0){throw 'No recorded files'}
     $null=[IO.Directory]::CreateDirectory((Join-Path $Destination 'inventories'))
@@ -143,8 +143,10 @@ function Link-InstalledComponent($Component,$Known,[string]$PriorProgram,[string
         $to=Assert-PlainNativePath (Join-Path $Destination $entry.path) $checked
         if(!$to.StartsWith($Destination+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Component path refused'}
         $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($to))
-        try{$null=New-Item -ItemType HardLink -Path $to -Value $from -ErrorAction Stop}
-        catch{[IO.File]::Copy($from,$to,$false)}
+        # A copy, not a hard link: the file check refuses files with more than
+        # one link (an aliasing guard), and the copy is still far cheaper than
+        # unpacking and re-hashing.
+        [IO.File]::Copy($from,$to,$false)
     }
 }
 function Extract-VerifiedArchive($Component,[string]$Archive,[string]$Destination){
@@ -281,7 +283,7 @@ try{
         foreach($entry in $entries){
             $path=Assert-PlainNativePath (Join-Path $source $entry.path) $checked
             if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($path) -or [IO.FileInfo]::new($path).Length -ne $entry.size){throw 'Expanded payload failed verification'}
-            # A reused file is a hard link to a file the previous install verified and runs; size and shape are checked, the hash is not redone.
+            # A reused file is a fresh copy of a file the previous install verified and runs; size and shape are checked, the hash is not redone.
             if($reused.ContainsKey([string]$entry.path)){continue}
             $stream=[IO.File]::OpenRead($path)
             try{$digest=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}finally{$stream.Dispose()}
@@ -324,13 +326,7 @@ try{
     $checked=@{}
     foreach($entry in $entries){
         $target=Assert-PlainNativePath (Join-Path $program $entry.path) $checked;$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
-        # A reused file becomes another hard link to the installed version's file
-        # (same bytes, same Program Files permissions); everything else is copied.
-        # Fresh files are never linked from the cache: a link keeps the cache's
-        # administrator-only permissions, which the services could not read.
-        $linked=$false
-        if($reused.ContainsKey([string]$entry.path) -and $priorProgram){try{$null=New-Item -ItemType HardLink -Path $target -Value (Join-Path $priorProgram $entry.path) -ErrorAction Stop;$linked=$true}catch{$linked=$false}}
-        if(!$linked){[IO.File]::Copy((Join-Path $source $entry.path),$target,$false)}
+        [IO.File]::Copy((Join-Path $source $entry.path),$target,$false)
     }
     $null=Set-NativeTransactionPhase $lock $directory 'verified';Step 66 'Creating Josi''s folders'
     if($Operation -ceq 'install'){
