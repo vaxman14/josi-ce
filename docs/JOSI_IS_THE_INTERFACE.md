@@ -4,6 +4,13 @@ Written from the owner's words after a day of live testing. This governs how
 every setting, connector and permission in Josi is reached. It is not yet
 implemented; the implementation plan follows the rules.
 
+## The principle
+
+Permissions, restrictions and self-hosting are what Josi has. Ease of use is
+the moat the owner is building: *all I need to do is ask, and it shall be
+given to me.* Every screen is a fallback. A feature that cannot be asked for
+and delivered in chat is not finished.
+
 ## The rules
 
 1. **Ask Josi, for everything.** Any question about Josi's own setup is answered
