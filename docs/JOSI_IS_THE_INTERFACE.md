@@ -1,8 +1,8 @@
 # Josi is the interface (spec, November 8, 2026)
 
 Written from the owner's words after a day of live testing. This governs how
-every setting, connector and permission in Josi is reached. It is not yet
-implemented; the implementation plan follows the rules.
+every setting, connector and permission in Josi is reached. Steps A to G of
+the plan are built (see Status at the end); H is not started.
 
 ## The principle
 
@@ -121,3 +121,36 @@ Verification is the same as PC control: a live chat on the installed build,
 driven step by step, recorded in the acceptance doc. For the extension, a
 real attached tab doing a bounded task (the garage-sale photo description
 from the original handoff) is the acceptance.
+
+## Status (November 8, 2026, commit 555f1cc and after)
+
+Built and unit-tested, not yet driven live on the installed build:
+
+- A `josi_setup_status` (`packages/agent/src/setupStatusTools.ts`). Try: "what's
+  my Google redirect URI?", "which model is active?", "is mail set up?".
+- B `request_credential_card` (`credentialCardTools.ts`): native sheet
+  (`Dialogs.CredentialCard`), Approvals "Fill in", web `CredentialCards.tsx`.
+  The proposal row's body carries the card's fields and fixed values only; the
+  app performs the route and reports `/settings-changes/:id/applied`. Try:
+  "set up GitHub" → "yes, I have a token" → card.
+- C the member ceilings (`admin_capability_policy`, developer service policy)
+  never gate the super-admin (`isOwner` in `connections.ts`, developer routes).
+- D `request_connector_access`, `decide_connector_request`,
+  `revoke_connector_access` (`connectorRequestTools.ts`); requests live a week
+  as `member_connector_request` proposals; the owner's chat lists them every
+  turn; the member's thread gets the outcome; the owner is emailed when a mail
+  server exists. POST `/admin/developer-services/:service/allow` is what the
+  owner's app applies.
+- E the prompt pieces (`SETUP_STATUS_PROMPT`, `CREDENTIAL_CARD_PROMPT`,
+  `CONNECTOR_REQUEST_PROMPT`, `MY_WORLD_PROMPT`) sit before the settings prompt.
+- G My World: migration `0120_my_world.sql`, `packages/core/src/myWorld.ts`,
+  routes `/my-world`, tools in `myWorldTools.ts`, native `MyWorldView` (menu
+  top, chat-bar button). Secrets are sealed with the owner's Vault box key
+  (`sealForOwner`); reveal needs the five-minute Vault unlock and is logged.
+  `worldContext` is appended to every turn outside the memory engine.
+
+Not done: H (the extension). The rebuilt service worker was not produced in
+this session; `apps/browser-extension/src` is unchanged at 0.8.0 and the
+garage-sale acceptance is still open. The native build, the agent, core,
+connectors and API test suites pass with these changes.
+
