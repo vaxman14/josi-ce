@@ -84,6 +84,26 @@ Expected on the next update (from preview.11): unpack about 15 s instead of 50, 
 | Model picker in the chat bar (`9b34e03`) | Picked Sonnet from the picker; the server saved it and ran its check; the owner confirmed "it's on sonnet". |
 | Instant switching (`llm_probe_memory`, `9b34e03`) | Server side only; takes effect after the next install. Model-route tests: 51 pass. |
 
+## preview.12 (`5bd9e03`): the fast update, proven
+
+| Phase | preview.7 (all unpacked) | preview.12 (7 of 8 kept) |
+|---|---:|---:|
+| Unpack / keep | 50 s | 38 s (Josi payload unpacked 14 s; Python copied 15 s) |
+| File check | 23 s | 10 s |
+| Copy into Program Files | 30 s | 25 s |
+| Database, services, health | 80 s | 77 s |
+| **Total, first step to Done** | **2 min 44 s** | **2 min 14 s** |
+
+Every component other than the Josi payload logged "Keeping … from version
+1.2.5-preview.11" with no fallback. The remaining time is the service restart
+and database step; making that faster is a different job (fewer restarts, or
+a hot swap of the web and worker processes).
+
+After install: preview.12 took over from the previous app on its own, and the
+chat picker, instant model switching (once each model is checked once on this
+server), approvals as cards, tray, and the quiet bar are all in the installed
+build.
+
 ## Owner feedback carried forward
 
 - Fewer steps, always: the setup step now pairs and enables in one go; the
