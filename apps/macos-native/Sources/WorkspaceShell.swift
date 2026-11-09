@@ -15,13 +15,14 @@ struct WorkspaceView: View {
         var items: [Item] = [("Overview", "square.grid.2x2", "overview"), ("People", "person.2", "people"),
                              ("Backups", "externaldrive.badge.timemachine", "backups")]
         if JosiFlags.serverApp { items += [("Model", "square.3.layers.3d", "models"), ("Network & address", "globe", "network")] }
+        items += [("Developer Services", "hammer", "developer-services"), ("Custom APIs", "curlybraces", "custom-apis"), ("PC Control", "desktopcomputer", "pc-control")]
         return items
     }
     private var title: String {
         if model.section == "chat" { return model.threads.first { $0.identifier == model.selectedThread }?["title"].text.nonempty ?? "Chat" }
         return (workspace + admin).first { $0.section == model.section }?.title ?? "Josi"
     }
-    private var chat: Bool { !["my-world", "tasks", "approvals", "email", "calendar", "contacts", "vault", "connections", "settings", "overview", "people", "backups", "models", "network", "automation", "channels"].contains(model.section) }
+    private var chat: Bool { !["my-world", "tasks", "approvals", "email", "calendar", "contacts", "vault", "connections", "settings", "overview", "people", "backups", "models", "network", "developer-services", "custom-apis", "pc-control", "automation", "channels"].contains(model.section) }
     private var status: String {
         switch model.ghost.state {
         case .listening: "listening…"
@@ -50,6 +51,9 @@ struct WorkspaceView: View {
                     case "backups": if model.isAdministrator { NativeBackupsView() }
                     case "models": if model.isAdministrator, JosiFlags.serverApp { NativeModelsView() }
                     case "network": if model.isAdministrator, JosiFlags.serverApp { NativeNetworkView() }
+                    case "developer-services": if model.isAdministrator { NativeDeveloperServicesView() }
+                    case "custom-apis": if model.isAdministrator { NativeCustomApisView() }
+                    case "pc-control": if model.isAdministrator { NativePcControlView() }
                     case "automation": if JosiFlags.localWorkspace { AutomationView() }
                     case "channels": if JosiFlags.channels { NativeChannelsView() }
                     default: ChatView()

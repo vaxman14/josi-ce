@@ -33,8 +33,12 @@ struct PcExecutorKey {
     private let enclave: SecureEnclave.P256.Signing.PrivateKey?
     private let software: P256.Signing.PrivateKey?
 
+    /// One key per owner and Mac. The server's address is left out on purpose:
+    /// setup pairs over localhost and the app may later reach the same server by
+    /// its LAN or public address, and that must not look like a new computer.
+    /// An owner id belongs to exactly one server, so it already tells them apart.
     static func name(origin: String, owner: String) -> String {
-        "executor-" + SHA256.hash(data: Data((origin + "\n" + owner + "\n" + PcDevice.id).utf8)).map { String(format: "%02x", $0) }.joined()
+        "executor-" + SHA256.hash(data: Data((owner + "\n" + PcDevice.id).utf8)).map { String(format: "%02x", $0) }.joined()
     }
     /// Opens the key, creating it the first time.
     static func open(_ name: String) throws -> PcExecutorKey {
