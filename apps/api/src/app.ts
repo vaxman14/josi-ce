@@ -32,7 +32,7 @@ import {
 import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
 import { personaRoutes } from './http/personaRoutes.js';
 import { migrationRoutes } from './http/migrationRoutes.js';
-import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
+import { adminLlmRoutes, llmRoutes, startModelWarmup } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './http/telegramRoutes.js';
 import { adminExternalChannelRoutes, externalChannelRoutes, mountExternalChannelWebhooks } from './http/externalChannelRoutes.js';
@@ -264,6 +264,9 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, connectorFetch: cfg.connectorFetch,
   }));
   api.use('/llm', llmRoutes({ db, masterKey: cfg.masterKeyCheck, codexRunner: cfg.codexRunner }));
+  // Every configured model is checked once in the background after start, so
+  // switching models in the app never waits (see startModelWarmup).
+  startModelWarmup({ db, masterKey: cfg.masterKeyCheck, codexRunner: cfg.codexRunner });
   // Mounted before /admin so the more specific prefix wins; both are behind
   // requireSuperAdmin either way.
   api.use('/assistant/turn-context', turnContextRoutes(db));

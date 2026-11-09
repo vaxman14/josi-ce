@@ -23,6 +23,7 @@ import {
   probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CLAUDE_COMMAND,
   DEFAULT_CODEX_COMMAND,
   PROVIDERS, credentialFields, describeProvider, saveModelConfiguration, removeModelConfiguration, ModelConfigurationError,
+  type StoredProvider,
 } from '@josi-ce/llm';
 import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
@@ -772,6 +773,68 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
  * make an informed data-sharing choice before a native client sends personal
  * content. The model name, endpoint, credential and other members' usage stay
  * private. */
+/** Checks every configured model in the background after the server starts,
+ * so no switch ever waits: both slots (primary and fallback), and on a
+ * subscription plan all of its aliases. Each result goes into llm_probe_memory;
+ * a result younger than 30 days is not redone. One pass at a time, never
+ * while an owner-started probe is running, never in tests. */
+export function startModelWarmup(ctx: LlmRoutesCtx, delayMs = 60_000, everyMs = 6 * 3_600_000): () => void {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) return () => undefined;
+  const { db } = ctx;
+  let running = false;
+  async function remembered(provider: string, model: string, baseUrl: string) {
+    const [row] = await db.query<{ probed_at: string }>(
+      `select probed_at from llm_probe_memory where provider = $1 and model = $2 and base_url = $3 and cap_chat = true and probed_at > now() - interval '30 days'`,
+      [provider, model, baseUrl]);
+    return !!row;
+  }
+  async function remember(stored: StoredProvider, model: string, result: Awaited<ReturnType<typeof probeProvider>>) {
+    await db.query(
+      `insert into llm_probe_memory (provider, model, base_url, probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       on conflict (provider, model, base_url) do update set probed_at = excluded.probed_at, probe_steps = excluded.probe_steps, cap_chat = excluded.cap_chat,
+         cap_structured_output = excluded.cap_structured_output, cap_tool_calling = excluded.cap_tool_calling, cap_vision = excluded.cap_vision, cap_context_tokens = excluded.cap_context_tokens`,
+      [stored.provider, model, stored.base_url ?? '', result.probedAt, json(result.steps), result.capabilities.chat, result.capabilities.structuredOutput,
+        result.capabilities.toolCalling, result.capabilities.vision, result.capabilities.contextTokens]);
+  }
+  async function pass() {
+    if (running) return; running = true;
+    try {
+      for (const role of ['primary', 'fallback'] as const) {
+        const stored = await loadStoredProvider(db, role);
+        if (!stored) continue;
+        // What the slot already proved counts as a remembered result.
+        if (stored.probed_at && stored.cap_chat) {
+          const [steps] = await db.query<{ probe_steps: unknown }>(`select probe_steps from llm_providers where role = $1`, [role]);
+          await db.query(
+            `insert into llm_probe_memory (provider, model, base_url, probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) on conflict (provider, model, base_url) do nothing`,
+            [stored.provider, stored.model, stored.base_url ?? '', stored.probed_at, json(Array.isArray(steps?.probe_steps) ? steps.probe_steps : []), stored.cap_chat, stored.cap_structured_output, stored.cap_tool_calling, stored.cap_vision, stored.cap_context_tokens]);
+        }
+        const models = stored.provider === 'anthropic_subscription' ? ['haiku', 'sonnet', 'opus'] : [stored.model];
+        for (const model of models) {
+          if (await remembered(stored.provider, model, stored.base_url ?? '')) continue;
+          if (probeProgress(role).running) return; // the owner is checking something; try again next pass
+          try {
+            const candidate: StoredProvider = { ...stored, model };
+            const provider = await buildProvider({ db, masterKey: ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {}), fetchImpl: ctx.fetchImpl, resolve: ctx.resolve, codexRunner: ctx.codexRunner }, candidate);
+            const result = await probeProvider(meteredProvider(db, candidate, role, provider, { purpose: 'probe' }));
+            await remember(stored, model, result);
+            console.error(`josi-ce: model warmup checked ${stored.provider} ${model}: chat ${result.capabilities.chat}, tools ${result.capabilities.toolCalling}`);
+          } catch (err) {
+            console.error(`josi-ce: model warmup could not check ${stored.provider} ${model}: ${(err as Error).message}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`josi-ce: model warmup pass failed: ${(err as Error).message}`);
+    } finally { running = false; }
+  }
+  const first = setTimeout(() => { void pass(); }, delayMs); first.unref();
+  const repeat = setInterval(() => { void pass(); }, everyMs); repeat.unref();
+  return () => { clearTimeout(first); clearInterval(repeat); };
+}
+
 export function llmRoutes(ctx: LlmRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
