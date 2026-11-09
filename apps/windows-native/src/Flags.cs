@@ -30,7 +30,7 @@ namespace Josi.Native {
     public static readonly bool Apps = false;
     public static readonly bool VoiceBox = false;
     public static readonly bool Policy = false;
-    public static readonly bool Integrations = false;
+    public static readonly bool Integrations = true;
     public static readonly bool Storage = false;
     public static readonly bool WorkspaceAdmin = false;
     public static readonly bool Family = false;
