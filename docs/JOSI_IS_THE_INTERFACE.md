@@ -115,5 +115,9 @@ and delivered in chat is not finished.
 | F | Show the hidden pages again (Connectors, Apps, Storage) so what Josi talks about is visible. | `Flags.cs` (`Integrations = true`, committed in `28973e3`) |
 | G | My World: Vault-backed personal records (people, places, documents, vehicles, properties, cards) with typed fields and per-field sensitivity; a page behind password or Hello; chat tools to add and update non-secret facts and to request a protected card for secret fields; Josi's memory references items by name, never by value. | `packages/core/src/vaultRecords.ts` (extend), new routes, `apps/windows-native/src` page and menu button, agent tools; World memory as its own table (`my_world_memory`) and its own loader into the turn context, outside `memoryEngine.ts`; the general engine never reads or writes it |
 
+| H | Chrome extension, rebuilt to the same standard: attach a tab from chat ("use this tab"); reconnect survives the service worker's sleeps and a Josi restart (state persisted, alarms re-arm); Stop cancels any pending reconnect; store IDs wired through the native host's allowed origins; page operations cover frames, shadow DOM, selects, rich editors, scrolling and dragging, uploads and downloads, several tabs; permissions by one ask in chat (browser, profile, site, duration); clear connection states instead of "no connection"; browser work shows in the ghost bar and obeys Pause and Stop; password and payment fields are never read or filled; store-ready packages for Chrome, Edge and Firefox with consistent IDs and privacy copy. | `apps/browser-extension/src/*`, `scripts/unified/build-browser-extensions.mjs`, `apps/windows-native/src/BrowserHost.cs`, `BrowserBridge.cs`, `packages/agent/src/pcBrowserTools.ts` |
+
 Verification is the same as PC control: a live chat on the installed build,
-driven step by step, recorded in the acceptance doc.
+driven step by step, recorded in the acceptance doc. For the extension, a
+real attached tab doing a bounded task (the garage-sale photo description
+from the original handoff) is the acceptance.
