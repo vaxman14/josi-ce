@@ -231,7 +231,7 @@ async function poll() {
 }
 
 // ------------------------------------------------------------ commands
-const KINDS = ['inspect', 'observe', 'navigate', 'click', 'fill', 'draft', 'photo', 'openPage', 'scroll', 'attach', 'select', 'drag', 'download', 'upload'];
+const KINDS = ['inspect', 'observe', 'navigate', 'click', 'fill', 'draft', 'photo', 'openPage', 'openTab', 'scroll', 'attach', 'select', 'drag', 'download', 'upload'];
 async function currentTab(tabId) {
   if (!Number.isSafeInteger(tabId) || tabId < 0 || tabId !== attachedTabId || !live()) throw new Error('invalid_tab');
   const tab = await browserApi.tabs.get(tabId);
@@ -261,6 +261,7 @@ async function execute(command, epoch) {
   if (command.kind === 'attach') return attachCommand(command, epoch);
   if (!workspace.origins.length) throw new Error('invalid_command');
   if (command.kind === 'openPage') return openPage(command, epoch);
+  if (command.kind === 'openTab') return openTab(command, epoch);
   if (command.kind === 'inspect') {
     if (webUrl(command.origin)?.origin !== command.origin || !workspace.origins.includes(command.origin)
       || !Number.isSafeInteger(command.maxOutputBytes) || command.maxOutputBytes < 1024 || command.maxOutputBytes > 65536) throw new Error('invalid_inspection');
@@ -335,18 +336,43 @@ async function openPage(command, epoch) {
   const fresh = await browserApi.tabs.get(attachedTabId);
   if (!live() || epoch !== generation || fresh.url !== tab.url || fresh.windowId !== tab.windowId) throw new Error('target_changed');
   const opened = await browserApi.tabs.update(attachedTabId, { url: destination.href });
-  let loaded;
-  while (live() && epoch === generation && Date.now() < command.expiresAt - 1000) {
-    const current = await browserApi.tabs.get(opened.id);
-    if (current.incognito || webUrl(current.url)?.origin !== destination.origin) throw new Error('navigation_changed');
-    if (current.status === 'complete') { loaded = current; break; }
-    await new Promise(resolve => setTimeout(resolve, 75));
-  }
-  if (!loaded || !live() || epoch !== generation) throw new Error('page_not_ready');
+  const loaded = await loadedTab(opened.id, destination, webUrl(tab.url)?.origin, command, epoch);
   await inject(loaded.id);
   const result = await browserApi.tabs.sendMessage(loaded.id, pageMessage('observe', loaded, command, { maxOutputBytes: command.maxOutputBytes }), { frameId: 0 });
   if (result?.kind !== 'observation' || !bounded(result)) throw new Error('observation_unavailable');
   return { ...result, tabId: loaded.id, windowId: loaded.windowId };
+}
+/** Waits for a tab to finish loading the destination. Until the navigation
+ * commits, Chrome still reports the previous address (with the new one as
+ * pendingUrl), so the old site is not a change; a third site is. */
+async function loadedTab(tabId, destination, previousOrigin, command, epoch) {
+  while (live() && epoch === generation && Date.now() < command.expiresAt - 1000) {
+    const current = await browserApi.tabs.get(tabId);
+    if (current.incognito) throw new Error('navigation_changed');
+    const shown = webUrl(current.url)?.origin;
+    if (shown === destination.origin && current.status === 'complete') return current;
+    const pending = current.pendingUrl ? webUrl(current.pendingUrl)?.origin : null;
+    if (shown !== destination.origin && pending !== destination.origin && shown !== previousOrigin && shown !== undefined) throw new Error('navigation_changed');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error('page_not_ready');
+}
+/** Opens a page in a new tab, which becomes the attached one ("open
+ * mercari.com" with no tab attached). The person signs in there if needed. */
+async function openTab(command, epoch) {
+  const destination = webUrl(command.url);
+  if (!destination || destination.protocol !== 'https:' || destination.origin !== command.origin || !workspace.origins.includes(destination.origin)) throw new Error('invalid_page');
+  if (!await browserApi.permissions.contains({ origins: [destination.origin + '/*'] })) throw new Error('site_permission_required');
+  await authorize(command, null, epoch);
+  const created = await browserApi.tabs.create({ url: destination.href, active: true });
+  if (created.incognito) throw new Error('unsupported_tab');
+  attachedTabId = created.id; persist();
+  setPhase(hostPaused ? 'paused' : 'attached');
+  const loaded = await loadedTab(created.id, destination, null, command, epoch);
+  await inject(loaded.id);
+  const result = await browserApi.tabs.sendMessage(loaded.id, pageMessage('observe', loaded, command, { maxOutputBytes: command.maxOutputBytes }), { frameId: 0 });
+  if (result?.kind !== 'observation' || !bounded(result)) throw new Error('observation_unavailable');
+  return { ...result, tabId: loaded.id, windowId: loaded.windowId, openedTab: true };
 }
 /** Downloads into the browser's own Downloads folder; reports how it ended
  * (file name only, never the folder). */
