@@ -1,5 +1,7 @@
 # Windows computer control status — November 8, 2026
 
+> **November 8, evening:** superseded for the Windows chat path by [WINDOWS_PC_CONTROL_RECOVERY_STATUS.md](WINDOWS_PC_CONTROL_RECOVERY_STATUS.md) (readiness report, Claude system prompt, PC registration in setup and before pairing).
+
 **Stopped at the owner's request.** Read [PC_CONTROL_CURRENT_HANDOFF.md](PC_CONTROL_CURRENT_HANDOFF.md) first. The owner installed preview.3 and reported that Haiku refused a request to change PC-control settings. The live chat failure is unresolved; a Claude system-prompt transport defect was found but not fixed. The handoff also records the unfinished Chrome extension investigation. Do not resume work until the owner asks.
 
 [WINDOWS_PC_CONTROL_ACCEPTANCE.md](WINDOWS_PC_CONTROL_ACCEPTANCE.md) records preview.3's focused checks and signed installer; those checks did not validate the failing real-chat path. [WINDOWS_PC_CONTROL_BUILD_NOTES.md](WINDOWS_PC_CONTROL_BUILD_NOTES.md) preserves the preview.2 feature scope and remaining design limits.

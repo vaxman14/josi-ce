@@ -1,5 +1,7 @@
 # PC control on Windows: why it works in demos and not in real life, and the plan to fix it
 
+> **Built, November 8 evening:** everything except the live acceptance (WP5) landed in commit `c36fe5a`, plus the owner's requested setup step. See [WINDOWS_PC_CONTROL_RECOVERY_STATUS.md](WINDOWS_PC_CONTROL_RECOVERY_STATUS.md) for what is done, verified and still open.
+
 Written November 8, 2026 (evening) by Claude after reading the whole checkout.
 For the model that implements it next. Read this first, then
 `PC_CONTROL_CURRENT_HANDOFF.md` (what the last agent saw), and skim

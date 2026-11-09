@@ -1,5 +1,7 @@
 # Current handoff — November 8, 2026 (America/Los_Angeles)
 
+> **Update 2, same evening:** the recovery plan was implemented (commit `c36fe5a`) and `1.2.5-preview.4` is being built. Read [WINDOWS_PC_CONTROL_RECOVERY_STATUS.md](WINDOWS_PC_CONTROL_RECOVERY_STATUS.md). The Chrome extension track below is still unstarted.
+
 > **Update, same evening:** the owner lifted the stop for planning. The recovery plan that supersedes the "next steps" here is [PC_CONTROL_RECOVERY_PLAN.md](PC_CONTROL_RECOVERY_PLAN.md): five work packages, in order, ending in a live chat acceptance on the installed build. Implementation starts when the owner says so.
 
 
