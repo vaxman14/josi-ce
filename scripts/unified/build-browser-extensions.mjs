@@ -37,7 +37,10 @@ function manifestFor(family, { store }) {
     description: 'Let Josi on this computer use a tab you attach, only with your Josi permissions. Never reads passwords or payment details.',
     icons: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png', 128: 'icons/icon-128.png' },
     permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage', 'alarms', 'downloads'],
-    optional_host_permissions: ['https://*/*', 'http://*/*'],
+    // Site access once, at install (as other assistant extensions do), so no
+    // site needs a click in the browser. Each site and action is still
+    // decided in Josi's PC Control: saved permissions or the owner's approval.
+    host_permissions: ['https://*/*', 'http://*/*'],
     action: { default_popup: 'popup.html', default_title: 'Attach this tab to Josi',
       default_icon: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png' } },
     background: CHROMIUM.includes(family) ? { service_worker: 'background.js' }

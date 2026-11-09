@@ -228,6 +228,11 @@ namespace Josi.Native {
               if (result["tabId"].Integer != Convert.ToInt64(sent.Command["tabId"]) || origin == null || origin != (string)sent.Command["origin"]) ok = false;
               else { link.TabId = result["tabId"].Integer; link.Url = result["url"].Text; link.Title = result["title"].Text; if (!link.Origins.Contains(origin)) link.Origins.Add(origin); changed = true; }
             }
+            if (ok && (string)sent.Command["kind"] == "openTab") {
+              var origin = OriginOf(result["url"].Text);
+              if (!result["tabId"].IsNumber || result["tabId"].Integer < 0 || origin != (string)sent.Command["origin"]) ok = false;
+              else { link.TabId = result["tabId"].Integer; changed = true; }
+            }
             if (ok && result["kind"].Text == "observation" && OriginOf(result["url"].Text) != null) { link.Url = result["url"].Text; link.Title = result["title"].Text; changed = true; }
             sent.Done.TrySetResult(Tuple.Create(ok, ok ? result.Raw : (object)Wires.O("code", payload["code"].Text.Length > 0 ? payload["code"].Text : "not_verified")));
             return Reply(id, true, null);
@@ -376,13 +381,14 @@ namespace Josi.Native {
           if (!link.Origins.Contains(target)) link.Origins.Add(target);
           command["kind"] = "attach"; command["tabId"] = tab.Id; command["origin"] = target;
           pending.Activity = "Attaching a tab on " + site;
-        } else if (link.TabId < 0) return refuse("no_attached_tab");
-        else if (kind == "open") {
+        } else if (kind == "open") {
           if (OriginOf(payload["url"].Text) != target || !payload["url"].Text.StartsWith("https://", StringComparison.Ordinal)) return refuse("invalid_page");
           if (!link.Origins.Contains(target)) link.Origins.Add(target);
-          command["kind"] = "openPage"; command["url"] = payload["url"].Text; command["origin"] = target; command["maxOutputBytes"] = ObservationBytes;
+          // No tab attached: the page opens in a new tab, which becomes the attached one.
+          command["kind"] = link.TabId < 0 ? "openTab" : "openPage"; command["url"] = payload["url"].Text; command["origin"] = target; command["maxOutputBytes"] = ObservationBytes;
           pending.Activity = "Opening " + site;
-        } else {
+        } else if (link.TabId < 0) return refuse("no_attached_tab");
+        else {
           // The approved site must still be the one in the attached tab.
           if (OriginOf(link.Url) != target) return refuse("attached_site_changed");
           command["tabId"] = link.TabId;

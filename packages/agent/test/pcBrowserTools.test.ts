@@ -13,7 +13,7 @@ const names = (p: PcBrowserPresence | null) => browserToolsFor(p).map(t => t.def
 
 describe('browser tool availability', () => {
   it('offers only linking tools while no tab is attached, and the full set once one is', () => {
-    expect(names(linked)).toEqual(['browser_attach_tab', 'browser_check_request', 'browser_list_tabs']);
+    expect(names(linked)).toEqual(['browser_attach_tab', 'browser_check_request', 'browser_list_tabs', 'browser_open_page']);
     const full = names(attached);
     for (const n of ['browser_read_page', 'browser_select_option', 'browser_drag', 'browser_download', 'browser_upload_file', 'browser_scroll', 'browser_attach_tab'])
       expect(full).toContain(n);
@@ -80,6 +80,14 @@ describe('browser tools propose exact PC Control requests', () => {
     const request = await lastRequest();
     expect(request.requirements[0].scope.target).toBe('https://mail.example.test');
     expect(request.payload).toEqual({ kind: 'attach', tabId: 7 });
+  });
+  it('opens a page in a new tab when no tab is attached', async () => {
+    await control.setPresence(owner, linked);
+    await run('browser_open_page', { url: 'https://www.mercari.com/mypage/listings/' });
+    const request = await lastRequest();
+    expect(request.requirements[0]).toMatchObject({ action: 'browser.view', scope: { target: 'https://www.mercari.com' } });
+    expect(request.payload).toEqual({ kind: 'open', url: 'https://www.mercari.com/mypage/listings/' });
+    expect(request.description).toMatch(/new tab/);
   });
   it('refuses a tab that is not open, and page tools before any tab is attached', async () => {
     await control.setPresence(owner, linked);

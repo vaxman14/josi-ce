@@ -59,8 +59,10 @@ Prepare these once; the same material serves all three listings.
   `scripting` (reads and acts on the attached tab), `storage` (remembers the
   attached tab while the browser is open), `alarms` (links to the Josi app
   again after it restarts), `downloads` (saves a file from the attached site
-  into your Downloads folder when you allowed it in Josi), optional host
-  permissions (only the site of the attached tab, asked when you attach it).
+  into your Downloads folder when you allowed it in Josi), host permissions
+  for all sites (asked once at install, so Josi can read or open the site you
+  name in chat; every site and action is still allowed or approved in Josi's
+  PC Control, and nothing is read without that).
 - **Support email** and a **homepage** (heyjosi.com).
 
 ## Chrome Web Store (Chrome and Brave)
