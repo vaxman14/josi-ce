@@ -139,3 +139,7 @@ Skills consulted: Chrome Extensions and Computer Use. Modern Web Guidance's skil
 No implementation changes were made after preview.3. The working tree was clean before writing this handoff. Only documentation changes belong to this checkpoint. No build/test/model request is intentionally running for this investigation. The UI was read through the existing Computer Use connection without sending input. Do not close the owner's installed Josi or change its permissions as cleanup.
 
 The immediate unresolved problem is the owner's real chat failing to prepare PC-control settings. The Chrome extension upgrade remains a separate requested follow-up. Preserve both tasks when the owner resumes; do not report either as completed.
+
+## Parked idea: hosted mail (November 8, 2026)
+
+The owner considered sending every Josi email through a Resend account on heyjosi.com instead of per-install SMTP. Decision: keep SMTP for now. If revisited: an opt-in hosted service for accounts with a heyjosi.com relationship, a revocable token per installation (never a shared key in the binary), quotas, a sending subdomain such as mail.heyjosi.com with reply-to the owner, and a three-way setup step (Josi mail / my own server / later).
