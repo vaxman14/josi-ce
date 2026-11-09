@@ -4,7 +4,7 @@
 // (action + browser + profile + origin), decided by the owner's saved
 // permissions or approved in Josi, and claimed by the app one at a time.
 import { LOCAL_WINDOWS_PC, livePcId, PcControl, PcControlError, PC_BROWSER_FAMILIES, type Db, type MasterKey, type PcAction, type PcBrowserPresence, type PcRequirement } from '@josi-ce/core';
-import { win32 } from 'node:path';
+import { posix, win32 } from 'node:path';
 import type { ToolSpec } from './tools.js';
 import { cleanPath } from './pcDesktopTools.js';
 
@@ -227,9 +227,9 @@ export async function executePcBrowserTool(db: Db, owner: string, key: MasterKey
       payload = { kind: 'download', url: url.href };
     } else if (name === 'browser_upload_file') {
       const path = cleanPath(input.path);
-      const folder = path ? cleanPath(win32.dirname(path)) : null;
+      const folder = path ? cleanPath(path.startsWith('/') ? posix.dirname(path) : win32.dirname(path)) : null;
       if (!path || !folder || folder === path) return { ok: false, code: 'invalid_path', message: 'Use one exact absolute Windows path to a file, like C:\\Users\\Name\\Pictures\\photo.jpg.' };
-      action = 'browser.upload'; description = `Upload ${win32.basename(path)} into one file field on ${origin}`;
+      action = 'browser.upload'; description = `Upload ${path.startsWith('/') ? posix.basename(path) : win32.basename(path)} into one file field on ${origin}`;
       extra.push({ action: 'folder.read', scope: { kind: 'folder', target: folder } });
       payload = { kind: 'upload', observationId: String(input.observation_id), elementId: String(input.element_id), path };
     } else return { ok: false, code: 'unknown_tool' };

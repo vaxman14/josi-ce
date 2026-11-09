@@ -13,6 +13,8 @@ struct SetupView: View {
     @State private var place = "mac"
     /// An earlier step the person went Back to, or nil for the server's step.
     @State private var viewing: String?
+    @State private var pcEnable = true
+    @State private var pcPassword = ""
     /// The server lets only these finished steps be submitted again
     /// (REVISABLE_STEPS in apps/api/src/setup/steps.ts); the rest show as saved.
     private static let revisable: Set<String> = ["llm", "smtp"]
@@ -23,7 +25,7 @@ struct SetupView: View {
         "llm": ("Pick Josi’s brain", "The AI model she thinks with. Your subscription or your own key both work."),
         "smtp": ("Email, if you want it", "Lets Josi send invitations and password resets. You can skip this for now."),
         "security": ("Your folders", "Choose whether people here may give Josi access to folders."),
-        "pc_control": ("Josi on this Mac", "Working directly on your computer comes to the Mac app later."),
+        "pc_control": ("Let Josi use this Mac", "Commands, programs, files and windows on this computer, with your permission for each. You can skip this."),
         "telemetry": ("Help improve Josi", "Completely optional, and it never includes your conversations."),
         "review": ("Almost there", "One last look at what you chose."),
         "": ("All set", "Josi is ready when you are."),
@@ -190,11 +192,16 @@ struct SetupView: View {
             Text("Each person still needs to approve their own folders.").foregroundStyle(JosiTheme.lilac)
             next(["folderMappingEnabled": .bool(enabled)])
         case "pc_control":
-            // The Windows app pairs the PC here. The Mac app has no PC Control yet,
-            // so this step is skipped and nothing is paired or switched on.
-            Text("On Windows, Josi can run commands, open programs and work with files on the computer she runs on. The Mac app doesn’t do that yet. Nothing is switched on here.")
-                .foregroundStyle(JosiTheme.lilac)
-            next(["skip": .bool(true)])
+            Text("Josi can work on this Mac the way an assistant at the keyboard would: run commands, open programs, read and write files and use windows. Every action goes through PC Control: you choose what's allowed, once or until you take it back, and a control bar with Stop is always on screen while she works.")
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("Let Josi use this Mac now: programs, files and windows. Commands ask once per folder.", isOn: $pcEnable)
+            Text("Approving pairs this Mac to your account with a key kept in its Secure Enclave; your password confirms it. Deleting, purchases, credentials, installs and security changes always ask. macOS will also ask you to allow Accessibility and Screen Recording the first time Josi needs them.")
+                .font(JosiFont.caption).foregroundStyle(JosiTheme.lilac).fixedSize(horizontal: false, vertical: true)
+            SecureField("The password of the account you just created", text: $pcPassword).textFieldStyle(JosiFieldStyle())
+            HStack {
+                Button("Approve This Mac and Continue", action: approveMac).buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(pcPassword.isEmpty)
+                Button("Skip for Now") { submit(["skip": .bool(true)]) }
+            }
         case "telemetry":
             Toggle("Send anonymous usage counts", isOn: $enabled)
             Text("Optional. Does not include conversations, credentials or business content.").foregroundStyle(JosiTheme.lilac)
@@ -312,6 +319,17 @@ struct SetupView: View {
         }
     }
     private func value(_ key: String, fallback: String = "") -> Wire { .string(values[key] ?? fallback) }
+    /// Pairs this Mac at install: its executor public key, with the owner's password.
+    private func approveMac() {
+        guard let api = model.api else { return }
+        let owner = model.setup["ownerId"].text, secret = pcPassword
+        pcPassword = ""
+        guard ProtectedWire.matches(.string(owner), "^[0-9a-f-]{36}$") else { model.error = "Create your account first."; return }
+        do {
+            let key = try PcExecutor.shared.publicPoint(api, owner: owner)
+            submit(["pcId": .string(PcDevice.id), "publicKey": .string(key.point), "password": .string(secret), "enable": .bool(pcEnable)])
+        } catch { model.error = error.localizedDescription }
+    }
     private func next(_ body: Wire) -> some View { Button("Continue") { submit(body) }.buttonStyle(JosiGoldButtonStyle(fullWidth: false)) }
     private func submit(_ body: Wire) {
         let submittedStep = step

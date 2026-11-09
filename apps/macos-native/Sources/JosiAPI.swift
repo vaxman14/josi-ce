@@ -57,6 +57,9 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
     /// The signed-in session. Once set, requests go as a native client with
     /// this bearer and no Origin, so "Keep me signed in" survives a relaunch.
     var bearer: String?
+    /// Signs PC Control executor requests once this Mac's key is known: the
+    /// owner's id and the key. Set by the PC executor after sign-in.
+    var pcSigner: (owner: String, key: PcExecutorKey)?
     /// A bare LAN IP, hostname or domain means HTTPS; localhost means this Mac.
     static func normalized(_ address: String) -> String {
         let value = address.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -87,6 +90,8 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         if native || bearer != nil { request.setValue("native", forHTTPHeaderField: "x-josi-client") }
         else { request.setValue(origin.absoluteString, forHTTPHeaderField: "Origin") }
         if let bearer { request.setValue("Bearer " + bearer, forHTTPHeaderField: "Authorization") }
+        // Each Josi app names its computer, so PC Control keeps each one apart.
+        request.setValue(PcDevice.id, forHTTPHeaderField: "x-josi-pc")
     }
     func cancelWorkProgress() { workEventRequest?.cancel(); workEventRequest = nil }
 
@@ -211,6 +216,14 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         if let body {
             req.httpBody = try JSONEncoder().encode(body)
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        // The executor routes and pairing check a signature over exactly these bytes.
+        if route.hasPrefix("/admin/pc-control/executor") || (route.hasPrefix("/admin/pc-control/identity") && method == "POST") {
+            guard let pcSigner else { throw JosiError(message: "Approve this Mac for Josi before it can work on it.") }
+            let path = String(url.absoluteString.dropFirst(origin.absoluteString.count))
+            for (key, value) in try PcProof.headers(key: pcSigner.key, owner: pcSigner.owner, method: method, path: path, body: req.httpBody ?? Data()) {
+                req.setValue(value, forHTTPHeaderField: key)
+            }
         }
         let (bytes, response) = try await session.bytes(for: req)
         guard let http = response as? HTTPURLResponse, response.url == url else {

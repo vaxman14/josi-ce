@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { win32 } from 'node:path';
+import { posix, win32 } from 'node:path';
 import type { Db } from './db.js';
 import type { MasterKey } from './masterKey.js';
 import { openSealed, seal } from './sealing.js';
@@ -46,8 +46,18 @@ export class PcControlError extends Error { constructor(readonly status:number, 
 const fail = (message:string):never => {throw new PcControlError(400,message);};
 const uuid = (value:string) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
 const text = (value:unknown,max=1024):string => typeof value==='string' && value.length>0 && value.length<=max && !/[\u0000-\u001f\u007f]/.test(value) ? value : fail('Provide a bounded, readable exact scope.');
+/** An exact absolute path on a Mac: no relative parts, no doubled or trailing
+ * slashes, one spelling. A Windows PC never has such a path, so a Mac scope can
+ * never match work on Windows. */
+function macPath(path:string):string {
+  if(path.length>1&&path.endsWith('/'))path=path.slice(0,-1);
+  if(!path.startsWith('/')||/[*?\u0000]/.test(path)||path.includes('//')||
+    path.slice(1).split('/').some(part=>part===''&&path!=='/'||part==='.'||part==='..'))fail('Choose an exact absolute path on this Mac.');
+  return posix.normalize(path);
+}
 function localPath(value:unknown):string {
   const path=text(value);
+  if(path.startsWith('/'))return macPath(path);
   // No wildcard, UNC/device path, ADS, relative path, traversal or ambiguous
   // trailing-dot/space aliases. The future local adapter must additionally
   // resolve handles/reparse points before preparing AND before executing.
@@ -502,7 +512,7 @@ export type PcBrowserTab={tabId:number;origin:string;title:string|null;active:bo
  * (origins only, never paths or page content) so chat can attach one. */
 export type PcBrowserPresence={family:string;application:string;profile:string;origin:string|null;title:string|null;
   activeTabId?:number|null;activeOrigin?:string|null;activeTitle?:string|null;tabs?:PcBrowserTab[]};
-export const PC_BROWSER_FAMILIES:readonly string[]=['chrome','brave','edge','firefox'];
+export const PC_BROWSER_FAMILIES:readonly string[]=['chrome','brave','edge','firefox','safari'];
 const PRESENCE_TABS=30;
 function webOrigin(value:unknown,message:string):string{
   try{const url=new URL(text(value,2048));if(!['http:','https:'].includes(url.protocol)||url.username||url.password)fail('');return url.origin;}

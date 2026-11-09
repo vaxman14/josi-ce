@@ -43,6 +43,7 @@ struct ChatView: View {
         ZStack {
             VStack(spacing: 0) {
                 stage
+                PcRequestCards()
                 composer.padding(.horizontal, 26).padding(.top, 8).padding(.bottom, 8).frame(maxWidth: 830)
                 Text(footer).font(JosiFont.caption).foregroundStyle(JosiTheme.muted).padding(.bottom, 14)
             }

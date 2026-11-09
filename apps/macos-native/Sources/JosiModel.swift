@@ -221,7 +221,7 @@ import SwiftUI
         guard !busy else { return }
         guard mfaRecovery == .null else { error = "Save your sign-in recovery codes before disconnecting."; return }
         guard !desktop.requiresClosure else { error = "Close the separate desktop before disconnecting."; return }
-        stopWorkStream(); api?.close(); api = nil
+        stopWorkStream(); PcExecutor.shared.forgetSession(); api?.close(); api = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; taskRuns = []; setup = .null
         setupReview = .null; recovery = .null; mfaChallenge = ""; draft = ""; draftAttachments = []; pending = nil; pendingMessage = false
         automationSettings = .null; automationCatalog = .null; automation = .null; selectedThread = nil; resetAutomationDevices()
@@ -237,7 +237,7 @@ import SwiftUI
         }
         // run() keeps busy set until this completes; disconnect's UI guard
         // must not prevent clearing the revoked session.
-        stopWorkStream(); api?.close(); api = nil
+        stopWorkStream(); PcExecutor.shared.forgetSession(); api?.close(); api = nil
         user = .null; threads = []; messages = []; turns = []; goals = []; tasks = []; taskRuns = []
         draft = ""; draftAttachments = []; pending = nil; pendingMessage = false; selectedThread = nil
         recovery = .null; setup = .null; setupReview = .null; mfaChallenge = ""
@@ -637,7 +637,7 @@ import SwiftUI
         }
     }
     func setupStep(_ step: String, body: Wire) async throws {
-        guard let api, ["host_checks", "owner", "domain", "llm", "smtp", "security", "telemetry", "review"].contains(step) else { return }
+        guard let api, ["host_checks", "owner", "domain", "llm", "smtp", "security", "pc_control", "telemetry", "review"].contains(step) else { return }
         let value = try await api.request("/setup/steps/\(step)", method: "POST", body: body)
         guard self.api === api else { return }
         if value["vaultRecovery"] != .null { recovery = value["vaultRecovery"] }

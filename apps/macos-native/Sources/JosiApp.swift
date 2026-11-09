@@ -45,6 +45,7 @@ import SwiftUI
                 .frame(minWidth: 920, minHeight: 660)
                 .task {
                     delegate.model = model; model.refreshLocal(); await model.resume()
+                    PcExecutor.shared.start(model)
                     model.ghost.set(.hello)
 #if !DEBUG
                     await model.checkForUpdate()
