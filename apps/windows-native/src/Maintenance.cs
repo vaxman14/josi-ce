@@ -41,7 +41,7 @@ namespace Josi.Native {
     }
     void Render() {
       var items = new List<UIElement>();
-      if (error.Length > 0) items.Add(Ui.T(error, 13.5, null, Ui.Orange));
+      if (error.Length > 0) items.Add(Ui.T(error, 13.5, null, Ui.Error));
       if (recoveryKey.Length > 0) {
         var key = recoveryKey;
         items.Add(Ui.Stack(6, Ui.Headline("Save the backup recovery key now"), Ui.Caption("This is the only visible copy. Keep it somewhere other than the backup destination."),
@@ -60,8 +60,8 @@ namespace Josi.Native {
         if (d["objectPrefix"].Text.Length > 0) items.Add(Ui.Caption("Folder: " + d["objectPrefix"].Text));
         if (d["kind"].Text != "nas") items.Add(Ui.Caption("Address: " + d["resolvedEndpoint"].Text));
         items.Add(Ui.Caption(d["encryptionEnabled"].Flag ? "Encrypted off-site." : "Not encrypted off-site."));
-        if (d["lastCheckOk"].IsBool && !d["lastCheckOk"].Flag && d["lastCheckError"].Text.Length > 0) items.Add(Ui.T(d["lastCheckError"].Text, 13.5, null, Ui.Orange));
-        if (result.Length > 0) items.Add(Ui.T(result, 13.5, null, resultOk ? Ui.Green : Ui.Orange));
+        if (d["lastCheckOk"].IsBool && !d["lastCheckOk"].Flag && d["lastCheckError"].Text.Length > 0) items.Add(Ui.T(d["lastCheckError"].Text, 13.5, null, Ui.Error));
+        if (result.Length > 0) items.Add(Ui.T(result, 13.5, null, resultOk ? Ui.Green : Ui.Accent));
         items.Add(Ui.Wrap(Ui.Pill(d["lastCheckOk"].Flag ? "Test Again" : "Test Connection", () => Run(async api => { var r = await api.Request("/ops/admin/backups/destination/test", "POST", Wires.O()); result = r["detail"].Text; resultOk = r["ok"].Flag; }), true),
           Ui.Pill("Change", () => {
             editing = true; kind = d["kind"].Text; label.Text = d["label"].Text; encrypt.IsChecked = d["encryptionEnabled"].Flag; protocol = d["shareProtocol"].Text.Length > 0 ? d["shareProtocol"].Text : "smb";

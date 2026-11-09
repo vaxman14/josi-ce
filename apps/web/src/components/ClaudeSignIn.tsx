@@ -115,7 +115,7 @@ export function ClaudeSignIn({ basePath }: { basePath: string }) {
 
   if (status.signedIn) {
     return (
-      <div className="space-y-2 rounded-md border border-input p-3">
+      <div className="space-y-2 rounded-md border border-border p-3">
         <p className="text-sm font-medium">
           {/* Which account, not merely "connected". Signing in to a Console
               account bills API usage — that is a different arrangement from a
@@ -139,7 +139,7 @@ export function ClaudeSignIn({ basePath }: { basePath: string }) {
   }
 
   return (
-    <div className="space-y-2 rounded-md border border-input p-3">
+    <div className="space-y-2 rounded-md border border-border p-3">
       {error ? <ErrorNote>{error}</ErrorNote> : null}
 
       {login?.challenge ? (
@@ -159,7 +159,7 @@ export function ClaudeSignIn({ basePath }: { basePath: string }) {
               placeholder="Paste the code from Anthropic"
               autoComplete="off"
               spellCheck={false}
-              className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
+              className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm"
             />
             <Button type="button" disabled={busy || !code.trim()} onClick={() => void submit()}>
               {busy ? 'Checking…' : 'Finish'}

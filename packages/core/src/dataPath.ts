@@ -9,6 +9,11 @@ export function resolveDataPath(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string {
+  // The suite runs on machines with no writable /data; vitest.config.mts names
+  // a scratch root. NODE_ENV keeps a stray variable from moving a server's data.
+  if (env.NODE_ENV === 'test' && env.JOSI_TEST_DATA_DIR && (path === '/data' || path.startsWith('/data/'))) {
+    return (platform === 'win32' ? win32 : posix).join(env.JOSI_TEST_DATA_DIR, path.slice('/data'.length));
+  }
   if (!['win32', 'darwin', 'linux'].includes(platform) || env.JOSI_NATIVE_RUNTIME !== '1') return path;
   if (path !== '/data' && !path.startsWith('/data/')) return path;
   const root = env.JOSI_DATA_DIR;

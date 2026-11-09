@@ -186,7 +186,11 @@ export function openAiCompatibleProvider(opts: OpenAiCompatibleOptions): LlmProv
         // credit" — both of which arrive as 429.
         const providerCode = safeErrorCode(text);
         const category = categorizeFailure(res.status, providerCode);
-        throw new LlmError(describeFailure(res.status, category), {
+        // The gateway's own sentence is the useful one here: it says the cap was
+        // reached and what to do, where a generic billing line would send the
+        // person looking for a provider account they don't have.
+        const message = providerCode === ALLOWANCE_EXHAUSTED ? allowanceMessage(text) : describeFailure(res.status, category);
+        throw new LlmError(message, {
           status: res.status,
           category,
           providerCode,
@@ -224,6 +228,15 @@ export function describeFailure(status: number, category?: LlmErrorCategory): st
  * back. So this reads `code` and `type`, refuses anything with whitespace, and
  * caps the length — a provider that puts prose in a code field gets ignored
  * rather than trusted. */
+export const ALLOWANCE_EXHAUSTED = 'josi_allowance_exhausted';
+const ALLOWANCE_FALLBACK = 'Your Hey Josi AI allowance is used up. Add a top-up on your account page, or wait for it to reset.';
+function allowanceMessage(body: string): string {
+  try {
+    const text = (JSON.parse(body) as { error?: { message?: unknown } }).error?.message;
+    return typeof text === 'string' && text.length <= 300 ? text : ALLOWANCE_FALLBACK;
+  } catch { return ALLOWANCE_FALLBACK; }
+}
+
 export function safeErrorCode(body: string): string | undefined {
   let parsed: { error?: { code?: unknown; type?: unknown } };
   try {

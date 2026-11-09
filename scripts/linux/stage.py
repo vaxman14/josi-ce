@@ -32,7 +32,7 @@ def main():
     if not (app/'node_modules').exists():subprocess.run(['npm','ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],cwd=app,env=env,check=True)
     metadata=json.loads((app/'package.json').read_text());metadata.update(name='josi-ce-native-runtime',version=VERSION,type='module')
     (app/'package.json').write_text(json.dumps(metadata,indent=2)+'\n')
-    for path in [*REPO.glob('packages/*/dist'),*REPO.glob('apps/*/dist'),REPO/'packages/db/migrate.mjs',REPO/'packages/db/migrations']:
+    for path in [*REPO.glob('packages/*/dist'),*(path for path in REPO.glob('apps/*/dist') if path.parent.name!='hosted'),REPO/'packages/db/migrate.mjs',REPO/'packages/db/migrations']:
         copy(path,app/path.relative_to(REPO))
     for path in (REPO/'packaging/linux').glob('*'):
         if path.name in ('PythonRuntime.py','Runtime.mjs','lifecycle.py','maintenance.py'):copy(path,app/'native'/path.name)

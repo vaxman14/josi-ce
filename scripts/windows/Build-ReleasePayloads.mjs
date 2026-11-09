@@ -17,11 +17,12 @@ import { promisify } from 'node:util';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const run = promisify(execFile);
+const execFileAsync = promisify(execFile);
+const run = (command, args, options = {}) => execFileAsync(command, args, { ...options, windowsHide: true });
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const base = join(repo, 'artifacts/windows-native');
 const args = process.argv.slice(2);
-const cliRoot = resolve(args.includes('--cli-root') ? args[args.indexOf('--cli-root') + 1] : 'C:/Dev/josi-dev/cli/node_modules');
+const cliRoot = resolve(args.includes('--cli-root') ? args[args.indexOf('--cli-root') + 1] : join(base, 'tools/subscription-cli/node_modules'));
 const json = async path => JSON.parse(await readFile(path, 'utf8'));
 const sha256 = async path => createHash('sha256').update(await readFile(path)).digest('hex');
 const row = async (root, path) => ({ path: relative(root, path).replaceAll('\\', '/'), size: (await lstat(path)).size, sha256: await sha256(path) });
@@ -36,7 +37,7 @@ async function walk(folder, out = []) {
   return out;
 }
 async function signedBy(path, publisher) {
-  const { stdout } = await run(powershell, ['-NoProfile', '-NonInteractive', '-Command',
+  const { stdout } = await run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
     `$s = Get-AuthenticodeSignature -LiteralPath '${path.replace(/'/g, "''")}'; $s.Status.ToString() + '|' + $s.SignerCertificate.Subject`]);
   const [status, subject] = stdout.trim().split('|');
   if (status !== 'Valid' || !subject?.includes(publisher)) throw new Error(`${path} is not validly signed by ${publisher} (${stdout.trim()})`);
@@ -83,7 +84,7 @@ const ffmpegLock = await json(join(repo, 'packaging/windows/ffmpeg.lock.json'));
 const ffmpegZip = join(base, 'cache/ffmpeg-9.0.2.zip');
 if ((await lstat(ffmpegZip)).size !== ffmpegLock.size || await sha256(ffmpegZip) !== ffmpegLock.sha256) throw new Error('ffmpeg archive does not match packaging/windows/ffmpeg.lock.json');
 const ffmpegTemp = join(output, 'ffmpeg-unpacked');
-await run(powershell, ['-NoProfile', '-NonInteractive', '-Command', `Expand-Archive -LiteralPath '${ffmpegZip}' -DestinationPath '${ffmpegTemp}'`]);
+await run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', `Expand-Archive -LiteralPath '${ffmpegZip}' -DestinationPath '${ffmpegTemp}'`]);
 const [ffmpegTop] = await readdir(ffmpegTemp);
 await mkdir(join(extra, 'ffmpeg'), { recursive: true });
 for (const file of ffmpegLock.files) await copyFile(join(ffmpegTemp, ffmpegTop, file), join(extra, 'ffmpeg', file.split('/').pop()));

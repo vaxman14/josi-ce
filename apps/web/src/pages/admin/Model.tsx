@@ -301,7 +301,7 @@ function CodexConnection() {
   if (!status.installed) return <ErrorNote>{status.detail}</ErrorNote>;
 
   return (
-    <div className="space-y-2 rounded-md border border-input p-3">
+    <div className="space-y-2 rounded-md border border-border p-3">
       <p className="text-sm font-medium">
         {status.signedIn ? 'Connected to your ChatGPT plan' : 'Not connected to ChatGPT'}
       </p>

@@ -2,12 +2,74 @@
 @tailwind components;
 @tailwind utilities;
 
-/* The official Josi palette: deep navy, orange/gold. Locked on 2026-08-30 and
-   not a self-hoster's to replace — see the branding note in the README.
-   Item 40 (October 2026): the exact values of the Windows app's Theme.xaml,
-   so the web app and the desktop app are one product. */
+/* Self-hosted, because the app fetches nothing from outside: see index.html.
+   Variable files, so one file carries every weight the design uses. */
+@font-face { font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 200 800; font-display: swap;
+  src: url('/fonts/bricolage-grotesque-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Bricolage Grotesque'; font-style: normal; font-weight: 200 800; font-display: swap;
+  src: url('/fonts/bricolage-grotesque-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'DM Sans'; font-style: normal; font-weight: 100 1000; font-display: swap;
+  src: url('/fonts/dm-sans-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'DM Sans'; font-style: normal; font-weight: 100 1000; font-display: swap;
+  src: url('/fonts/dm-sans-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+
+/* The official Josi palette is Plum & Gold (November 2026), and it is not a
+   self-hoster's to replace: see the branding note in the README. Classic Navy,
+   the palette it replaced, stays available as a skin in Personalization.
+
+   Every colour in the app comes from these tokens, set per data-theme on <html>.
+   /skin-boot.js picks the attribute before first paint. A page never names a
+   colour of its own, so a skin only ever has to be written here. */
 @layer base {
-  :root {
+  :root, [data-theme='plum-gold'] {
+    color-scheme: dark;
+    --background: 282 36% 9%;        /* #1B0F20 */
+    --foreground: 306 29% 93%;       /* #F3E9F2 */
+    --sidebar: 282 36% 9%;
+    --card: 283 32% 15%;             /* #2C1A33 */
+    --card-foreground: 306 29% 93%;
+    --primary: 43 80% 71%;           /* #F0CF7A solid gold */
+    --primary-foreground: 282 36% 9%;
+    --secondary: 284 29% 20%;        /* #3A2442 raised */
+    --secondary-foreground: 306 29% 93%;
+    --muted: 284 29% 20%;
+    --muted-foreground: 292 18% 68%; /* #B9A0BD lilac: secondary text */
+    --destructive: 5 73% 66%;        /* #E8746A, 5.5:1 on panels */
+    --destructive-foreground: 282 36% 9%;
+    --border: 289 19% 37%;           /* #6B4D72 */
+    --input: 282 36% 9%;             /* #1B0F20 */
+    --ring: 43 80% 71%;
+    --radius: 0.875rem;              /* 14px cards; pills use rounded-full */
+    --panel-2: 282 36% 9%;           /* #1B0F20 deeper panels */
+    --gold-1: 44 100% 82%;           /* #FFE7A3 */
+    --gold-2: 43 80% 71%;            /* #F0CF7A */
+    --gold-3: 40 57% 49%;            /* #C49536 */
+    --gold-sheen: 46 100% 88%;       /* #FFF1C4 */
+    --lilac: 292 18% 68%;            /* #B9A0BD, 6.8:1 on #2C1A33 */
+    /* The brief's #8C7491 is 3.9:1 on a panel, under AA, so muted text is lifted
+       to #AD96B2: 6.0:1 on panels, 4.8:1 on the plum glow at its brightest. */
+    --text-muted: 289 15% 64%;
+    --badge: 5 73% 66%;              /* #E8746A; dark text, white is only 2.9:1 */
+    --badge-foreground: 282 36% 9%;
+    --success: 143 51% 67%;
+    --warning: 38 87% 69%;
+    --paper: 0 0% 100%;              /* QR codes and email previews need real white */
+    --app-bg: radial-gradient(ellipse at 25% 10%, #43264A 0%, #150B19 70%);
+    --bar-bg: rgba(27, 15, 32, .72);
+    --scrim: rgba(13, 7, 16, .66);
+    --mark-tile-from: #5A2F63;
+    --mark-tile-to: #2C1A33;
+    /* The desktop app's rhythm: one left-aligned column, 1040 wide, 18 apart. */
+    --page-width: 65rem;
+    --page-gap: 1.125rem;
+  }
+
+  /* The palette Plum & Gold replaced: the Windows app's Theme.xaml values. */
+  [data-theme='classic-navy'] {
     --background: 221 46% 8%;        /* #0B111E */
     --foreground: 38 83% 95%;        /* #FDF6EA */
     --sidebar: 219 41% 13%;          /* #141E30 */
@@ -19,34 +81,69 @@
     --secondary-foreground: 38 83% 95%;
     --muted: 222 33% 18%;
     --muted-foreground: 215 20% 68%; /* #9DABBE */
-    --destructive: 0 72% 55%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 223 27% 20%;           /* #252D41 */
+    --destructive: 0 72% 62%;
+    --destructive-foreground: 221 46% 8%;
+    --border: 223 27% 26%;
     --input: 219 41% 13%;
     --ring: 28 92% 54%;
-    --radius: 0.875rem;
-    /* The desktop app's rhythm: one left-aligned column, 1040 wide, 18 apart. */
-    --page-width: 65rem;
-    --page-gap: 1.125rem;
+    --panel-2: 219 41% 13%;
+    --gold-1: 29 100% 73%;
+    --gold-2: 28 92% 54%;
+    --gold-3: 28 86% 42%;
+    --gold-sheen: 31 100% 85%;
+    --lilac: 215 20% 68%;
+    --text-muted: 215 20% 68%;
+    --badge: 6 84% 62%;
+    --badge-foreground: 221 46% 8%;
+    --success: 158 64% 52%;
+    --warning: 43 96% 56%;
+    --app-bg: hsl(221 46% 8%);
+    --bar-bg: rgba(20, 30, 48, .78);
+    --scrim: rgba(5, 8, 15, .66);
+    --mark-tile-from: #1F283D;
+    --mark-tile-to: #0B111E;
+  }
+
+  /* Built from the tokens above, so they have to be worked out again wherever a
+     data-theme is set: the Skin picker's swatches sit inside the other skin. */
+  :root, [data-theme] {
+    --gold-gradient: linear-gradient(135deg, hsl(var(--gold-1)) 0%, hsl(var(--gold-2)) 45%, hsl(var(--gold-3)) 100%);
+    --gold-sweep: linear-gradient(110deg, hsl(var(--gold-3)) 0%, hsl(var(--gold-2)) 30%, hsl(var(--gold-sheen)) 45%, hsl(var(--gold-2)) 60%, hsl(var(--gold-3)) 100%);
+    --hairline: hsl(var(--gold-2) / .2);
+    --hairline-strong: hsl(var(--gold-2) / .35);
   }
 
   * { @apply border-border; }
 
   html, body, #root { height: 100%; overflow-x: clip; max-width: 100%; }
 
+  html { background-color: hsl(var(--background)); }
+
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    background: var(--app-bg);
+    background-color: hsl(var(--background));
+    font-family: theme('fontFamily.sans');
     /* Nothing may scroll sideways on a phone. This is the backstop; the
        layout is built not to need it, and the e2e suite measures it. */
     overflow-x: hidden;
     -webkit-text-size-adjust: 100%;
   }
 
+  h1, h2, h3 { font-family: theme('fontFamily.display'); font-weight: 650; }
+
+  /* A long address or error from the server wraps rather than pushing the page. */
+  p, li, td, dd { overflow-wrap: break-word; }
+
   /* Every interactive control clears the 44px iOS tap target. Written once
      here rather than remembered at each call site. */
   button, a[role='button'], [type='submit'] { touch-action: manipulation; }
 
   :focus-visible { @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background; }
+
+  /* Fields no page dressed itself, and the "on" state of every toggle. */
+  select, textarea { background-color: hsl(var(--input)); }
+  input[type='checkbox'], input[type='radio'] { accent-color: hsl(var(--primary)); }
 
   /* Thin, quiet scrollbars like the desktop app's. */
   * { scrollbar-width: thin; scrollbar-color: hsl(var(--border)) transparent; }
@@ -55,21 +152,93 @@
 @layer components {
   /* One page: a left-aligned column with the desktop app's width and spacing. */
   .page { @apply flex w-full min-w-0 flex-col; max-width: var(--page-width); gap: var(--page-gap); }
-  .page-title { @apply text-[1.65rem] font-bold leading-tight tracking-tight sm:text-[1.875rem]; }
-  .page-subtitle { @apply text-sm text-muted-foreground sm:text-[0.95rem]; }
+  .page-title { @apply font-display text-[1.65rem] font-bold leading-tight tracking-tight sm:text-[1.875rem]; }
+  .page-subtitle { @apply text-sm text-lilac sm:text-[0.95rem]; }
   .headline { @apply text-[0.95rem] font-semibold; }
   .caption { @apply text-xs leading-relaxed text-muted-foreground; }
-  /* The working indicator: the mark spins slowly and bobs, as in the app. */
-  .josi-working-mark { animation: josi-spin 2.4s linear infinite, josi-bob 1.3s ease-in-out infinite alternate; transform-origin: 50% 50%; }
-  @keyframes josi-spin { from { rotate: 0deg; } to { rotate: 360deg; } }
-  @keyframes josi-bob { from { translate: 0 -2px; } to { translate: 0 2px; } }
-  @media (prefers-reduced-motion: reduce) { .josi-working-mark { animation: none; } }
-  /* Links in text: orange, underlined on hover only. */
+  /* Links in text: gold, underlined on hover only. */
   .link { @apply text-primary underline-offset-2 hover:underline; }
   /* A segmented control (the Connectors hub, settings tabs). */
   .segments { @apply inline-flex max-w-full gap-1 overflow-x-auto rounded-full border border-border bg-card p-1; }
   .segment { @apply inline-flex min-h-10 shrink-0 items-center rounded-full px-4 text-sm font-medium text-muted-foreground; }
   .segment-on { @apply bg-secondary text-foreground; }
+
+  /* Gold. `btn-gold` is every primary button; `btn-sheen` adds the slow sweep
+     the sign-in panel and the send button carry. */
+  .btn-gold { background-image: var(--gold-gradient); color: hsl(var(--primary-foreground)); }
+  .btn-gold:hover:not(:disabled) { filter: brightness(1.06); }
+  .btn-sheen { background-image: var(--gold-sweep); background-size: 250% 100%; animation: josi-sheen 3.5s linear infinite; color: hsl(var(--primary-foreground)); }
+  @keyframes josi-sheen { to { background-position: -250% 0; } }
+
+  /* The frosted bars above and below the chat. */
+  .frost { background: var(--bar-bg); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+  .hairline-b { border-bottom: 1px solid var(--hairline); }
+  .hairline-t { border-top: 1px solid var(--hairline); }
+
+  /* The J. All of it lives in components/brand/JosiMark.tsx; these are only the
+     animations it asks for. */
+  .josi-mark { position: relative; display: inline-grid; place-items: center; flex: none; }
+  .josi-mark-tile { border-radius: 26%; background: linear-gradient(150deg, var(--mark-tile-from), var(--mark-tile-to)); box-shadow: inset 0 0 0 1px var(--hairline); }
+  .josi-mark img { display: block; max-width: none; transition: opacity .22s ease, filter .22s ease; }
+  .josi-mark-thinking { animation: josi-ghost 1.8s ease-in-out infinite; }
+  @keyframes josi-ghost {
+    0%, 100% { opacity: .12; transform: scale(.9); filter: blur(2px) drop-shadow(0 0 0 hsl(var(--gold-2) / 0)); }
+    50% { opacity: 1; transform: scale(1.04); filter: blur(0) drop-shadow(0 0 10px hsl(var(--gold-2) / .75)); }
+  }
+  .josi-mark-success img { animation: josi-light-up .6s ease-out forwards; }
+  @keyframes josi-light-up {
+    0% { opacity: 1; filter: brightness(1) drop-shadow(0 0 0 hsl(var(--gold-2) / 0)); transform: scale(1); }
+    45% { opacity: 1; filter: brightness(1.35) drop-shadow(0 0 22px hsl(var(--gold-sheen) / .95)); transform: scale(1.06); }
+    100% { opacity: 0; filter: brightness(1.5) drop-shadow(0 0 30px hsl(var(--gold-sheen) / 1)); transform: scale(.72); }
+  }
+  .josi-mark-check { position: absolute; left: 50%; top: 50%; display: grid; place-items: center; border-radius: 50%; background-image: var(--gold-gradient);
+    transform: translate(-50%, -50%); box-shadow: 0 0 46px hsl(var(--gold-2) / .5); color: hsl(var(--primary-foreground)); animation: josi-check-in .6s cubic-bezier(.3, 1.5, .5, 1) both; }
+  @keyframes josi-check-in { 0%, 35% { opacity: 0; transform: translate(-50%, -50%) scale(.3); } 100% { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+
+  /* The stage on the sign-in pages. */
+  .auth-stars { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+  .auth-star { position: absolute; width: 2px; height: 2px; border-radius: 50%; background: hsl(var(--gold-2)); animation: josi-twinkle 3s ease-in-out infinite; }
+  @keyframes josi-twinkle { 50% { opacity: .15; } }
+  .josi-glow { position: absolute; inset: -30%; border-radius: 50%; background: radial-gradient(circle, hsl(var(--gold-2) / .38), hsl(var(--gold-2) / 0) 68%); animation: josi-pulse 2.4s ease-in-out infinite; }
+  @keyframes josi-pulse { 50% { transform: scale(1.15); opacity: .55; } }
+  .josi-halo { position: absolute; inset: -18%; border-radius: 50%; border: 1px solid hsl(var(--gold-2) / .3); animation: josi-halo 2.4s ease-in-out infinite; }
+  @keyframes josi-halo { 50% { transform: scale(1.09); opacity: .4; } }
+
+  /* Sign-in with Google and Apple. Their colours are theirs, on every skin. */
+  .btn-google { background: #fff; color: #1f1f1f; }
+  .btn-apple { background: #000; color: #fff; }
+
+  /* Six boxes for a code. */
+  .code-box { @apply h-14 w-full min-w-0 rounded-[0.7rem] border border-border bg-input p-0 text-center font-display text-xl font-bold text-primary; caret-color: hsl(var(--primary)); }
+  .code-box:focus { outline: none; border-color: hsl(var(--primary)); box-shadow: 0 0 0 3px hsl(var(--primary) / .18); }
+
+  /* The chat's bubbles. Josi's sit on a panel, yours in gold. */
+  .bubble-josi { background: hsl(var(--card)); border: 1px solid hsl(var(--lilac) / .2); }
+  .bubble-mine { background-image: var(--gold-gradient); color: hsl(var(--primary-foreground)); font-weight: 500; }
+  .approval-card { background: hsl(var(--panel-2)); border: 1px solid var(--hairline); border-left: 3px solid hsl(var(--gold-2)); }
+
+  /* One tile in the menu. */
+  .menu-tile { position: relative; display: flex; height: 100%; min-height: 5.25rem; width: 100%; flex-direction: column; align-items: center; justify-content: flex-start; gap: .4rem;
+    border-radius: var(--radius); border: 1px solid hsl(var(--border)); background: hsl(var(--panel-2)); padding: .7rem .1rem .55rem; text-align: center; font-size: .7rem; font-weight: 500; line-height: 1.2;
+    color: hsl(var(--foreground)); overflow-wrap: break-word; transition: transform .15s, border-color .15s, box-shadow .15s; }
+  .menu-tile:hover { transform: translateY(-1px); border-color: var(--hairline-strong); }
+  .menu-tile[aria-current='page'] { border-color: hsl(var(--gold-2)); box-shadow: 0 0 14px hsl(var(--gold-2) / .22); }
+  .menu-tile-soon { opacity: .55; }
+  .menu-tile svg { height: 1.4rem; width: 1.4rem; color: hsl(var(--gold-2)); }
+  .menu-sheet { animation: josi-menu-in .22s cubic-bezier(.2, .8, .2, 1) both; }
+  @keyframes josi-menu-in { from { opacity: 0; transform: translateY(-8px) scale(.985); } }
+
+  /* No motion means no motion: the J, the glow and the stars hold still, and the
+     check simply appears. */
+  @media (prefers-reduced-motion: reduce) {
+    .btn-sheen, .auth-star, .josi-glow, .josi-halo, .menu-sheet { animation: none; }
+    .btn-sheen { background-image: var(--gold-gradient); background-size: auto; }
+    .josi-mark-thinking { animation: none; opacity: .8; }
+    .josi-mark-success img { animation: none; opacity: 0; }
+    .josi-mark-check { animation: none; }
+    .menu-tile { transition: none; }
+    .menu-tile:hover { transform: none; }
+  }
 }
 
 @layer base {
@@ -106,14 +275,14 @@
 
   .calendar-all-day-event {
     @apply block h-11 min-w-0 w-full overflow-hidden px-1.5 py-1 text-xs leading-none focus-visible:ring-inset;
-    background: color-mix(in srgb, var(--calendar-event-color, #7c3aed) 26%, hsl(var(--background)));
-    border-color: color-mix(in srgb, var(--calendar-event-color, #7c3aed) 60%, hsl(var(--border)));
+    background: color-mix(in srgb, var(--calendar-event-color, hsl(var(--primary))) 26%, hsl(var(--background)));
+    border-color: color-mix(in srgb, var(--calendar-event-color, hsl(var(--primary))) 60%, hsl(var(--border)));
   }
 
   .calendar-event-card {
     @apply block h-full min-h-0 w-full min-w-0 overflow-hidden px-1.5 py-1 text-xs leading-[1.25] focus-visible:ring-inset;
-    background: color-mix(in srgb, var(--calendar-event-color, #7c3aed) 26%, hsl(var(--background)));
-    border-color: color-mix(in srgb, var(--calendar-event-color, #7c3aed) 60%, hsl(var(--border)));
+    background: color-mix(in srgb, var(--calendar-event-color, hsl(var(--primary))) 26%, hsl(var(--background)));
+    border-color: color-mix(in srgb, var(--calendar-event-color, hsl(var(--primary))) 60%, hsl(var(--border)));
     max-height: 100%;
     touch-action: manipulation;
   }

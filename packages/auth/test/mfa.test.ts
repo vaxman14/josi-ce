@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { generate, generateSecret } from 'otplib';
 import { MasterKey, initializeVault, recoverVault, setVaultLock, seal, isVaultCredentialReference, VaultLockedError } from '@josi-ce/core';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
-import { beginMfaSetup, enableMfa, disableMfa, completeMfaLogin, verifyMfaFactor } from '../src/mfa.js';
+import { adoptMfa, assertCanAdoptMfa, beginMfaSetup, enableMfa, disableMfa, completeMfaLogin, verifyMfaFactor } from '../src/mfa.js';
 import { hashPassword } from '../src/passwords.js';
 
 const key = new MasterKey(Buffer.alloc(32, 63));
@@ -138,5 +138,30 @@ describe('Vault authenticator authority', () => {
     expect(await verifyMfaFactor(db, null, owner, codes[0])).toBe(true);
     await db.query('update vault_state set initialized_at=null');
     await expect(beginMfaSetup(db, key, other)).rejects.toBeInstanceOf(VaultLockedError);
+  });
+});
+
+describe('an authenticator shared from Hey Josi', () => {
+  it('takes over sign-in, with the secret in the Vault and new recovery codes', async () => {
+    const secret = generateSecret();
+    await assertCanAdoptMfa(db, key, owner, password);
+    const codes = await adoptMfa(db, key, owner, secret);
+    expect(codes).toHaveLength(10);
+    const [user] = await db.query<{ totp_secret_enc: string; mfa_enabled_at: string | null }>('select totp_secret_enc,mfa_enabled_at from users where id=$1', [owner]);
+    expect(isVaultCredentialReference(user.totp_secret_enc)).toBe(true);
+    expect(user.mfa_enabled_at).toBeTruthy();
+    expect(await verifyMfaFactor(db, key, owner, await generate({ secret }))).toBe(true);
+    expect(JSON.stringify(await db.query('select * from events'))).not.toContain(secret);
+  });
+
+  it('needs the password, and will not replace an authenticator already on', async () => {
+    await expect(assertCanAdoptMfa(db, key, owner, 'not the password')).rejects.toThrow('did not match');
+    await enrolled();
+    await expect(assertCanAdoptMfa(db, key, owner, password)).rejects.toThrow('already enabled');
+    await expect(adoptMfa(db, key, owner, generateSecret())).rejects.toThrow('already enabled');
+  });
+
+  it('refuses something that is not an authenticator secret', async () => {
+    await expect(adoptMfa(db, key, owner, 'not a secret')).rejects.toThrow('could not use');
   });
 });

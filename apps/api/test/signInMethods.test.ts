@@ -570,6 +570,17 @@ describe('a passkey for a native app', () => {
       expect((await exchange.json() as any).sessionToken).toBeTruthy();
     });
 
+    it('still asks for the code when the same code did not come from a passkey', async () => {
+      const secret = await beginMfaSetup(db, key, userId);
+      await enableMfa(db, key, userId, await generate({ secret }));
+      const code = randomBytes(32).toString('base64url');
+      await db.query(`insert into auth_native_codes (code_hash, user_id, expires_at) values ($1, $2, now() + interval '2 minutes')`,
+        [createHash('sha256').update(code).digest('hex'), userId]);
+      const exchange = await native('/auth/native/exchange', { code });
+      expect(exchange.status).toBe(202);
+      expect((await exchange.json() as any).sessionToken).toBeUndefined();
+    });
+
     it('only a native client can redeem it', async () => {
       const { device } = await registered();
       const code = codeFrom((await bridge(device)).body.redirect);
@@ -1076,5 +1087,18 @@ describe('adding a passkey from a native app', () => {
       const page = add({ create: async () => credential, options: { status: 401, body: { error: 'no' } } });
       await vi.waitFor(() => expect(page.location.href).toBe(errorUrl('passkey_failed')));
     });
+  });
+});
+
+describe('the saved skin', () => {
+  it('is kept per person and refuses anything else', async () => {
+    const b = await signedIn(session);
+    expect((await b.get('/persona/settings')).body.settings.skin ?? null).toBeNull();
+    const put = async (body: unknown) => { const res = await fetch(`${base}/api/persona/settings`, { method: 'PUT', headers: { 'content-type': 'application/json', 'x-josi-csrf': b.jar.get('josi_csrf')!, cookie: `josi_csrf=${b.jar.get('josi_csrf')}; josi_session=${session}` }, body: JSON.stringify(body) }); return res.status; };
+    expect(await put({ skin: 'classic-navy' })).toBe(200);
+    expect((await b.get('/persona/settings')).body.settings.skin).toBe('classic-navy');
+    expect(await put({ skin: 'hot-pink' })).toBe(400);
+    expect(await put({ memoryMode: 'manual' })).toBe(200);
+    expect((await b.get('/persona/settings')).body.settings.skin).toBe('classic-navy');
   });
 });

@@ -17,6 +17,7 @@ import { appendEvent, deleteVaultSlot, openCredentialPayload, storeVaultCredenti
 import { requireConnectorVault } from './credentialVault.js';
 import { OAUTH_PROVIDERS, type OAuthProvider } from './capabilities.js';
 import type { OAuthClient } from './providers.js';
+import { heyJosiClient, sharedGoogleAvailable } from './heyJosi.js';
 
 export interface ClientStatus {
   provider: OAuthProvider;
@@ -114,6 +115,12 @@ export class NoClientError extends Error {}
 /** Opens the client for use. The only place the secret is decrypted. */
 export async function loadClient(db: Db, key: MasterKey, provider: OAuthProvider): Promise<OAuthClient> {
   if (!db.transaction) throw new VaultError('OAuth client access requires transactions');
+  // A self-hoster's own application always wins. Without one, a linked server on
+  // a paid plan uses the shared Hey Josi client.
+  if (provider === 'google') {
+    const [own] = await db.query('select 1 from oauth_clients where provider = $1', [provider]);
+    if (!own && await sharedGoogleAvailable(db)) return heyJosiClient();
+  }
   return db.transaction(async tx => {
     await requireConnectorVault(tx);
     await lockClients(tx);

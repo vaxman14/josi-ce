@@ -17,7 +17,7 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
 import { MasterKey } from '@josi-ce/core';
 import { executeAssistantTool } from '@josi-ce/agent';
 import { createUser, ensureWorkspace } from './fixtures.js';
@@ -122,6 +122,7 @@ beforeAll(async () => {
   ids.admin = (await createUser(db, { email: 'admin@ce.test', username: 'admin', role: 'super_admin', password: PW.admin })).id;
   ids.alice = (await createUser(db, { email: 'alice@ce.test', username: 'alice', role: 'member', password: PW.alice })).id;
   ids.bob = (await createUser(db, { email: 'bob@ce.test', username: 'bob', role: 'member', password: PW.bob })).id;
+  await testVault(db, key);
 
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000',

@@ -23,6 +23,7 @@ import {
   probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CLAUDE_COMMAND,
   DEFAULT_CODEX_COMMAND,
   PROVIDERS, credentialFields, describeProvider, saveModelConfiguration, removeModelConfiguration, ModelConfigurationError,
+  type StoredProvider,
 } from '@josi-ce/llm';
 import { describeEdition, hasCapability } from '@josi-ce/core';
 import { asyncRoute, param } from './async.js';
@@ -506,6 +507,30 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         acknowledged: external || acknowledged, subscriptionCommand: command, secrets, settings, actorUserId: req.user!.id,
       });
 
+      // A model this server already checked (same provider, model and address)
+      // within the last 30 days takes its remembered result and is active at
+      // once, so switching between known models costs nothing. A model never
+      // checked here still gets its one real check.
+      const [remembered] = await db.query<{ probed_at: string; probe_steps: unknown; cap_chat: boolean | null; cap_structured_output: boolean | null; cap_tool_calling: boolean | null; cap_vision: boolean | null; cap_context_tokens: number | null }>(
+        `select probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens from llm_probe_memory
+         where provider = $1 and model = $2 and base_url = $3 and cap_chat = true and probed_at > now() - interval '30 days'`,
+        [descriptor.kind, model, descriptor.baseUrlMode === 'none' ? '' : (baseUrl || '')]);
+      // On a subscription path (Claude Code, Codex) the capabilities belong to
+      // the path, not to the model alias: what the server proved for one model
+      // of the plan carries over to its siblings, so a switch is instant. The
+      // client confirms the new model quietly afterwards (verify: true).
+      const sibling = remembered ? null : (await db.query<typeof remembered>(
+        `select probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens from llm_probe_memory
+         where provider = $1 and provider in ('anthropic_subscription', 'openai_subscription') and cap_chat = true and probed_at > now() - interval '30 days'
+         order by probed_at desc limit 1`, [descriptor.kind]))[0] ?? null;
+      const carried = remembered ?? sibling;
+      if (carried) {
+        await db.query(
+          `update llm_providers set probed_at = $2, probe_steps = $3, cap_chat = $4, cap_structured_output = $5, cap_tool_calling = $6, cap_vision = $7, cap_context_tokens = $8,
+             activated_at = coalesce(activated_at, now()) where role = $1`,
+          [role, carried.probed_at, json(carried.probe_steps), carried.cap_chat, carried.cap_structured_output, carried.cap_tool_calling, carried.cap_vision, carried.cap_context_tokens]);
+        return res.json({ provider: await providerDto(db, role), needsProbe: false, remembered: carried.probed_at, verify: !remembered });
+      }
       return res.json({ provider: await providerDto(db, role), needsProbe: true });
     }),
   );
@@ -595,6 +620,14 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       if (!updated.length) {
         return res.status(409).json({ error: 'The model changed during the test. Test the current selection again.' });
       }
+      // Remember the result for this model, so choosing it again is instant.
+      await db.query(
+        `insert into llm_probe_memory (provider, model, base_url, probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         on conflict (provider, model, base_url) do update set probed_at = excluded.probed_at, probe_steps = excluded.probe_steps, cap_chat = excluded.cap_chat,
+           cap_structured_output = excluded.cap_structured_output, cap_tool_calling = excluded.cap_tool_calling, cap_vision = excluded.cap_vision, cap_context_tokens = excluded.cap_context_tokens`,
+        [stored.provider, stored.model, stored.base_url ?? '', result.probedAt, json(result.steps), result.capabilities.chat, result.capabilities.structuredOutput,
+          result.capabilities.toolCalling, result.capabilities.vision, result.capabilities.contextTokens]);
 
       await appendEvent(db, {
         actorUserId: req.user!.id,
@@ -736,9 +769,72 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
 
 /** What a signed-in member is allowed to know about the model.
  *
- * Deliberately thin. A member needs to know which features work and how much of
- * their own allowance is left; they do not need the provider, the model name,
- * the endpoint, or anyone else's usage. */
+ * Deliberately thin. A member needs the provider's human-readable identity to
+ * make an informed data-sharing choice before a native client sends personal
+ * content. The model name, endpoint, credential and other members' usage stay
+ * private. */
+/** Checks every configured model in the background after the server starts,
+ * so no switch ever waits: both slots (primary and fallback), and on a
+ * subscription plan all of its aliases. Each result goes into llm_probe_memory;
+ * a result younger than 30 days is not redone. One pass at a time, never
+ * while an owner-started probe is running, never in tests. */
+export function startModelWarmup(ctx: LlmRoutesCtx, delayMs = 60_000, everyMs = 6 * 3_600_000): () => void {
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST) return () => undefined;
+  const { db } = ctx;
+  let running = false;
+  async function remembered(provider: string, model: string, baseUrl: string) {
+    const [row] = await db.query<{ probed_at: string }>(
+      `select probed_at from llm_probe_memory where provider = $1 and model = $2 and base_url = $3 and cap_chat = true and probed_at > now() - interval '30 days'`,
+      [provider, model, baseUrl]);
+    return !!row;
+  }
+  async function remember(stored: StoredProvider, model: string, result: Awaited<ReturnType<typeof probeProvider>>) {
+    await db.query(
+      `insert into llm_probe_memory (provider, model, base_url, probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       on conflict (provider, model, base_url) do update set probed_at = excluded.probed_at, probe_steps = excluded.probe_steps, cap_chat = excluded.cap_chat,
+         cap_structured_output = excluded.cap_structured_output, cap_tool_calling = excluded.cap_tool_calling, cap_vision = excluded.cap_vision, cap_context_tokens = excluded.cap_context_tokens`,
+      [stored.provider, model, stored.base_url ?? '', result.probedAt, json(result.steps), result.capabilities.chat, result.capabilities.structuredOutput,
+        result.capabilities.toolCalling, result.capabilities.vision, result.capabilities.contextTokens]);
+  }
+  async function pass() {
+    if (running) return; running = true;
+    try {
+      for (const role of ['primary', 'fallback'] as const) {
+        const stored = await loadStoredProvider(db, role);
+        if (!stored) continue;
+        // What the slot already proved counts as a remembered result.
+        if (stored.probed_at && stored.cap_chat) {
+          const [steps] = await db.query<{ probe_steps: unknown }>(`select probe_steps from llm_providers where role = $1`, [role]);
+          await db.query(
+            `insert into llm_probe_memory (provider, model, base_url, probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens)
+             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) on conflict (provider, model, base_url) do nothing`,
+            [stored.provider, stored.model, stored.base_url ?? '', stored.probed_at, json(Array.isArray(steps?.probe_steps) ? steps.probe_steps : []), stored.cap_chat, stored.cap_structured_output, stored.cap_tool_calling, stored.cap_vision, stored.cap_context_tokens]);
+        }
+        const models = stored.provider === 'anthropic_subscription' ? ['haiku', 'sonnet', 'opus'] : [stored.model];
+        for (const model of models) {
+          if (await remembered(stored.provider, model, stored.base_url ?? '')) continue;
+          if (probeProgress(role).running) return; // the owner is checking something; try again next pass
+          try {
+            const candidate: StoredProvider = { ...stored, model };
+            const provider = await buildProvider({ db, masterKey: ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {}), fetchImpl: ctx.fetchImpl, resolve: ctx.resolve, codexRunner: ctx.codexRunner }, candidate);
+            const result = await probeProvider(meteredProvider(db, candidate, role, provider, { purpose: 'probe' }));
+            await remember(stored, model, result);
+            console.error(`josi-ce: model warmup checked ${stored.provider} ${model}: chat ${result.capabilities.chat}, tools ${result.capabilities.toolCalling}`);
+          } catch (err) {
+            console.error(`josi-ce: model warmup could not check ${stored.provider} ${model}: ${(err as Error).message}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.error(`josi-ce: model warmup pass failed: ${(err as Error).message}`);
+    } finally { running = false; }
+  }
+  const first = setTimeout(() => { void pass(); }, delayMs); first.unref();
+  const repeat = setInterval(() => { void pass(); }, everyMs); repeat.unref();
+  return () => { clearTimeout(first); clearInterval(repeat); };
+}
+
 export function llmRoutes(ctx: LlmRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
@@ -749,6 +845,7 @@ export function llmRoutes(ctx: LlmRoutesCtx): Router {
     asyncRoute(async (req, res) => {
       const primary = await loadStoredProvider(db, 'primary');
       const capabilities = capabilitiesOf(primary);
+      const provider = primary ? describeProvider(primary.provider) : null;
       return res.json({
         // Whether Josi can answer at all, and if not, why not.
         ready: !!primary?.activated_at && capabilities?.chat === true,
@@ -758,6 +855,21 @@ export function llmRoutes(ctx: LlmRoutesCtx): Router {
         // from a parameter, so a member cannot ask about somebody else.
         usage: await usageSummary(db, req.user!.id),
         cap: await checkCaps(db, req.user!.id),
+        aiProcessing: {
+          disclosureVersion: 'ai-data-sharing-2026-09-28',
+          provider: provider ? {
+            id: provider.kind,
+            name: provider.label,
+            external: provider.external,
+          } : null,
+          dataCategories: [
+            'Messages you send',
+            'Attachments you choose to send',
+            'Voice transcripts you choose to send',
+            'Email, calendar, contact, task, and other connected-service context used only when needed for your request',
+          ],
+          purpose: 'To generate the response or carry out the action you request.',
+        },
       });
     }),
   );

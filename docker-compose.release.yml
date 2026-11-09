@@ -128,6 +128,13 @@ services:
       # Empty means infer from APP_URL: secure for https, non-secure for LAN
       # http. Explicit true/false remains available as an advanced override.
       COOKIE_SECURE: ${JOSI_COOKIE_SECURE:-}
+      # Who may vouch for a visitor's address in X-Forwarded-For. Here that is
+      # Caddy, whose address moves with the Docker network, so this names the
+      # private ranges Docker draws from. It is safe only because web publishes
+      # no port: nothing but Caddy reaches it, and the Caddyfile replaces the
+      # header with the address it saw. docker-compose.noproxy.yml publishes web,
+      # so it resets this.
+      JOSI_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7
       WEB_DIR: /app/web
       # Where the official Codex CLI keeps its login on the ChatGPT subscription
       # path. A dedicated per-installation volume, so the operator's device
@@ -164,6 +171,9 @@ services:
       # what an update does — does not destroy the only copy of anything.
       - josi_versions:/data/versions
       - josi_backups:/data/backups
+      # The server's relay keys. Its own volume, so a recreated container keeps
+      # its identity, and web and worker read the same keys.
+      - josi_keys:/data/keys
       - josi_diagnostics:/data/diagnostics
       - josi_codex:/data/codex
       - josi_claude:/data/claude
@@ -227,6 +237,9 @@ services:
     volumes:
       - josi_versions:/data/versions
       - josi_backups:/data/backups
+      # The server's relay keys. Its own volume, so a recreated container keeps
+      # its identity, and web and worker read the same keys.
+      - josi_keys:/data/keys
       - josi_diagnostics:/data/diagnostics
       - josi_codex:/data/codex
       - josi_claude:/data/claude
@@ -344,6 +357,7 @@ volumes:
   db_data:
   josi_versions:
   josi_backups:
+  josi_keys:
   josi_diagnostics:
   # The Codex CLI's home on the ChatGPT subscription path. Its own volume so a
   # container replacement does not sign the operator out, and so removing it is

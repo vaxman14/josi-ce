@@ -184,6 +184,56 @@ namespace Josi.Native {
       return RunElevated(powershell, "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"" + script + "\"");
     }
 
+    /// True when the app is connected to the server installed on this PC.
+    public static bool IsThisPc(Uri origin) {
+      if (origin == null || DevelopmentRoot != null) return false;
+      var host = origin.Host.Trim('[', ']').ToLowerInvariant();
+      return (host == "localhost" || host == "127.0.0.1" || host == "::1") && Read().Installed;
+    }
+
+    /// The installer lets Josi's services only read their settings, so a new
+    /// public address is written here, with Windows administrator approval,
+    /// and the server restarts with it. The server has already checked the
+    /// address; it is checked again because it ends up in an elevated command.
+    public static Task SetAddress(string publicUrl) {
+      Uri url;
+      if (!Uri.TryCreate(publicUrl, UriKind.Absolute, out url) || (url.Scheme != "https" && url.Scheme != "http")
+          || url.PathAndQuery != "/" || url.UserInfo.Length > 0 || url.Fragment.Length > 0
+          || !Regex.IsMatch(url.Host, @"^(?:[A-Za-z0-9-]{1,63}\.)*[A-Za-z0-9-]{1,63}$"))
+        throw new JosiException("Enter the address as https://name-or-ip:port, or http://localhost:port for this PC only.");
+      var origin = url.Scheme + "://" + url.Host + (url.IsDefaultPort ? "" : ":" + url.Port);
+      var config = Path.Combine(InstalledRoot, "config");
+      var caddy = CaddyfileFor(url);
+      var forward = string.Join(",", Services.Select(s => "'" + s + "'"));
+      var reverse = string.Join(",", Enumerable.Reverse(Services).Select(s => "'" + s + "'"));
+      // Contents are overwritten in place, so each file keeps the installer's ACL.
+      var script = "$ErrorActionPreference='Stop';$u=[Text.UTF8Encoding]::new($false);"
+        + "$f='" + Path.Combine(config, "runtime.json") + "';$s=Get-Content -LiteralPath $f -Raw|ConvertFrom-Json;$s.publicUrl='" + origin + "';"
+        + "[IO.File]::WriteAllText($f,($s|ConvertTo-Json -Compress),$u);"
+        + (caddy == null ? "" : "$c='" + Path.Combine(config, "Caddyfile") + "';if(Test-Path -LiteralPath $c){[IO.File]::WriteAllText($c,$u.GetString([Convert]::FromBase64String('"
+          + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(caddy)) + "')).Replace('API_PORT',[string][int]$s.apiPort),$u)};")
+        + "foreach($n in @(" + reverse + ")){if(Get-Service -Name $n -ErrorAction SilentlyContinue){Stop-Service -Name $n -Force}};"
+        + "foreach($n in @(" + forward + ")){if(Get-Service -Name $n -ErrorAction SilentlyContinue){Start-Service -Name $n}}";
+      var powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+      return RunElevated(powershell, "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"" + script + "\"");
+    }
+
+    /// The proxy file for an address, as the server writes it (networkRoutes.ts
+    /// caddyfileFor); null for a public domain, whose proxy file is left alone.
+    static string CaddyfileFor(Uri url) {
+      var host = url.Host.ToLowerInvariant();
+      var port = url.Port;
+      const string apiPort = "API_PORT"; // runtime.json's apiPort, filled in by the elevated step
+      if (host == "localhost" || host == "127.0.0.1")
+        return "{\n\tadmin off\n\tauto_https off\n}\n\nhttp://localhost:" + port + " {\n\tbind 127.0.0.1\n\treverse_proxy 127.0.0.1:" + apiPort + "\n}\n";
+      var m = Regex.Match(host, @"^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$");
+      var tailscale = host.EndsWith(".ts.net") || (m.Success && int.Parse(m.Groups[1].Value) == 100 && int.Parse(m.Groups[2].Value) >= 64 && int.Parse(m.Groups[2].Value) <= 127);
+      var lan = m.Success || host.EndsWith(".local") || host.EndsWith(".lan") || host.EndsWith(".home") || !host.Contains(".");
+      if (tailscale || lan)
+        return "{\n\tadmin off\n}\n\nhttps://" + url.Host + ":" + port + " {\n\ttls internal\n\treverse_proxy 127.0.0.1:" + apiPort + "\n}\n";
+      return null;
+    }
+
     /// Runs a user-selected Josi CE installer. Inno Setup's own transaction,
     /// recovery copy and migration process applies.
     public static Task RunInstaller(string path) {

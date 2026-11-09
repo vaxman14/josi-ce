@@ -6,11 +6,16 @@ using System.Windows.Controls;
 using System.Windows.Input;
 
 namespace Josi.Native {
-  /// The server on this PC. Other devices use the standalone Josi client.
+  /// The server on this PC, or one elsewhere that this PC is paired with.
   public sealed class ConnectView : UserControl, IRefresh {
     readonly AppModel model; readonly Window owner;
+    /// Kept across redraws, so a failed connection leaves the address to correct.
+    readonly TextBox address = Automation.Id(Ui.Input("https://josi.example.com"), "josi.welcome.address");
+    readonly GhostView ghost;
     public ConnectView(AppModel model, Window owner) {
       this.model = model; this.owner = owner;
+      ghost = new GhostView(model.Ghost, 170);
+      if (model.Address.Length > 0) address.Text = model.Address;
       Refresh();
     }
     public void Refresh() {
@@ -31,11 +36,45 @@ namespace Josi.Native {
                   : Automation.Id(Ui.Pill("Set Up on This PC…", () => ServerControls.ChooseInstaller(model, owner), true), "josi.welcome.setup"),
         new ServerControls(model, owner, true));
       var brand = Ui.Row(14, Ui.JosiMark(52), Ui.Stack(2, Ui.T("Josi", 28, FontWeights.SemiBold), Ui.Caption("Your assistant, on your own server.")));
-      var page = Ui.Stack(28, brand, Ui.Heading("Welcome to Josi", "Your conversations, your work, your PC."), local,
-        Ui.Secondary("Closing this window leaves your server running for your other devices."));
+      Ui.Detach(ghost);
+      var page = Ui.Stack(28, Ui.Spread(Ui.Stack(28, brand, Ui.Heading("Welcome to Josi", "Your conversations, your work, your PC.")), ghost), Flags.ServerApp ? local : null,
+        Flags.Relay ? Elsewhere() : Flags.ServerApp ? null : Direct(),
+        Flags.ServerApp ? Ui.Secondary("Closing this window leaves your server running for your other devices.") : null);
       page.IsEnabled = !model.Busy;
       Automation.Id(this, "josi.welcome", "Welcome to Josi");
       Content = Ui.Scroll(page, 720, 36);
+    }
+    /// A server reached by its own address, with no relay in between.
+    UIElement Direct() {
+      Action connect = () => model.Run(async () => {
+        var target = address.Text.Trim();
+        model.Activity = "Connecting to " + target + "…";
+        try { await model.Connect(target); } finally { model.Activity = ""; }
+      });
+      address.KeyDown += (s, e) => { if (e.Key == Key.Enter) { e.Handled = true; connect(); } };
+      return Ui.CardBox(null,
+        Ui.Row(10, Ui.Icon(Glyph.Network, 22, Ui.Text), Ui.T("Connect to your server", 21, FontWeights.Bold)),
+        Ui.Secondary("Enter your server's HTTPS address, or an HTTP localhost address for a server on this PC."),
+        Ui.Field("Server address", address),
+        Automation.Id(Ui.Pill("Connect", connect, true), "josi.welcome.connect"));
+    }
+    UIElement Elsewhere() {
+      var paired = TunnelStore.Current.All();
+      var items = new List<UIElement> {
+        Ui.Row(10, Ui.Icon(Glyph.Network, 22, Ui.Text), Ui.T("On another computer", 21, FontWeights.Bold)),
+        Ui.Secondary("Pair this PC with your server to reach it from anywhere. Only your server can read what's sent.")
+      };
+      foreach (var server in paired) {
+        var chosen = server;
+        var name = string.IsNullOrEmpty(server.Label) ? new Uri(server.Origin).Host : server.Label;
+        items.Add(Ui.Spread(Ui.T(name), Ui.Row(8,
+          Automation.Id(Ui.Pill("Open", () => model.Run(async () => { model.Activity = "Connecting to " + name + "…"; try { await model.ConnectPaired(chosen); } finally { model.Activity = ""; } }), true), "josi.welcome.paired.open"),
+          Automation.Id(Ui.Pill("Forget…", () => {
+            if (Dialogs.Confirm(owner, "Forget " + name + "?", "This PC will need a new pairing code to reach it again. You can remove this PC on your server too.", "Forget")) model.ForgetPairing(chosen);
+          }), "josi.welcome.paired.forget"))));
+      }
+      items.Add(Automation.Id(Ui.Pill("Pair This PC…", () => Dialogs.PairServer(owner, model), paired.Count == 0), "josi.welcome.pair"));
+      return Ui.CardBox(null, items.ToArray());
     }
   }
 
@@ -90,12 +129,14 @@ namespace Josi.Native {
 
   public sealed class LoginView : UserControl, IRefresh {
     readonly AppModel model; readonly Window owner;
+    readonly GhostView ghost;
     readonly TextBox identifier = Ui.Input("Username or email");
     readonly PasswordInput password = new PasswordInput("Password");
     readonly PasswordBox code = Ui.Secret("Verification code");
     string shown;
     public LoginView(AppModel model, Window owner) {
       this.model = model; this.owner = owner;
+      ghost = new GhostView(model.Ghost, 130);
       identifier.Text = model.RememberedIdentifier;
       password.Submitted += Submit;
       code.KeyDown += (s, e) => { if (e.Key == Key.Enter) Submit(); };
@@ -113,7 +154,10 @@ namespace Josi.Native {
       Automation.Id(this, "josi.login", "Sign in to Josi");
       Automation.Id(identifier, "josi.login.identifier"); Automation.Id(password, "josi.login.password"); Automation.Id(code, "josi.login.code");
       var stack = new StackPanel { MaxWidth = 580, Margin = new Thickness(36), VerticalAlignment = VerticalAlignment.Center };
-      Ui.Add(stack, Ui.Row(14, Ui.JosiMark(44), Ui.Heading("Sign in to Josi", model.Address)), 0);
+      Ui.Detach(ghost);
+      ghost.HorizontalAlignment = HorizontalAlignment.Left;
+      Ui.Add(stack, ghost, 0);
+      Ui.Add(stack, Ui.Row(14, Ui.JosiMark(44), Ui.Heading("Sign in to Josi", model.Address)), 10);
       if (model.MfaChallenge.Length == 0) {
         Ui.Detach(identifier); Ui.Detach(password);
         Ui.Add(stack, Ui.Field("Username or email", identifier), 22);
@@ -161,37 +205,83 @@ namespace Josi.Native {
     string renderedKey;
     string provider = "";
     List<Wire> discovered = new List<Wire>();
-    CheckBox enabled, recoverySaved;
+    CheckBox enabled, recoverySaved, pcEnable;
     NewPassword ownerPassword;
     PasswordInput resumePassword;
     Button createOwner;
-    public SetupView(AppModel model, Window owner) { this.model = model; this.owner = owner; Refresh(); }
-    string Step { get { return model.SetupState["nextStep"].Text; } }
+    string where = "pc", ownerEmail = "";
+    readonly GhostView ghost;
+    public SetupView(AppModel model, Window owner) {
+      this.model = model; this.owner = owner;
+      ghost = new GhostView(model.Ghost, 130);
+      Refresh();
+    }
+    /// The server decides the steps; these are the words the person reads.
+    static readonly Dictionary<string, string[]> Words = new Dictionary<string, string[]> {
+      {"host_checks", new[] {"Checking this PC", "A quick look to make sure everything Josi needs is here."}},
+      {"owner", new[] {"First, who are you?", "This is the account that runs this Josi. You can invite other people later."}},
+      {"domain", new[] {"Where will you use Josi?", "This decides which devices can reach her. You can change it later."}},
+      {"llm", new[] {"Pick Josi's brain", "The AI model she thinks with. Your subscription or your own key both work."}},
+      {"smtp", new[] {"Email, if you want it", "Lets Josi send invitations and password resets. You can skip this for now."}},
+      {"security", new[] {"Your folders", "Choose whether people here may give Josi access to folders."}},
+      {"pc_control", new[] {"Let Josi use this PC", "Commands, programs, files and windows on this computer, with your permission for each. You can skip this."}},
+      {"telemetry", new[] {"Help improve Josi", "Completely optional, and it never includes your conversations."}},
+      {"review", new[] {"Almost there", "One last look at what you chose."}},
+      {"", new[] {"All set", "Josi is ready when you are."}},
+    };
+    /// The step the server expects next.
+    string ServerStep { get { return model.SetupState["nextStep"].Text; } }
+    /// An earlier step the person went Back to, or null for the server's step.
+    string viewing;
+    string Step { get { return viewing ?? ServerStep; } }
+    /// The server lets only these finished steps be submitted again (REVISABLE_STEPS
+    /// in apps/api/src/setup/steps.ts); the rest are shown as already saved.
+    static readonly string[] Revisable = { "llm", "smtp" };
+    bool Done(string step) { return model.SetupState["steps"].List.Any(s => s["id"].Text == step && s["done"].Flag); }
+    /// Back and Next between steps. Next only walks back towards the server's step.
+    UIElement StepNavigation(List<Wire> all, int position) {
+      var index = position < 0 ? all.Count : position;
+      var back = Automation.Id(Ui.Pill("Back", () => { viewing = all[index - 1]["id"].Text; Refresh(); }), "josi.setup.back");
+      back.IsEnabled = index > 0;
+      if (viewing == null) return back;
+      var forward = Automation.Id(Ui.Pill("Next Step", () => {
+        var next = index + 1 < all.Count ? all[index + 1]["id"].Text : null;
+        viewing = next == null || next == ServerStep || !Done(next) ? null : next;
+        Refresh();
+      }), "josi.setup.next");
+      return Ui.Row(10, back, forward);
+    }
     Wire ProviderEntry { get { return model.SetupState["providerCatalog"].List.FirstOrDefault(p => p["kind"].Text == provider) ?? Wire.Null; } }
 
     public void Refresh() {
-      var key = model.SetupState.Json + "|" + model.Recovery.Json + "|" + model.SetupReview.Json + "|" + provider + "|" + discovered.Count;
+      // A step the server no longer lists, or one it now expects anyway, ends the look back.
+      if (viewing != null && (viewing == ServerStep || !Done(viewing))) viewing = null;
+      var key = model.SetupState.Json + "|" + model.Recovery.Json + "|" + model.SetupReview.Json + "|" + provider + "|" + discovered.Count + "|" + where + "|" + viewing;
       if (key == renderedKey && Content != null) { ((FrameworkElement)((ScrollViewer)Content).Content).IsEnabled = !model.Busy; return; }
       if (renderedKey != null && !renderedKey.StartsWith(model.SetupState.Json)) { fields.Clear(); }
       renderedKey = key;
       Automation.BeginScope("setup");
       Automation.Id(this, "josi.setup", "Set up Josi");
       var page = new StackPanel();
-      Ui.Add(page, Ui.Heading("Set up Josi", "Everything stays inside the app. Your server determines the next step."), 0);
+      Ui.Detach(ghost);
+      string[] words; if (!Words.TryGetValue(Step, out words)) words = new[] { "Set up Josi", "" };
+      var all = model.SetupState["steps"].List;
+      var position = all.FindIndex(s => s["id"].Text == Step);
+      var count = position < 0 ? "" : "Step " + (position + 1) + " of " + all.Count;
+      Ui.Add(page, Ui.Spread(Ui.Stack(6, Ui.Row(12, Ui.JosiMark(40), Ui.Caption(count)), Ui.Heading(words[0], words[1])), ghost), 0);
       var steps = Ui.Wrap(model.SetupState["steps"].List.Select(item => (UIElement)Ui.Row(5,
-        Ui.Icon(item["done"].Flag ? Glyph.Check : Glyph.Circle, 12, item["id"].Text == Step ? Ui.Orange : Ui.Muted),
-        Ui.T(item["title"].Text, 12, null, item["id"].Text == Step ? Ui.Orange : Ui.Muted))).ToArray());
+        Ui.Icon(item["done"].Flag ? Glyph.Check : Glyph.Circle, 12, item["id"].Text == Step ? Ui.Accent : Ui.Muted),
+        Ui.T(item["title"].Text, 12, null, item["id"].Text == Step ? Ui.Accent : Ui.Muted))).ToArray());
       Ui.Add(page, steps, 24);
+      if (model.Recovery.IsNull) Ui.Add(page, StepNavigation(all, position), 16);
       if (!model.Recovery.IsNull) Ui.Add(page, RecoveryCard(), 24);
       else {
-        var title = model.SetupState["steps"].List.Where(s => s["id"].Text == Step).Select(s => s["title"].Text).FirstOrDefault() ?? "Finish setup";
         var form = new StackPanel();
-        Ui.Add(form, Ui.Title2(title), 0);
         foreach (var element in StepForm()) Ui.Add(form, element, 16);
         Ui.Add(page, Ui.CardBox(null, form), 24);
         if (!model.SetupReview.IsNull) {
           var items = model.SetupReview["items"].List.Select(item => (UIElement)Ui.Stack(4, Ui.Headline(item["label"].Text),
-            Ui.T(item["statusLabel"].Text, 14, null, item["blocking"].Flag ? Ui.Orange : Ui.Muted),
+            Ui.T(item["statusLabel"].Text, 14, null, item["blocking"].Flag ? Ui.Accent : Ui.Muted),
             item["verification"]["detail"].Text.Length > 0 ? Ui.Caption(item["verification"]["detail"].Text) : null)).ToArray();
           Ui.Add(page, Ui.CardBox("Setup review", items), 24);
         }
@@ -210,7 +300,24 @@ namespace Josi.Native {
       Ui.Add(page, Ui.Row(10, Ui.Pill("Refresh Setup", () => model.Run(() => model.LoadSetup())),
         Ui.Pill("Disconnect", () => { fields.Clear(); model.Disconnect(); })), 24);
       page.IsEnabled = !model.Busy;
-      Content = Ui.Scroll(page, 900, 32);
+      Content = Ui.Scroll(page, 760, 32);
+      Fill(page);
+    }
+
+    /// The setup column grows with the window and stays centered in it, instead
+    /// of a fixed 760-pixel strip on the left of a wide window.
+    bool filling;
+    FrameworkElement filled;
+    void Fill(FrameworkElement page) {
+      filled = page;
+      page.HorizontalAlignment = HorizontalAlignment.Center;
+      if (!filling) { filling = true; owner.SizeChanged += delegate { Fit(); }; }
+      Fit();
+    }
+    void Fit() {
+      if (filled == null) return;
+      var width = owner.ActualWidth > 0 ? owner.ActualWidth : owner.Width;
+      filled.MaxWidth = Math.Max(640, Math.Min(1180, width - 140));
     }
 
     Control Get(string key, bool secret = false, string fallback = "") {
@@ -247,10 +354,21 @@ namespace Josi.Native {
 
     IEnumerable<UIElement> StepForm() {
       var list = new List<UIElement>();
+      if (viewing != null && !Revisable.Contains(viewing)) {
+        // The server keeps these once saved: the owner account and the consent
+        // choices must not be replayable. They change in Settings after setup.
+        list.Add(Ui.T("You've already done this step, and it's saved."));
+        list.Add(Ui.Secondary(viewing == "owner"
+          ? "Your account is set. You can change your name, email and password in Settings once setup is finished."
+          : viewing == "host_checks" ? "Everything Josi needs was here."
+          : "You can change this in Settings once setup is finished."));
+        list.Add(Automation.Id(Ui.Pill("Continue Where I Left Off", () => { viewing = null; Refresh(); }, true), "josi.setup.resume"));
+        return list;
+      }
       switch (Step) {
         case "host_checks":
           foreach (var check in model.HostChecks)
-            list.Add(Ui.Row(8, Ui.Icon(check["status"].Text == "pass" ? Glyph.Check : Glyph.Warning, 14, check["status"].Text == "pass" ? Ui.Green : Ui.Orange), Ui.T(check["label"].Text)));
+            list.Add(Ui.Row(8, Ui.Icon(check["status"].Text == "pass" ? Glyph.Check : Glyph.Warning, 14, check["status"].Text == "pass" ? Ui.Green : Ui.Error), Ui.T(check["label"].Text)));
           list.Add(Next(() => Wires.O()));
           break;
         case "owner":
@@ -266,31 +384,46 @@ namespace Josi.Native {
               Submit(Wires.O("resumeOwner", true, "identifier", Value("identifier"), "password", secret));
             }, true), "josi.setup.sign-in"));
           } else {
-            list.Add(Field("Your name", "displayName")); list.Add(Field("Email", "email")); list.Add(Field("Username", "username"));
+            list.Add(Field("Your name", "displayName")); list.Add(Field("Username", "username")); list.Add(Field("Email", "email"));
+            list.Add(Ui.Caption("You sign in with your username or email. Password resets go to that email."));
+            foreach (var name in new[] { "displayName", "username", "email" }) {
+              var box = (TextBox)fields[name];
+              box.TextChanged -= OwnerEdited; box.TextChanged += OwnerEdited;
+            }
             if (ownerPassword == null) {
               ownerPassword = new NewPassword("Password");
               ownerPassword.SetId("josi.setup.password");
-              ownerPassword.Changed += delegate { if (createOwner != null) createOwner.IsEnabled = ownerPassword.Valid; };
+              ownerPassword.Changed += delegate { OwnerEdited(null, null); };
             }
             Ui.Detach(ownerPassword);
             list.Add(ownerPassword);
             var create = Ui.Pill("Create Account", () => {
-              if (!ownerPassword.Valid) return;
+              if (!OwnerReady) return;
               var secret = ownerPassword.Password; ownerPassword.Clear();
+              ownerEmail = Value("email").Trim();
               Submit(Wires.O("displayName", Value("displayName"), "email", Value("email"), "username", Value("username"),
                 "password", secret, "timezone", TimeZones.Local()));
             }, true);
             Automation.Id(create, "josi.setup.create-account");
-            create.IsEnabled = ownerPassword.Valid;
+            create.IsEnabled = OwnerReady;
             createOwner = create;
             list.Add(create);
           }
           break;
         case "domain":
-          list.Add(Field("Server address or domain", "domain"));
-          list.Add(Picker("HTTPS", "tlsMode", "bundled_caddy", "bundled_caddy", "Bundled Caddy", "external_proxy", "My own reverse proxy"));
-          list.Add(Field("Certificate notification email", "acmeEmail"));
-          list.Add(Next(() => Wires.O("domain", Value("domain"), "tlsMode", Value("tlsMode", "bundled_caddy"), "acmeEmail", Value("acmeEmail"))));
+          list.Add(Automation.Id(Ui.Segments(Ui.Options("pc", "Just this PC", "network", "Home or office network", "domain", "My own domain"), where, v => { where = v; Refresh(); }), "josi.setup.where"));
+          if (where == "pc") list.Add(Ui.Secondary("Josi answers on this PC only. It's the simplest start, and nothing is reachable from outside."));
+          else if (where == "network") {
+            list.Add(Field("This PC's address on your network", "lanAddress", false, LocalAddress()));
+            list.Add(Ui.Secondary("Phones and computers on the same Wi-Fi or network reach Josi here. Nothing is reachable from the internet."));
+          } else {
+            list.Add(Field("Your domain", "publicDomain"));
+            list.Add(Ui.Secondary("For example josi.yourname.com. Reach Josi from anywhere, with HTTPS."));
+            list.Add(Picker("HTTPS", "tlsMode", "bundled_caddy", "bundled_caddy", "Josi sets it up for me (recommended)", "external_proxy", "I run my own reverse proxy"));
+            list.Add(Field("Email for certificate notices", "acmeEmail", false, ownerEmail));
+            list.Add(Ui.Caption("Before you continue: point your domain's DNS at this server, and open ports 80 and 443. Josi can't get a certificate until both are done."));
+          }
+          list.Add(Automation.Id(Ui.Pill("Continue", SubmitWhere, true), "josi.setup.continue"));
           break;
         case "llm":
           list.AddRange(ProviderForm());
@@ -316,6 +449,23 @@ namespace Josi.Native {
           list.Add(Detach(enabled)); list.Add(Ui.Secondary("Each person still needs to approve their own folders."));
           list.Add(Next(() => Wires.O("folderMappingEnabled", enabled.IsChecked == true)));
           break;
+        case "pc_control":
+          list.Add(Ui.T("Josi can work on this PC the way an assistant at the keyboard would: run commands and scripts, open programs, read and write files and use windows. Every action goes through PC Control: you choose which shells, folders and programs are allowed, once or until revoked, and a control bar with Stop is always visible while it works."));
+          pcEnable = pcEnable ?? Automation.Id(Ui.Toggle("Let Josi use this PC now: programs, files and windows. Commands ask once per folder.", true), "josi.setup.pc-enable");
+          list.Add(Detach(pcEnable));
+          list.Add(Ui.Secondary("Approving pairs this PC to your account with the key it just made; your new password confirms it. Deleting, purchases, credentials, installs, security changes and administrator prompts always ask. Change any of this later in PC Control or by asking Josi."));
+          list.Add(Ui.Row(10,
+            Automation.Id(Ui.Pill("Approve This PC and Continue", () => {
+              var ownerId = model.SetupState["ownerId"].Text; var api = model.Api;
+              if (api == null || !Wires.IsUuid(ownerId)) { model.Error = "Create your account first."; model.Notify(); return; }
+              bool hardware; var point = PcAuthority.PublicPointFor(api.OriginText, ownerId, out hardware);
+              var password = Dialogs.AskPassword(owner, "Approve computer control on " + Environment.MachineName,
+                "PC: " + JosiApi.DeviceId + "\nKey: " + ProtectedWire.Digest(point).Substring(0, 24) + "\n" + (hardware ? "Windows hardware key" : "Windows protected software key") + "\n\nEnter the password of the account you just created.", "Approve this PC");
+              if (password == null) return;
+              Submit(Wires.O("pcId", JosiApi.DeviceId, "publicKey", point, "password", password, "enable", pcEnable.IsChecked == true));
+            }, true), "josi.setup.pc-approve"),
+            Automation.Id(Ui.Pill("Skip for Now", () => Submit(Wires.O("skip", true))), "josi.setup.pc-skip")));
+          break;
         case "telemetry":
           enabled = enabled ?? Automation.Id(Ui.Toggle("Send anonymous usage counts"), "josi.setup.enabled");
           list.Add(Detach(enabled)); list.Add(Ui.Secondary("Optional. Does not include conversations, credentials or business content."));
@@ -335,6 +485,45 @@ namespace Josi.Native {
           break;
       }
       return list;
+    }
+    bool OwnerReady {
+      get {
+        return Value("displayName").Trim().Length > 0 && Value("username").Trim().Length > 0
+          && System.Text.RegularExpressions.Regex.IsMatch(Value("email").Trim(), @"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+          && ownerPassword != null && ownerPassword.Valid;
+      }
+    }
+    void OwnerEdited(object sender, EventArgs e) { if (createOwner != null) createOwner.IsEnabled = OwnerReady; }
+
+    /// People paste whole addresses. The server wants only the host.
+    static string HostOnly(string text) {
+      var host = System.Text.RegularExpressions.Regex.Replace((text ?? "").Trim().ToLowerInvariant(), @"^[a-z]+://", "");
+      return host.Split('/')[0].Split(':')[0];
+    }
+    void SubmitWhere() {
+      if (where == "pc") { Submit(Wires.O("domain", "localhost", "tlsMode", "bundled_caddy", "acmeEmail", "")); return; }
+      var host = HostOnly(Value(where == "network" ? "lanAddress" : "publicDomain"));
+      if (where == "network") {
+        if (host.Length == 0) { model.Error = "Enter this PC's address on your network."; model.Notify(); return; }
+        Submit(Wires.O("domain", host, "tlsMode", "bundled_caddy", "acmeEmail", ""));
+        return;
+      }
+      System.Net.IPAddress numeric;
+      if (!host.Contains(".") || System.Net.IPAddress.TryParse(host, out numeric)) { model.Error = "Enter a domain name, like josi.yourname.com."; model.Notify(); return; }
+      Submit(Wires.O("domain", host, "tlsMode", Value("tlsMode", "bundled_caddy"), "acmeEmail", Value("acmeEmail").Trim()));
+    }
+    /// This PC's address on the local network, as a starting suggestion.
+    static string LocalAddress() {
+      try {
+        foreach (var card in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()) {
+          if (card.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up || card.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
+          var properties = card.GetIPProperties();
+          if (properties.GatewayAddresses.Count == 0) continue;
+          foreach (var address in properties.UnicastAddresses)
+            if (address.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork) return address.Address.ToString();
+        }
+      } catch (Exception) { }
+      return "";
     }
     static UIElement Detach(FrameworkElement element) {
       var panel = element.Parent as Panel; if (panel != null) panel.Children.Remove(element);
@@ -363,6 +552,7 @@ namespace Josi.Native {
         setupModel = new ModelSetupPanel(model, owner, new ModelEndpoints(true), "primary", Wire.Null,
           model.SetupState["providerCatalog"].List, null, async body => {
             var check = await model.SetupStep("llm", body);
+            if (!check.IsNull && check["status"].Text == "passed") { viewing = null; Refresh(); }
             // Passing moves setup to its next step. Otherwise show why, with
             // Change Settings, instead of returning silently to the same step.
             if (!check.IsNull && check["status"].Text != "passed") {
@@ -404,7 +594,8 @@ namespace Josi.Native {
       var secrets = new List<string> { "password", "apiKey" };
       secrets.AddRange(ProviderEntry["fields"].List.Where(f => f["secret"].Flag).Select(f => f["key"].Text));
       foreach (var key in secrets) { Control c; if (fields.TryGetValue(key, out c)) { var p = c as PasswordBox; if (p != null) p.Clear(); } }
-      model.Run(() => model.SetupStep(step, body));
+      // A changed earlier step returns to where setup left off once it's saved.
+      model.Run(async () => { await model.SetupStep(step, body); viewing = null; Refresh(); });
     }
   }
 }

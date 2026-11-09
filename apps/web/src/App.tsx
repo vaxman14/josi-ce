@@ -1,13 +1,12 @@
 import { EmailTemplates } from './pages/EmailTemplates';
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { Shell } from '@/components/layout/Shell';
 import { Login } from '@/pages/Login';
 import { ForgotPassword } from '@/pages/ForgotPassword';
 import { SetPassword } from '@/pages/SetPassword';
 import { Setup } from '@/pages/Setup';
-import { Home } from '@/pages/Home';
 import { Talk } from '@/pages/Talk';
 import { Tasks } from '@/pages/Tasks';
 import { Approvals } from '@/pages/Approvals';
@@ -45,6 +44,8 @@ import { AdminChannels } from '@/pages/admin/Channels';
 import { AdminVault } from '@/pages/admin/Vault';
 import { AdminAutomation } from '@/pages/admin/Automation';
 import { AdminNetwork } from '@/pages/admin/Network';
+import { AdminHeyJosi } from '@/pages/admin/HeyJosi';
+import { Devices } from '@/pages/Devices';
 import { api } from '@/lib/api';
 
 /** Routing is convenience, not security.
@@ -59,6 +60,13 @@ function RequireAuth({ children, admin = false }: { children: React.ReactNode; a
   if (!user) return <Navigate to="/login" replace />;
   if (admin && user.role !== 'super_admin') return <Navigate to="/app" replace />;
   return <>{children}</>;
+}
+
+/** Chat is /app now. Anything pointing at the old address, a bookmark or a link
+ * in an old email, lands there with the conversation it asked for. */
+function TalkRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={`/app${search}`} replace />;
 }
 
 /** First-run routing for the person who installed this.
@@ -139,8 +147,8 @@ export function App() {
       <Route path="/set-password" element={<SetPassword />} />
 
       <Route path="/app" element={<RequireAuth><Shell /></RequireAuth>}>
-        <Route index element={<Home />} />
-        <Route path="talk" element={<Talk />} />
+        <Route index element={<Talk />} />
+        <Route path="talk" element={<TalkRedirect />} />
         <Route path="tasks" element={<Tasks />} />
         <Route path="approvals" element={<Approvals />} />
         <Route path="conversations" element={<Conversations />} />
@@ -152,6 +160,7 @@ export function App() {
         <Route path="workspace" element={<LocalWorkspace />} />
         <Route path="vault" element={<Vault />} />
         <Route path="usage" element={<Usage />} />
+        <Route path="devices" element={<Devices />} />
         <Route path="personalization" element={<Personalization />} />
         <Route path="settings" element={<Settings />} />
         <Route path="channels" element={<Channels />} />
@@ -159,7 +168,7 @@ export function App() {
         {/* Telegram was a top-level item before it was a channel. Anything
             already pointing at the old path — a bookmark, a link in an old
             email — lands where the page lives now rather than on the
-            catch-all redirect to Home. */}
+            catch-all redirect to chat. */}
         <Route path="telegram" element={<Navigate to="/app/channels/telegram" replace />} />
         <Route path="apps" element={<Apps />} />
         <Route path="family" element={<Family />} />
@@ -183,6 +192,7 @@ export function App() {
         <Route path="vault" element={<AdminVault />} />
         <Route path="automation" element={<AdminAutomation />} />
         <Route path="network" element={<AdminNetwork />} />
+        <Route path="hey-josi" element={<AdminHeyJosi />} />
         {/* Connectors and Integrations are one page since October 2026 (item 41). */}
         <Route path="developer-services" element={<Navigate to="/admin/connectors?view=developer" replace />} />
         <Route path="integrations" element={<Navigate to="/admin/connectors?view=developer" replace />} />

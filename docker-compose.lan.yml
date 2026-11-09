@@ -1,0 +1,12 @@
+# Direct connections on your own network, for a Docker install. Optional: without
+# it, devices use the relay, and nothing extra is published.
+#
+#   JOSI_LAN_HOST=192.168.1.5 docker compose -f docker-compose.yml -f docker-compose.lan.yml up -d
+#
+# Set JOSI_LAN_HOST to this machine's LAN address. A container can't see it.
+services:
+  web:
+    environment:
+      JOSI_LAN_HOST: ${JOSI_LAN_HOST:?Set JOSI_LAN_HOST to this machine's LAN address}
+    ports:
+      - "${JOSI_LAN_NOISE_PORT:-18777}:18777"

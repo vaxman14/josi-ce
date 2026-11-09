@@ -159,7 +159,7 @@ def main():
     shell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
     clean = {key: os.environ[key] for key in ('SystemRoot', 'WINDIR', 'ProgramData', 'ProgramFiles', 'TEMP', 'TMP') if key in os.environ}
     for destination in (python, payload / 'node', payload / 'postgresql/bin'):
-        subprocess.run([str(shell), '-NoProfile', '-NonInteractive', '-File', str(REPO / 'scripts/windows/Copy-MsvcRuntime.ps1'),
+        subprocess.run([str(shell), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', str(REPO / 'scripts/windows/Copy-MsvcRuntime.ps1'),
                         '-Destination', str(destination)], check=True, env=clean, creationflags=subprocess.CREATE_NO_WINDOW)
     model_lock = json.loads((REPO / 'services/voice-box/models.lock.json').read_text(encoding='utf-8'))
     for entry in model_lock['files']:

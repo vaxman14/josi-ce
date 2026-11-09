@@ -105,7 +105,7 @@ export function AdminWorkspace() {
             </div>
             {saveError ? <ErrorNote>{saveError}</ErrorNote> : null}
             <Button type="submit">Save</Button>
-            {saved ? <p className="text-sm text-emerald-400">Saved.</p> : null}
+            {saved ? <p className="text-sm text-success">Saved.</p> : null}
           </form>
         </Card>
       ) : null}

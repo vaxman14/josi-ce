@@ -118,6 +118,12 @@ function summary(device: DeviceRecord): ProtectedDeviceSummary {
     signingFingerprint: fingerprint(device.material.signingPublicKeySpki), wrappingFingerprint: fingerprint(device.material.wrappingPublicKey),
     enrolledAt: device.enrolledAt, revokedAt: device.revokedAt };
 }
+/** Public verification material only. Never project the wrapped signing key. */
+export function computerProtectedDevices(record: VaultRecordValue | null, owner: string) {
+  return record ? decode(record).devices.filter(d => d.material.identity.userId === owner).map(d => ({
+    ...summary(d), wrappingPublicKey: d.material.wrappingPublicKey,
+  })) : [];
+}
 function sameReference(a: VaultRecordReference | null, b: VaultRecordReference | null) {
   return a === null && b === null || a !== null && b !== null && a.recordId === b.recordId && a.version === b.version
     && a.digest === b.digest && a.epoch === b.epoch;

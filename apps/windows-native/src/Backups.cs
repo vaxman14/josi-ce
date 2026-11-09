@@ -20,7 +20,7 @@ namespace Josi.Native {
       var sheet = new Dialogs.Sheet(owner, "Backup passphrase", 520);
       var choice = new PassphraseChoice { Cancelled = true };
       var first = Ui.Secret("Passphrase"); var second = Ui.Secret("Passphrase again");
-      var error = Ui.T("", 13.5, null, Ui.Orange); error.Visibility = Visibility.Collapsed;
+      var error = Ui.T("", 13.5, null, Ui.Error); error.Visibility = Visibility.Collapsed;
       var go = Ui.Pill(creating ? "Encrypt and Back Up" : "Open", () => {
         if (creating && first.Password.Length < 8) { error.Text = "Use at least 8 characters."; error.Visibility = Visibility.Visible; return; }
         if (creating && first.Password != second.Password) { error.Text = "The two passphrases differ."; error.Visibility = Visibility.Visible; return; }
@@ -145,7 +145,7 @@ namespace Josi.Native {
       var refusals = staged["refusals"].List.Select(r => r.Text).ToList();
       var warnings = staged["warnings"].List.Select(w => w.Text).ToList();
       var notes = Ui.Stack(6);
-      foreach (var r in refusals) notes.Children.Add(Ui.T("✕  " + r, 13.5, null, Ui.Orange));
+      foreach (var r in refusals) notes.Children.Add(Ui.T("✕  " + r, 13.5, null, Ui.Error));
       foreach (var w in warnings) notes.Children.Add(Ui.T("•  " + w, 13.5, null, Ui.Muted));
       var typed = Ui.Input("Type restore to continue");
       var go = Ui.Danger("Restore and Replace Everything", () => { ok = true; sheet.Close(); });

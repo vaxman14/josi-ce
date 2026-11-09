@@ -30,6 +30,10 @@ foreach($entry in $policy.Directories.Values){
 Assert ($policy.Directories['cache'].Read.Count -eq 0 -and $policy.Directories['cache'].Modify.Count -eq 0) 'A service may not modify installer payloads'
 Assert (($policy.Directories['database'].Modify -join ',') -ceq 'JosiDatabase') 'Only the database identity may modify its cluster'
 Assert (($policy.Files['secrets\master-key'] -join ',') -ceq 'JosiWeb,JosiWorker') 'Master key authority widened'
+$keys=$policy.Directories['keys']
+Assert ($keys.Read.Count -eq 0 -and ($keys.Modify -join ',') -ceq 'JosiWeb' -and $keys.Inherit) 'Only the web identity may reach the relay keys, and new key files must inherit that'
+$keyDescriptor=Get-NativeDirectoryDescriptor $keys
+Assert ($keyDescriptor.Contains((Get-NativeServiceSid 'JosiWeb')) -and !$keyDescriptor.Contains((Get-NativeServiceSid 'JosiWorker'))) 'The relay key folder must grant the web identity and not the worker'
 foreach($service in $plan){
     $sid=Get-NativeServiceSid $service.Name
     Assert ($sid -match '^S-1-5-80-(\d+-){4}\d+$') 'Not a virtual service identity'

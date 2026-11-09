@@ -26,7 +26,7 @@ export function ClaudeVaultSignIn({ basePath, status, onStatus }: {
       setError(err instanceof Error ? err.message : 'The subscription change could not be confirmed. Refresh status.');
     } finally { setBusy(false); }
   }
-  return <div className="space-y-3 rounded-md border border-input p-3">
+  return <div className="space-y-3 rounded-md border border-border p-3">
     <p className="text-sm font-medium">{status.signedIn ? 'Claude token saved in the Vault' : 'Connect Claude through the Vault'}</p>
     <p className="text-xs text-muted-foreground">{status.detail}</p>
     <p className="text-sm">
@@ -39,11 +39,11 @@ export function ClaudeVaultSignIn({ basePath, status, onStatus }: {
       Subscription setup token
       <input type="password" value={token} onChange={e => setToken(e.target.value)}
         autoComplete="off" spellCheck={false} maxLength={16384} disabled={busy || status.busy}
-        className="mt-1 min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm" />
+        className="mt-1 min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm" />
     </label>
     <p className="text-xs text-muted-foreground">
       Josi saves this secret only in the server’s Vault. Saving does not verify the account:
-      use Test Model to confirm it works. Everyone using this installation shares its subscription limits.
+      use the test button below to confirm it works. Everyone using this installation shares its subscription limits.
       Expired tokens must be replaced.
     </p>
     {error ? <ErrorNote>{error}</ErrorNote> : null}

@@ -12,14 +12,15 @@
 // once when mail is set up. Approving a sensitive change takes the approver's
 // password, here on the server, every time: a recent step-up does not count.
 import { Router, type Request, type Response } from 'express';
-import { checkLoginRate, recordLoginAttempt, verifyPassword } from '@josi-ce/auth';
-import { addMessage, json, loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
+import { checkLoginRate, recordLoginAttempt, verifyPassword, beginPcPasskey, finishPcPasskey, relyingParty, WebAuthnError } from '@josi-ce/auth';
+import { createHash } from 'node:crypto';
+import { addMessage, json, loadMasterKey, PcControl, type PcPolicy, type PcPreset, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { clientIp } from './cookies.js';
 
-interface Ctx { db: Db; masterKey?: LoadOptions | false; mailTransport?: SmtpTransport }
+interface Ctx { db: Db; masterKey?: LoadOptions | false; mailTransport?: SmtpTransport; appUrl?:string }
 type Policy = 'self' | 'super_admin';
 interface Row {
   id: string; proposer_user_id: string; proposer: string; scope: 'personal' | 'administrator'; area: string; sensitive: boolean; title: string; summary: string;
@@ -37,6 +38,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
   const fail = (status: number, message: string) => Object.assign(new Error(message), { status });
   const handle = (fn: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {
     try { return await fn(req, res); } catch (error) {
+      if(error instanceof WebAuthnError)return res.status(400).json({error:error.message});
       const status = (error as { status?: number }).status;
       if (status) return res.status(status).json({ error: (error as Error).message });
       throw error;
@@ -60,14 +62,31 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     return row?.settings?.memberSettingsChanges === 'super_admin' ? 'super_admin' : 'self';
   }
   async function expire() {
-    await db.query(`update settings_change_proposals set state = 'expired' where state in ('proposed', 'approved') and expires_at <= now()`);
+    const gone = await db.query<Row>(`update settings_change_proposals p set state = 'expired' where state in ('proposed', 'approved') and expires_at <= now()
+      returning p.id, p.thread_id, p.area, p.title, p.summary, p.proposer_user_id, '' as proposer, p.scope, p.sensitive, p.method, p.path, p.body, p.state, p.approved_by, p.approved_at, p.applied_by, p.applied_at, p.error, p.expires_at, p.created_at`);
+    // A member's connector request that nobody answered in a week: the
+    // member hears it from Josi rather than from silence (rule 4).
+    for (const row of gone) if (row.area === 'member_connector_request') await tell(row, `Your request to connect ${serviceOf(row)} was not answered within a week and has expired. Ask again any time.`);
   }
+  const serviceOf = (row: Row) => { const name = row.path.split('/')[3] ?? 'that service'; return name.charAt(0).toUpperCase() + name.slice(1); };
   async function load(id: string): Promise<Row> {
     const [row] = await db.query<Row>(`select ${COLUMNS} from settings_change_proposals p join users u on u.id = p.proposer_user_id where p.id = $1`, [id]);
     if (!row) throw fail(404, 'That proposal does not exist.');
     return row;
   }
   const visible = (row: Row, user: { id: string; role: string }) => row.proposer_user_id === user.id || user.role === 'super_admin';
+  const isPcChange = (row: Row) => row.area.startsWith('pc_control_');
+  // A credential card: the body holds the card's fields and fixed values, never
+  // a secret; the app fills the typed values in and performs the route itself.
+  const isCredentialCard = (row: Row) => row.area === 'credential_card';
+  const cardOf = (row: Row): unknown => (change(row) as { card?: unknown }).card ?? null;
+  function checkPcChange(row: Row, user: { id: string }) {
+    if (!isPcChange(row)) return;
+    if (row.proposer_user_id !== user.id) throw fail(403, 'Only the owner of this PC permission proposal can apply it.');
+    const target = new URL(row.path, 'http://josi.invalid');
+    if (target.searchParams.get('ownerId') !== row.proposer_user_id || !/^[a-z0-9-]{1,80}$/.test(target.searchParams.get('pcId') ?? '')
+      || !/^\d+$/.test(target.searchParams.get('revision') ?? '')) throw fail(409, 'Ask Josi to prepare this PC permission again with its target computer.');
+  }
   /** Whether this user is the one whose app applies the change. */
   // The outcome goes back into the conversation that prepared the change, so
   // the thread says what happened instead of "waiting for approval" forever.
@@ -78,7 +97,8 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     catch { /* the thread may be gone */ }
   };
   const applier = (row: Row, user: { id: string; role: string }) =>
-    row.scope === 'administrator' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
+    isPcChange(row) ? row.proposer_user_id === user.id && user.role === 'super_admin'
+      : row.scope === 'administrator' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
   // The stored body is JSON text; the app sends it on as the request body, so
   // it must travel as an object. As text it would arrive double-encoded and
   // the setting's route would reject it with a 400 (the October 22 memory
@@ -87,14 +107,20 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     let body: unknown = null;
     if (typeof row.body === 'string') { try { body = JSON.parse(row.body); } catch { body = null; } }
     else body = row.body ?? null;
+    if (isCredentialCard(row)) {
+      const shaped = body && typeof body === 'object' ? body as { card?: unknown; fixed?: unknown } : {};
+      return { method: row.method, path: row.path, body: shaped.fixed ?? {}, card: shaped.card ?? null };
+    }
     return { method: row.method, path: row.path, body };
   };
   const dto = (row: Row, user: { id: string; role: string }, rule: Policy) => ({
-    id: row.id, proposer: row.proposer, mine: row.proposer_user_id === user.id, scope: row.scope, area: row.area, sensitive: row.sensitive,
+    id: row.id, threadId:row.thread_id, proposer: row.proposer, mine: row.proposer_user_id === user.id, scope: row.scope, area: row.area, sensitive: row.sensitive,
     title: row.title, summary: row.summary, state: row.state, createdAt: row.created_at, expiresAt: row.expires_at,
     approvedAt: row.approved_at, appliedAt: row.applied_at, error: row.error,
+    card: isCredentialCard(row) ? cardOf(row) : undefined,
     // What this viewer can do with it right now.
-    canApprove: row.state === 'proposed' && (row.scope === 'administrator' ? user.role === 'super_admin'
+    canApprove: row.state === 'proposed' && (!isPcChange(row) || row.proposer_user_id === user.id) && (row.scope === 'administrator' ? user.role === 'super_admin'
+      : isCredentialCard(row) ? row.proposer_user_id === user.id
       : rule === 'super_admin' ? user.role === 'super_admin' : row.proposer_user_id === user.id),
     canDeny: ['proposed', 'approved'].includes(row.state) && visible(row, user),
     // Approved by the super-admin for a member: that member's app applies it.
@@ -120,6 +146,46 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
       user.role === 'super_admin' ? [] : [user.id]);
     return res.json({ proposals: rows.map((row) => dto(row, user, rule)) });
   }));
+  const pcDigest=(row:Row)=>createHash('sha256').update(JSON.stringify([row.id,row.proposer_user_id,row.method,row.path,row.body,row.expires_at])).digest('hex');
+  async function pcProposal(req:Request){
+    const row=await load(param(req,'id'));checkPcChange(row,req.user!);
+    if(!isPcChange(row)||req.user!.role!=='super_admin'||row.proposer_user_id!==req.user!.id||row.state!=='proposed'||Date.parse(row.expires_at)<=Date.now())throw fail(409,'This PC permission is no longer awaiting your approval.');
+    return row;
+  }
+  r.post('/:id/pc-passkey/options',handle(async(req,res)=>{
+    const row=await pcProposal(req),rp=relyingParty(ctx.appUrl??'');
+    if(!rp)throw fail(400,'Use the secure Josi address to approve with a passkey.');
+    return res.json(await beginPcPasskey(db,rp,req.user!.id,row.id,pcDigest(row)));
+  }));
+  // Apply the immutable reviewed change on the server. No reusable step-up
+  // token, client-supplied policy or password is returned to the conversation.
+  r.post('/:id/pc-apply',handle(async(req,res)=>{
+    const row=await pcProposal(req),owner=req.user!.id;
+    if(req.body?.passkey){
+      const rp=relyingParty(ctx.appUrl??'');if(!rp)throw fail(400,'Passkeys require the secure Josi address.');
+      await finishPcPasskey(db,rp,owner,row.id,pcDigest(row),String(req.body.challengeId??''),req.body.passkey);
+    }else if(row.sensitive)await confirmPassword(req,res,owner);
+    if(ctx.masterKey===false)throw fail(503,'Permission storage is unavailable.');
+    const target=new URL(row.path,'http://josi.invalid'),pc=target.searchParams.get('pcId')!,revision=Number(target.searchParams.get('revision'));
+    const service=new PcControl(db,loadMasterKey(ctx.masterKey??{}),pc),body=change(row).body as Record<string,unknown>;
+    const [claimed]=await db.query('update settings_change_proposals set state=\'approved\',approved_by=$2,approved_at=now() where id=$1 and state=\'proposed\' and expires_at>now() returning id',[row.id,owner]);
+    if(!claimed)throw fail(409,'This permission was already decided.');
+    try{
+      if(row.area==='pc_control_enabled'){await service.setEnabled(owner,body.enabled as boolean,revision);if(body.enabled===true&&body.everyday===true)await service.setFullControl(owner,true);}
+      else if(row.area==='pc_control_full_control')await service.setFullControl(owner,body.enabled as boolean,revision);
+      else if(row.area==='pc_control_preset')await service.applyPreset(owner,body as PcPreset,revision);
+      else if(row.area==='pc_control_scope'){const {approveRequestId,...policy}=body;await service.savePolicy(owner,policy as PcPolicy,{expectedRevision:revision,approveRequestId:approveRequestId as string|undefined});}
+      else if(row.area==='pc_control_revoke')await service.revoke(owner,target.pathname.split('/').at(-1)!,revision);
+      else if(row.area==='pc_control_decide')await service.decide(owner,target.pathname.split('/').at(-2)!,body.approve as boolean,revision);
+      else throw fail(400,'Unsupported PC permission change.');
+      await db.query('update settings_change_proposals set state=\'applied\',applied_by=$2,applied_at=now() where id=$1',[row.id,owner]);
+      await tell(row,'Done: this change is now live. '+row.summary);
+      return res.json({ok:true,state:'applied'});
+    }catch(error){
+      await db.query('update settings_change_proposals set state=\'failed\',error=$2 where id=$1',[row.id,'The permission could not be applied. Request a fresh review.']);
+      throw error;
+    }
+  }));
 
   /** Approve or deny. Approving returns the request to perform when this
    * user's app is the one that applies it. */
@@ -132,16 +198,20 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     if (!req.body.approve) {
       if (!['proposed', 'approved'].includes(row.state)) throw fail(409, `That proposal is already ${row.state}.`);
       await db.query(`update settings_change_proposals set state = 'denied', approved_by = $2, approved_at = now() where id = $1`, [row.id, user.id]);
-      await tell(row, `Not changed: this was declined. ${row.summary}`);
+      await tell(row, row.area === 'member_connector_request' ? `Not approved: the owner declined your request to connect ${serviceOf(row)}.`
+        : isCredentialCard(row) ? `Not saved: the card for ${row.title} was declined.` : `Not changed: this was declined. ${row.summary}`);
       return res.json({ ok: true, state: 'denied' });
     }
     if (row.state !== 'proposed') throw fail(409, `That proposal is already ${row.state}.`);
+    checkPcChange(row, user);
     const allowed = row.scope === 'administrator' ? user.role === 'super_admin'
+      : isCredentialCard(row) ? row.proposer_user_id === user.id
       : rule === 'super_admin' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
     if (!allowed) throw fail(403, row.scope === 'administrator' ? 'Only the super-admin can approve an administrator setting.'
       : 'Changes by members wait for the super-admin on this installation.');
     if (row.sensitive) await confirmPassword(req, res, user.id);
-    await db.query(`update settings_change_proposals set state = 'approved', approved_by = $2, approved_at = now() where id = $1`, [row.id, user.id]);
+    const claimed = await db.query(`update settings_change_proposals set state = 'approved', approved_by = $2, approved_at = now() where id = $1 and state = 'proposed' and expires_at > now() returning id`, [row.id, user.id]);
+    if (!claimed.length) throw fail(409, 'That proposal was already decided or expired.');
     return res.json({ ok: true, state: 'approved', apply: applier(row, user) ? change(row) : null });
   }));
 
@@ -155,7 +225,11 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     const error = typeof req.body?.error === 'string' ? req.body.error.slice(0, 500) : null;
     await db.query(`update settings_change_proposals set state = $2, applied_by = $3, applied_at = now(), error = $4 where id = $1`,
       [row.id, ok ? 'applied' : 'failed', user.id, ok ? null : error ?? 'The change could not be applied.']);
-    await tell(row, ok ? `Done: this change is now live. ${row.summary}` : `Not applied: ${error ?? 'the change could not be applied.'} ${row.summary}`);
+    const card = isCredentialCard(row) ? cardOf(row) as { done?: string; title?: string } | null : null;
+    if (card && ok) await db.query(`update settings_change_proposals set state = 'expired' where proposer_user_id = $2 and area = $3 and path = $4 and state = 'proposed' and id <> $1`, [row.id, row.proposer_user_id, row.area, row.path]);
+    await tell(row, card ? (ok ? `Saved: ${card.done ?? card.title ?? row.title}` : `Not saved (${card.title ?? row.title}): ${error ?? 'the credential was not accepted.'}`)
+      : row.area === 'member_connector_request' ? (ok ? `Approved: the owner says you may connect ${serviceOf(row)}. Ask me to connect it and I will open the card for your token.` : `Not approved: the permission could not be saved. ${error ?? ''}`.trim())
+      : ok ? `Done: this change is now live. ${row.summary}` : `Not applied: ${error ?? 'the change could not be applied.'} ${row.summary}`);
     let notified = false;
     if (ok && row.sensitive && user.role !== 'super_admin') {
       notified = await notifySuperAdmins(ctx, db, row, user);

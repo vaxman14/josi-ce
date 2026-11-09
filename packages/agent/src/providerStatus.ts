@@ -7,7 +7,7 @@ export async function providerStatus(db: Db, userId: string) {
     c.status, c.last_check_at, c.last_check_ok, c.last_error_category,
     coalesce((select jsonb_agg(jsonb_build_object('capability', cc.capability,
       'enabled', cc.enabled, 'granted', cc.scopes_granted_at is not null,
-      'admin_allowed', coalesce(p.allowed, true)))
+      'admin_allowed', coalesce(p.allowed, true) or exists(select 1 from users u where u.id = c.owner_user_id and u.role = 'super_admin')))
       from connection_capabilities cc left join admin_capability_policy p on p.capability=cc.capability
       where cc.connection_id=c.id), '[]'::jsonb) as capabilities
     from connections c where c.owner_user_id=$1 order by c.provider, c.id`, [userId]);

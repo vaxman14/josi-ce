@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="plum-gold">
   <head>
     <meta charset="UTF-8" />
     <!-- viewport-fit=cover is what makes env(safe-area-inset-*) resolve to
@@ -15,18 +15,21 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <!-- Matches the manifest's background_color, so the status bar and the
          splash screen do not flash white on a dark app. -->
-    <meta name="theme-color" content="#0b111e" />
+    <meta name="theme-color" content="#1B0F20" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Josi" />
     <title>Josi</title>
+    <script src="/skin-boot.js"></script>
+    <link rel="preload" href="/fonts/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/bricolage-grotesque-latin.woff2" as="font" type="font/woff2" crossorigin />
     <!-- NO external stylesheet, font or script. The commercial engine loads
          Fira Sans from fonts.googleapis.com on every page; a self-hosted
          product doing that would tell Google the IP address of every person who
          opens it, break entirely on an air-gapped install, and make the
-         Local-only badge a claim the page itself contradicts. CE uses the
-         system font stack: nothing to download, and it looks native on the
-         low-power hardware CE targets. Enforced by CSP, not just by intent. -->
+         Local-only badge a claim the page itself contradicts. CE serves its own
+         fonts from public/fonts, with the system stack behind them. Enforced by
+         CSP, not just by intent. -->
   </head>
   <body>
     <div id="root"></div>

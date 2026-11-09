@@ -57,7 +57,7 @@ try {
   Click $main 'Open Josi'
   Click $main 'Claude subscription'
   Click $main 'Sign In with Claude'
-  (Find $main 'Claude subscription token' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('sk-ant-oat01-mock-token-for-the-test-only')
+  (Find $main 'Claude subscription token' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('sk-ant-oat01-mock-token-for-the-test-only')
   Click $main 'Save Token in Vault'
   Start-Sleep -Seconds 2
   Click $main 'Continue'

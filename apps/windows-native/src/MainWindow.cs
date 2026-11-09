@@ -13,6 +13,7 @@ namespace Josi.Native {
   public static class Program {
     [STAThread]
     public static int Main(string[] args) {
+      if (PcAdministrator.IsLaunch(args)) return PcAdministrator.Run(args);
       // Chrome starting Josi as the browser extension's native host.
       if (BrowserHost.IsLaunch(args)) return BrowserHost.Run();
       // The server starting the device-consent window on its own screen (item 29).
@@ -33,6 +34,13 @@ namespace Josi.Native {
         if (files.Count > 0) link = AppLinks.SharePrefix + string.Join("\n", files);
       }
       // Automated UI tests run beside a person's open copy without touching it.
+      // After an update the installer opens the new Josi while the old one may
+      // still sit in the tray. The old copy is asked to quit and the new one
+      // takes over, instead of the old copy answering for another few days.
+      if (!Automation.Demo && !AppLinks.Testing && Activation.OlderCopyRunning()) {
+        AppLinks.Forward(AppLinks.QuitLink);
+        for (var waited = 0; waited < 50 && Activation.OlderCopyRunning(); waited++) Thread.Sleep(100);
+      }
       using (var single = new Mutex(true, @"Local\Josi.Native.Windows" + AppLinks.Instance, out created)) {
         if (!created) {
           if (link != null) AppLinks.Forward(link);
@@ -50,8 +58,9 @@ namespace Josi.Native {
         AppLinks.Register();
         Notifications.Register();
         SendTo.Register();
-        BrowserHost.Register();
-        var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
+        if (Flags.LocalWorkspace) BrowserHost.Register();
+        // Closing the window hides it in the tray; the app ends from Quit (OnClosing shuts down).
+        var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         Ui.Load();
         app.Resources.MergedDictionaries.Add(Ui.Resources);
         app.DispatcherUnhandledException += (s, e) => {
@@ -64,7 +73,7 @@ namespace Josi.Native {
         var main = new MainWindow();
         app.MainWindow = main;
         AppLinks.Listen(value => app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(value))));
-        BrowserBridge.Current.Start(main.Model, app.Dispatcher);
+        if (Flags.LocalWorkspace) BrowserBridge.Current.Start(main.Model, app.Dispatcher);
         main.Show();
         if (link != null) app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(link)));
         return app.Run();
@@ -84,6 +93,17 @@ namespace Josi.Native {
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string className, string title);
+    /// Another Josi of this user running from a different folder (an older
+    /// version after an update, usually hidden in the tray).
+    public static bool OlderCopyRunning() {
+      var mine = Environment.ProcessPath ?? "";
+      try {
+        return System.Diagnostics.Process.GetProcessesByName("Josi").Any(p => {
+          try { return p.Id != Environment.ProcessId && !string.Equals(p.MainModule?.FileName, mine, StringComparison.OrdinalIgnoreCase); }
+          catch (Exception) { return false; }
+        });
+      } catch (Exception) { return false; }
+    }
     public static void ActivateExisting() {
       var existing = FindWindow(null, "Josi");
       if (existing != IntPtr.Zero) { ShowWindow(existing, 9); SetForegroundWindow(existing); }
@@ -96,65 +116,97 @@ namespace Josi.Native {
     readonly Border errorBar = new Border();
     readonly Border busyBar = new Border();
     readonly Border controlBar = new Border { Visibility = Visibility.Collapsed };
-    readonly System.Windows.Threading.DispatcherTimer controlTick = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+    PcControlOverlay controlOverlay;
     // One line of machine-readable state for automation (AUTOMATION.md):
     // invisible to a person, readable through UI Automation as josi.status.
     readonly TextBlock statusLine = new TextBlock { FontSize = 1, Height = 1, Foreground = Brushes.Transparent, IsHitTestVisible = false, Focusable = false };
     Screen? shown;
     WorkspaceView workspace;
+    Tray tray; bool quitting;
+    /// How long the bar stays after a step ends, waiting for the next one.
+    static readonly TimeSpan BarHold = TimeSpan.FromSeconds(6);
+    DateTime lastWorking = DateTime.MinValue; System.Windows.Threading.DispatcherTimer barHold;
     // Demo mode: a scripted PC Control banner (--pc-banner) and "stopped" after Stop Josi.
     string demoPc; bool pcStopped;
+    /// Brings the window back from the tray.
+    public void Reopen() { Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; Activate(); }
+    /// Really closes: the tray's Quit, or a closing with Shift held.
+    public void Quit() { quitting = true; Close(); }
 
     /// Who is in control of this desktop: Josi working (with Pause and Stop),
-    /// paused, or you after touching the mouse or keyboard (with a countdown
-    /// and Resume). Hidden when nothing is happening.
+    /// paused, or you after touching the mouse or keyboard (until Resume). Hidden when nothing is happening.
     void RenderControlBar() {
       var executor = DesktopExecutor.Current;
-      var left = executor.TakenOverSecondsLeft;
+      var takenOver = executor.TakenOver;
       var scripted = Automation.Demo ? demoPc : null;
       var paused = scripted != null ? scripted == "paused" : executor.Paused;
-      var working = scripted != null ? scripted == "working" : executor.Busy;
-      if (scripted != null) left = scripted == "takeover" ? 20 : 0;
-      if (executor.Busy) pcStopped = false;
-      var show = working || paused || left > 0;
-      controlTick.IsEnabled = show && scripted == null;
-      Automation.Pc = !show ? (pcStopped ? "stopped" : "off") : paused ? "paused" : left > 0 ? "takeover" : "working";
+      var working = scripted != null ? scripted == "working" : executor.Busy || PcTerminals.Count > 0;
+      if (scripted != null) takenOver = scripted == "takeover";
+      if (executor.Busy && !executor.Paused && !executor.PendingStop) pcStopped = false;
+      var stopped = pcStopped || executor.PendingStop;
+      // Only while something is happening: a paused or stopped Josi takes no
+      // room (Resume lives in PC Control, the chat cards and the tray). Between
+      // the steps of one request the bar holds for a few seconds, so it stays
+      // up while more work is coming and goes away once the work is done.
+      var now = DateTime.UtcNow;
+      if (working) lastWorking = now;
+      var holding = !working && !takenOver && scripted == null && (now - lastWorking) < BarHold;
+      if (holding) {
+        if (barHold == null) { barHold = new System.Windows.Threading.DispatcherTimer(); barHold.Tick += delegate { barHold.Stop(); RenderControlBar(); }; }
+        barHold.Interval = BarHold - (now - lastWorking) + TimeSpan.FromMilliseconds(50); barHold.Stop(); barHold.Start();
+      }
+      var show = working || takenOver || holding;
+      tray?.Update(paused, working);
+      Automation.Pc = stopped ? "stopped" : !show ? "off" : paused ? "paused" : takenOver ? "takeover" : working ? "working" : "ready";
+      if (controlOverlay != null) controlOverlay.Stopped = stopped;
+      controlOverlay?.Update(show, working, paused, takenOver, scripted != null || executor.ScreenControl, executor.Busy ? executor.Activity : PcTerminals.Count > 0 ? PcTerminals.Count + " terminal session(s) running" : executor.Activity);
       if (!show) { controlBar.Visibility = Visibility.Collapsed; controlBar.Child = null; return; }
       Action pause = () => { if (scripted != null) { demoPc = "paused"; RenderControlBar(); } else executor.Pause(); };
-      Action resume = () => { if (scripted != null) { demoPc = "working"; RenderControlBar(); } else executor.Resume(); };
+      Action resume = () => { pcStopped = false; if (scripted != null) { demoPc = "working"; RenderControlBar(); } else executor.Resume(); };
       Automation.BeginScope("pc-control");
       UIElement status; var actions = Ui.Wrap(); string sentence;
-      if (paused) {
+      if (stopped) {
+        sentence = "PC control is stopped. You are in control.";
+        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
+      } else if (paused) {
         sentence = "Josi is paused on this PC.";
-        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Orange), Ui.T(sentence, 13.5, FontWeights.Medium));
+        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
         actions.Children.Add(Automation.Id(Ui.Pill("Resume", resume, true), "josi.pc-control.resume"));
-      } else if (left > 0) {
-        sentence = "You took over. Josi waits " + left + " s before using this PC again.";
-        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Orange), Ui.T(sentence, 13.5, FontWeights.Medium));
-        actions.Children.Add(Automation.Id(Ui.Pill("Let Josi Continue", resume), "josi.pc-control.continue"));
+      } else if (takenOver) {
+        sentence = "You are in control. Josi waits until you choose Resume.";
+        status = Ui.Row(10, Ui.Icon(Glyph.Desktop, 15, Ui.Accent), Ui.T(sentence, 13.5, FontWeights.Medium));
+        actions.Children.Add(Automation.Id(Ui.Pill("Resume", resume), "josi.pc-control.continue"));
         actions.Children.Add(Automation.Id(Ui.Pill("Pause Josi", pause), "josi.pc-control.pause"));
+      } else if (!working) {
+        sentence = "Josi finished that step on this PC.";
+        status = Ui.T(sentence, 13.5, FontWeights.Medium);
       } else {
         sentence = "Josi is using this PC: " + (scripted != null ? "demo activity" : executor.Activity) + ". Move the mouse or type to take over.";
         status = Ui.Working(sentence, true, 20);
         actions.Children.Add(Automation.Id(Ui.Pill("Pause", pause), "josi.pc-control.pause"));
       }
       actions.Children.Add(Automation.Id(Ui.Danger("Stop Josi", () => {
-        pcStopped = true;
-        if (scripted != null) { demoPc = null; RenderControlBar(); return; }
-        executor.Pause();
-        Model.Run(async () => { var api = Model.Api; if (api != null) await api.Request("/admin/pc-control/stop", "POST", Wires.O()); });
+        StopPcControl();
       }), "josi.pc-control.stop"));
       controlBar.Child = Automation.Group("josi.pc-control.banner", sentence, Ui.Spread(status, actions));
-      controlBar.Padding = new Thickness(16, 8, 16, 8); controlBar.Background = Ui.OrangeFaint;
-      controlBar.BorderBrush = Ui.Orange; controlBar.BorderThickness = new Thickness(0, 0, 0, 1);
+      controlBar.Padding = new Thickness(16, 8, 16, 8); controlBar.Background = Ui.AccentFaint;
+      controlBar.BorderBrush = Ui.Accent; controlBar.BorderThickness = new Thickness(0, 0, 0, 1);
       controlBar.Visibility = Visibility.Visible;
+    }
+
+    void StopPcControl() {
+      pcStopped = true;
+      if (Automation.Demo && demoPc != null) { demoPc = "stopped"; RenderControlBar(); return; }
+      // Local cancellation is synchronous and never waits for the network.
+      DesktopExecutor.Current.Stop();
+      Model.Run(async () => { var api = Model.Api; if (api != null) { await api.Request("/admin/pc-control/stop", "POST", Wires.O()); DesktopExecutor.Current.StopAcknowledged(); } });
     }
 
     public MainWindow() {
       Title = "Josi";
       Width = 1160; Height = 800; MinWidth = 920; MinHeight = 660;
       WindowStartupLocation = WindowStartupLocation.CenterScreen;
-      Background = Ui.Background; Foreground = Ui.Text;
+      Background = Ui.Backdrop; Foreground = Ui.Text;
       FontFamily = Ui.Font; FontSize = 14;
       UseLayoutRounding = true;
       TextOptions.SetTextFormattingMode(this, TextFormattingMode.Ideal);
@@ -169,11 +221,19 @@ namespace Josi.Native {
       var dock = new DockPanel { LastChildFill = true };
       DockPanel.SetDock(busyBar, Dock.Bottom); DockPanel.SetDock(errorBar, Dock.Bottom); DockPanel.SetDock(controlBar, Dock.Top); DockPanel.SetDock(statusLine, Dock.Bottom);
       dock.Children.Add(controlBar); dock.Children.Add(busyBar); dock.Children.Add(errorBar); dock.Children.Add(statusLine); dock.Children.Add(content);
-      Content = dock;
-      DesktopExecutor.Current.Start(Dispatcher);
+      var root = new Grid();
+      root.Children.Add(new Stars()); root.Children.Add(dock);
+      Content = root;
+      if (Flags.LocalWorkspace) DesktopExecutor.Current.Start(Dispatcher);
       DesktopExecutor.Current.Changed += RenderControlBar;
-      controlTick.Tick += delegate { RenderControlBar(); };
+      PcTerminals.Changed += () => Dispatcher.BeginInvoke(new Action(RenderControlBar));
+      if (Flags.LocalWorkspace) controlOverlay = new PcControlOverlay(
+        () => { if (Automation.Demo && demoPc != null) { demoPc = "takeover"; RenderControlBar(); } else DesktopExecutor.Current.TakeOver(); },
+        () => { if (Automation.Demo && demoPc != null) { demoPc = "paused"; RenderControlBar(); } else DesktopExecutor.Current.Pause(); },
+        () => { pcStopped = false; if (Automation.Demo && demoPc != null) { demoPc = "working"; RenderControlBar(); } else DesktopExecutor.Current.Resume(); },
+        StopPcControl, () => { Show(); WindowState = WindowState.Normal; Activate(); Model.Section = "chat"; workspace?.Go("chat"); });
       Automation.Changed += () => { statusLine.Text = Automation.Summary; System.Windows.Automation.AutomationProperties.SetName(statusLine, Automation.Summary); };
+      if (!Automation.Demo && !AppLinks.Testing) tray = new Tray(Reopen, () => { pcStopped = false; DesktopExecutor.Current.Resume(); }, Quit);
 
       Model.Attach(this);
       Model.Changed += Render;
@@ -181,20 +241,37 @@ namespace Josi.Native {
       Model.SectionChanged += UpdateStatus;
       // A settings change Josi prepared: ask here, in front of whatever is open.
       Model.SettingsChangeProposed += proposal => Dispatcher.BeginInvoke(new Action(() => {
-        if (Model.Screen == Screen.Workspace) Dialogs.SettingsChange(this, Model, proposal);
+        if (Model.Screen != Screen.Workspace) return;
+        if (proposal["area"].Text == "credential_card") Dialogs.CredentialCard(this, Model, proposal);
+        else Dialogs.SettingsChange(this, Model, proposal);
       }), System.Windows.Threading.DispatcherPriority.Background);
       InputBindings.Add(new KeyBinding(new Command(() => {
         if (Model.Screen == Screen.Workspace && !Model.Busy) Model.Run(() => Model.NewThread());
       }), Key.N, ModifierKeys.Control));
-      SourceInitialized += delegate { DarkTitleBar(); };
+      SourceInitialized += delegate {
+        DarkTitleBar();
+        // A second launch (or anything else) that shows the hidden window through
+        // Win32 would leave WPF believing it is hidden: an unpainted black frame.
+        // Reopen it the WPF way as soon as such a show arrives.
+        var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
+        if (source != null) source.AddHook((IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled) => {
+          if (msg == 0x0018 && wParam != IntPtr.Zero && Visibility != Visibility.Visible) Dispatcher.BeginInvoke(new Action(Reopen));
+          return IntPtr.Zero;
+        });
+      };
+      Loaded += delegate { Model.Ghost.Set(GhostState.Hello); };
       Model.RefreshLocal();
       Render();
       // A remembered sign-in opens the server on this PC straight away, once
       // the window runs (requests must resume on its thread).
       var r = Model.Receipt;
       if (Automation.Demo) Loaded += delegate { StartDemo(); };
-      else if (r.Installed && r.Running && r.Address.Length > 0 && SessionStore.Load(r.Address) != null)
+      else if (Flags.ServerApp && r.Installed && r.Running && r.Address.Length > 0 && SessionStore.Load(r.Address) != null)
         Loaded += delegate { if (Model.Screen == Screen.Connect) Model.Run(() => Model.Connect(r.Address, true)); };
+      else if (Flags.Relay) {
+        var paired = TunnelStore.Current.All().FirstOrDefault(p => SessionStore.Load(p.Origin) != null);
+        if (paired != null) Loaded += delegate { if (Model.Screen == Screen.Connect) Model.Run(() => Model.ConnectPaired(paired)); };
+      }
     }
 
     public void ShowError(string message) { Model.Error = message; Model.Busy = false; Render(); }
@@ -342,6 +419,8 @@ namespace Josi.Native {
 
     /// A josi:// link from the browser: Google sign-in returning.
     public void ReceiveLink(string link) {
+      // A newer Josi is starting and takes over; this copy leaves quietly.
+      if (link == AppLinks.QuitLink) { Quit(); return; }
       // Scene commands for the demo copy (AUTOMATION.md); ignored outside demo mode.
       if (Automation.IsDemoLink(link)) { if (Automation.Demo) HandleDemoLink(link); return; }
       if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
@@ -376,9 +455,9 @@ namespace Josi.Native {
         Automation.BeginScope("error");
         var close = Automation.Id(Ui.IconButton(Glyph.Close, "Dismiss", () => { Model.Error = ""; RenderBars(); UpdateStatus(); }, 12), "josi.error.dismiss");
         var text = Automation.Id(Ui.Copyable(Model.Error), "josi.error.text");
-        var row = Automation.Group("josi.error", Model.Error, Ui.Spread(Ui.Row(10, Ui.Icon(Glyph.Warning, 15, Ui.Orange), text), close));
+        var row = Automation.Group("josi.error", Model.Error, Ui.Spread(Ui.Row(10, Ui.Icon(Glyph.Warning, 15, Ui.Error), text), close));
         errorBar.Child = row; errorBar.Padding = new Thickness(14, 10, 14, 10);
-        errorBar.Background = new SolidColorBrush(Color.FromArgb(0x24, 0xF6, 0x83, 0x1E));
+        errorBar.Background = Skin.Solid(Skin.Current.Error, 0x24);
         errorBar.Visibility = Visibility.Visible;
         System.Windows.Automation.AutomationProperties.SetLiveSetting(errorBar, System.Windows.Automation.AutomationLiveSetting.Assertive);
       } else errorBar.Visibility = Visibility.Collapsed;
@@ -394,6 +473,12 @@ namespace Josi.Native {
     }
 
     protected override void OnClosing(CancelEventArgs e) {
+      // The X puts Josi in the tray: PC control, terminals and notifications
+      // keep working, and other devices keep being answered. Quit is in the
+      // tray menu (or Shift while closing). Demo and test copies close for real.
+      if (!quitting && tray != null && !Automation.Demo && !AppLinks.Testing && (Keyboard.Modifiers & ModifierKeys.Shift) == 0) {
+        e.Cancel = true; Hide(); tray.SayHidden(); return;
+      }
       if (Model.RecoveryPending) {
         Dialogs.Message(this, "Save your recovery information before closing.", "Finish the recovery step in Josi so you keep access to your account and Vault.");
         e.Cancel = true; return;
@@ -403,10 +488,18 @@ namespace Josi.Native {
         e.Cancel = true; return;
       }
       // Closing the window never stops a server on this PC; it keeps serving
-      // other devices until stopped from Server.
+      // other devices until stopped from Server. Current desktop work ends, but
+      // no pause is remembered: a saved pause here left the next copy of the
+      // app silently unable to run anything (every PC request waited until
+      // the model gave up).
+      DesktopExecutor.Current.PauseForExit();
+      DesktopExecutor.Current.Changed -= RenderControlBar;
+      controlOverlay?.Dispose();
       if (workspace != null) workspace.Detach();
       if (Model.Api != null) Model.Api.Dispose();
+      tray?.Dispose(); tray = null;
       base.OnClosing(e);
+      System.Windows.Application.Current?.Shutdown();
     }
 
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
@@ -414,9 +507,9 @@ namespace Josi.Native {
       var handle = new WindowInteropHelper(this).Handle;
       var on = 1;
       DwmSetWindowAttribute(handle, 20, ref on, sizeof(int));        // immersive dark mode
-      var caption = 0x001E110B;                                       // #0B111E as COLORREF (BGR)
+      var caption = Skin.ColorRef(Skin.Current.Deep);
       DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int));    // caption color (Windows 11)
-      var text = 0x00EAF6FD;
+      var text = Skin.ColorRef(Skin.Current.Text);
       DwmSetWindowAttribute(handle, 36, ref text, sizeof(int));       // caption text color
     }
   }

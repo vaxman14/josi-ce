@@ -15,7 +15,7 @@
 // never add tools, grant permissions or override safety rules, approvals or
 // PC Control, and they are refused if they contain anything secret-like.
 import type { Db } from '@josi-ce/core';
-import { appendEvent, json } from '@josi-ce/core';
+import { appendEvent, canonicalJson, json } from '@josi-ce/core';
 import { chat, type RegistryOptions } from '@josi-ce/llm';
 import { refusesAsMemory, suggestMemory } from '@josi-ce/persona';
 import { recallTerms } from './memoryEngine.js';
@@ -201,7 +201,7 @@ export function validateProposal(raw: unknown, toolNames: Set<string>, insightId
     if (!brief) return null;
     change = { kind, brief };
   } else return null;
-  const text = JSON.stringify(change) + title + problem;
+  const text = canonicalJson(change) + title + problem;
   if (refusesAsMemory(text)) return null;
   return { title, problem, risk, insightIds: evidence, change };
 }
@@ -285,7 +285,7 @@ export async function decideProposal(db: Db, args: { adminId: string; proposalId
       state = 'applied';
     }
     await tx.query(`update improvement_proposals set state=$2, title=$3, problem=$4, change=$5, decided_by=$6, decided_at=now() where id=$1`,
-      [p.id, state, draft.title, draft.problem, JSON.stringify(draft.change), args.adminId]);
+      [p.id, state, draft.title, draft.problem, json(draft.change), args.adminId]);
     await appendEvent(tx, { actorUserId: args.adminId, actor: 'user', kind: `improvement.${state}`, subjectType: 'improvement', subjectId: p.id, payload: { kind: draft.change.kind } });
     return { state };
   });

@@ -163,6 +163,18 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     docsUrl: 'https://platform.openai.com/docs/api-reference/chat',
   },
   {
+    kind: 'hey_josi',
+    label: 'Hey Josi AI',
+    wire: 'openai-chat',
+    external: true,
+    defaultBaseUrl: 'https://accounts.heyjosi.com/ai/v1',
+    baseUrlMode: 'optional',
+    fields: [API_KEY],
+    discovery: 'endpoint',
+    residency: 'Requests pass through the Hey Josi gateway, which counts their cost and keeps no text, then go to OpenAI under Hey Josi\'s account.',
+    docsUrl: 'https://help.heyjosi.com/plans',
+  },
+  {
     kind: 'anthropic',
     label: 'Anthropic',
     wire: 'anthropic-messages',

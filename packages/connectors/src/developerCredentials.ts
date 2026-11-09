@@ -19,6 +19,10 @@ export function withDeveloperServiceTransaction<T>(db: Db, service: DeveloperSer
   });
 }
 async function permitted(tx: Db, owner: string, service: DeveloperService): Promise<boolean> {
+  // Rule 2 of docs/JOSI_IS_THE_INTERFACE.md: the owner (super-admin) may always
+  // connect; the policy is the ceiling for members.
+  const [self] = await tx.query(`select 1 from users where id=$1 and status='active' and role='super_admin'`, [owner]);
+  if (self) return true;
   return (await tx.query(`select 1 from developer_service_policy p where p.service=$2
     and exists(select 1 from users where id=$1 and status='active')
     and (p.mode='everyone' or (p.mode='specific_users' and exists(select 1 from developer_service_allowed_users a where a.service=p.service and a.user_id=$1)))`, [owner, service])).length === 1;

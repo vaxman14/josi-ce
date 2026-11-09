@@ -5,14 +5,15 @@
 // weight in the image and surface in the supply chain. These cover what the
 // pages actually use.
 //
-// Item 40 (October 2026): the same look as the Windows app. Pills for buttons,
-// quiet rounded cards, one left-aligned page column, the working indicator
-// with its clock. The 44px rule lives HERE, in the components, not in each
+// Item 40 (October 2026): one left-aligned page column, pills for buttons, quiet
+// rounded cards, the working indicator with its clock. Every colour comes from
+// the tokens in index.css, so a skin is written once. The 44px rule lives HERE, in the components, not in each
 // call site: an iOS tap target smaller than 44x44 is the accessibility failure
 // the acceptance criteria name, and it is not something to remember page by page.
 import { useEffect, useState } from 'react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
+import { JosiMark } from '@/components/brand/JosiMark';
 
 export function Button({
   variant = 'primary', className, ...props
@@ -25,8 +26,8 @@ export function Button({
         // passing a smaller height, because it comes first in the class list.
         'inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-medium',
         'transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-        variant === 'primary' && 'bg-primary text-primary-foreground hover:bg-primary/90',
-        variant === 'secondary' && 'border border-border bg-secondary text-secondary-foreground hover:bg-secondary/70',
+        variant === 'primary' && 'btn-gold font-semibold',
+        variant === 'secondary' && 'border border-border bg-transparent text-foreground hover:border-primary/60 hover:bg-primary/5',
         variant === 'ghost' && 'text-foreground hover:bg-secondary',
         variant === 'danger' && 'bg-destructive text-destructive-foreground hover:opacity-90',
         className,
@@ -44,8 +45,8 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
       className={cn(
         // text-base is load-bearing on iOS: anything smaller makes Safari zoom
         // the page when the field takes focus, which reads as a layout bug.
-        'min-h-11 w-full min-w-0 rounded-xl border border-border bg-[hsl(var(--input))] px-3.5 text-base',
-        'placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm',
+        'min-h-11 w-full min-w-0 rounded-xl border border-border bg-input px-3.5 text-base',
+        'placeholder:text-text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm',
         className,
       )}
     />
@@ -54,12 +55,12 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
 
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
   return (
-    <div className={cn('min-w-0 rounded-2xl border border-border bg-card p-5', className)}>{children}</div>
+    <div className={cn('min-w-0 rounded-lg border border-border/60 bg-card p-5', className)}>{children}</div>
   );
 }
 
 export function CardTitle({ children }: { children: ReactNode }) {
-  return <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">{children}</h2>;
+  return <h2 className="mb-2 text-base font-semibold tracking-tight">{children}</h2>;
 }
 
 /** One page: the title row (with an optional action on the right), a line of
@@ -85,7 +86,7 @@ export function Caption({ children, className }: { children: ReactNode; classNam
   return <p className={cn('caption', className)}>{children}</p>;
 }
 
-/** The small animated mark with a sentence, for any wait: "Checking…",
+/** The ghost J breathing beside a sentence, for any wait: "Checking…",
  * "Josi is thinking…". With `elapsed`, a seconds counter shows the wait is
  * alive rather than stuck. */
 export function Working({ text, elapsed = false, size = 22, className }: { text: string; elapsed?: boolean; size?: number; className?: string }) {
@@ -97,8 +98,8 @@ export function Working({ text, elapsed = false, size = 22, className }: { text:
     return () => window.clearInterval(timer);
   }, [elapsed]);
   return (
-    <div role="status" className={cn('flex items-center gap-3 text-sm text-muted-foreground', className)}>
-      <img src="/brand/josi-mark.png" alt="" width={size} height={size} style={{ width: size, height: size }} className="josi-working-mark shrink-0 rounded-md" />
+    <div role="status" className={cn('flex items-center gap-3 text-sm text-text-muted', className)}>
+      <JosiMark variant="bare" state="thinking" size={size} />
       <span className="min-w-0">{text}</span>
       {elapsed && seconds > 0 ? <span className="tabular-nums text-xs">{seconds} s</span> : null}
     </div>
@@ -172,7 +173,7 @@ export function Badge({
         tone === 'muted' && 'bg-secondary text-secondary-foreground',
         tone === 'primary' && 'bg-primary/20 text-primary',
         tone === 'danger' && 'bg-destructive/20 text-destructive',
-        tone === 'ok' && 'bg-emerald-500/20 text-emerald-300',
+        tone === 'ok' && 'bg-success/20 text-success',
       )}
     >
       {children}
@@ -184,7 +185,8 @@ export function Badge({
  * the difference between "nothing yet" and "something is broken". */
 export function Empty({ title, children }: { title: string; children?: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-dashed border-border p-6 text-center">
+    <div className="rounded-lg border border-dashed border-border p-6 text-center">
+      <JosiMark variant="bare" size={30} className="mb-2 opacity-40" />
       <p className="text-sm font-medium">{title}</p>
       {children ? <p className="mx-auto mt-1 max-w-prose text-sm text-muted-foreground">{children}</p> : null}
     </div>
@@ -192,7 +194,7 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
 }
 
 export function ErrorNote({ children }: { children: ReactNode }) {
-  return <p role="alert" className="text-sm text-primary">{children}</p>;
+  return <p role="alert" className="text-sm text-destructive">{children}</p>;
 }
 
 /** What a feature says when it is genuinely not built yet.
@@ -202,7 +204,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
  * e2e suite asserts that pages carrying this contain no enabled action. */
 export function NotYet({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-border bg-secondary/40 p-4" data-not-built="true">
+    <div className="rounded-lg border border-border bg-secondary/40 p-4" data-not-built="true">
       <p className="text-sm font-semibold">{title}</p>
       <p className="mt-1 text-sm text-muted-foreground">{children}</p>
     </div>

@@ -14,9 +14,8 @@
 // Nothing here ever reads a role, a user id, a completion flag or an install
 // identity from the request body.
 import { isIP } from 'node:net';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import multer from 'multer';
 import { RestoreError, reconcileBackupRows, restoreFromFile } from '@josi-ce/ops';
@@ -47,6 +46,7 @@ const READ_ONLY_CAPABILITIES: Record<'google' | 'microsoft', string[]> = {
   microsoft: CAPABILITIES.filter((c) => c.provider === 'microsoft' && c.kind === 'read').map((c) => c.key),
 };
 import { UserError, createUser, verifyPassword } from '@josi-ce/auth';
+import { archiveUpload } from '../http/archiveUpload.js';
 import { asyncRoute, param } from '../http/async.js';
 import { blockingFailures, runHostChecks } from './hostChecks.js';
 import { STEP_DESCRIPTORS, SETUP_STEPS, canSubmit, nextStep, type SetupStep } from './steps.js';
@@ -204,11 +204,7 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
    * destructive administrator action and lives under /ops. The whole thing
    * happens in one call; a fresh server has nothing worth a snapshot. */
   const incomingDir = resolveDataPath('/data/backups/incoming');
-  try { mkdirSync(incomingDir, { recursive: true }); } catch { /* reported on upload */ }
-  const receiveArchive = multer({
-    storage: multer.diskStorage({ destination: incomingDir, filename: (_req, _file, done) => done(null, `setup-${randomUUID()}`) }),
-    limits: { fileSize: 8 * 1024 * 1024 * 1024, files: 1, fields: 2, parts: 3 },
-  });
+  const receiveArchive = archiveUpload(incomingDir, 'setup');
   r.post('/restore', asyncRoute(async (req, res) => {
     const [owner] = await db.query<{ present: boolean }>("select exists(select 1 from users where role='super_admin') as present");
     if (owner?.present) { res.status(409).json({ error: 'This server already has an owner. Restore from Administration → Backups instead.' }); return; }
@@ -246,14 +242,17 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
       const next = await expectedSetupStep(db, state.completed_steps ?? []);
       const [vault] = await db.query<{ initialized_at: string | null; recovery_confirmed_at: string | null }>(
         'select initialized_at, recovery_confirmed_at from vault_state where id=true');
-      const [owner] = await db.query<{present:boolean}>("select exists(select 1 from users where role='super_admin') as present");
+      const [owner] = await db.query<{id:string}>("select id from users where role='super_admin' limit 1");
       const visibleCompleted = next === 'llm'
         ? (state.completed_steps ?? []).filter((id) => id !== 'llm')
         : (state.completed_steps ?? []);
       return res.json({
         completed: state.completed,
         recoveryPending: !!vault?.initialized_at && !vault.recovery_confirmed_at,
-        ownerExists: !!owner?.present,
+        ownerExists: !!owner,
+        // The PC step pairs the Josi app's executor key to this account; the
+        // app derives that key from the owner's id, so setup names it here.
+        ownerId: owner?.id ?? null,
         completedSteps: visibleCompleted,
         nextStep: next,
         steps: SETUP_STEPS.map((id) => ({
@@ -979,6 +978,36 @@ async function applyStep(
       // local_file_access_enabled is deliberately not settable here. Local
       // access needs a Docker mount as well as an application allowlist, so it
       // cannot be switched on from a web form (M45).
+      return;
+    }
+
+    // ------------------------------------------------------------ pc control
+    case 'pc_control': {
+      // Skipping writes nothing; PC Control stays off and unpaired, and the
+      // owner can pair later from the app or from chat.
+      if (body.skip === true) return;
+      const pcId = typeof body.pcId === 'string' && /^[a-z0-9-]{1,80}$/.test(body.pcId) ? body.pcId : null;
+      const key = typeof body.publicKey === 'string' && body.publicKey.length <= 100 ? body.publicKey : null;
+      if (!pcId || !key) throw new SetupError(400, 'Approve this PC from the Josi app on that computer, or skip this step for now.');
+      const bytes = Buffer.from(key, 'base64');
+      if (bytes.length !== 65 || bytes[0] !== 4) throw new SetupError(400, 'Invalid PC key.');
+      const [owner] = await db.query<{ id: string; password_hash: string | null }>("select id, password_hash from users where role='super_admin' limit 1");
+      if (!owner) throw new SetupError(409, 'Create your account first.');
+      // The password of the account just created is the authorization: setup
+      // routes are unauthenticated, and this binds a key that will later sign
+      // every executor request for this PC.
+      if (!await verifyPassword(owner.password_hash, typeof body.password === 'string' ? body.password : ''))
+        throw new SetupError(401, 'That password did not match your account.');
+      await db.query('insert into pc_control_settings(owner_user_id,pc_id) values($1,$2) on conflict do nothing', [owner.id, pcId]);
+      const [existing] = await db.query<{ public_key: string }>('select public_key from pc_executor_identity where owner_user_id=$1 and pc_id=$2', [owner.id, pcId]);
+      if (existing && existing.public_key !== key) throw new SetupError(409, 'This PC already has a different approved key. Revoke it under PC Control first.');
+      if (!existing) await db.query('insert into pc_executor_identity(owner_user_id,pc_id,public_key) values($1,$2,$3)', [owner.id, pcId, key]);
+      if (body.enable === true) {
+        // Everyday allowances come with it (apps, files, windows); commands and
+        // the high-risk actions still ask, as the step's wording says.
+        await db.query('update pc_control_settings set enabled=true, full_control=true where owner_user_id=$1 and pc_id=$2', [owner.id, pcId]);
+        await db.query('insert into pc_control_activity(owner_user_id,pc_id,kind) values($1,$2,$3)', [owner.id, pcId, 'Control and everyday allowances enabled during setup; commands and high-risk actions still ask']);
+      }
       return;
     }
 

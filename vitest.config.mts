@@ -1,5 +1,12 @@
 import { defineConfig } from 'vitest/config';
+import { realpathSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// macOS's temp folder sits behind the /var symlink, and storage that refuses
+// symlinked roots is right to refuse it, so the suite is given the real path.
+const scratch = realpathSync(tmpdir());
 
 export default defineConfig({
   test: {
@@ -13,9 +20,13 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 60_000,
     include: ['packages/**/test/**/*.test.ts', 'apps/**/test/**/*.test.ts'],
+    // Stands in for /data, which only exists inside the image.
+    env: { TMPDIR: scratch, JOSI_TEST_DATA_DIR: join(scratch, `josi-test-data-${process.pid}`) },
   },
   resolve: {
     alias: {
+      '@josi-ce/tunnel/node': fileURLToPath(new URL('./packages/tunnel/src/node.ts', import.meta.url)),
+      '@josi-ce/tunnel': fileURLToPath(new URL('./packages/tunnel/src/index.ts', import.meta.url)),
       '@josi-ce/protocol': fileURLToPath(new URL('./packages/protocol/src/index.ts', import.meta.url)),
       '@': fileURLToPath(new URL('./apps/web/src', import.meta.url)),
       '@josi-ce/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),

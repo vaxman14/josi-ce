@@ -10,7 +10,6 @@
 // and every file through `openStorageFile`, which refuses links and hard-linked
 // files. Nothing here follows a path it has not pinned.
 import { constants } from 'node:fs';
-import { readdir } from 'node:fs/promises';
 import { appendEvent, type Db } from '@josi-ce/core';
 import { looksEncrypted, sha256, type Scanner, type StoragePolicy } from './gates.js';
 import { ScanBlocked, ceilingsFor, ingestFile, storagePolicy, usageFor } from './ingest.js';
@@ -19,6 +18,7 @@ import { extensionOf, PathEscape } from './paths.js';
 import { openStorageFile } from './windowsFiles.js';
 import { withWorkspaceDirectory, workspacePath } from './localWorkspace.js';
 import { recordSyncFailure } from './versions.js';
+import { macReaddir as readdir } from './macosDirectory.js';
 
 export interface LocalSyncCounts { indexed: number; skipped: number; unchanged: number; removed: number; seen: number }
 export interface LocalSyncResult {

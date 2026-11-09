@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#1B0F20">
+<title>Your account - Hey Josi</title>
+<link rel="icon" type="image/png" href="/josi-favicon-gold.png">
+<link rel="stylesheet" href="/style.css?v=4">
+<script type="module" src="/account.js?v=4"></script>
+</head>
+<body class="dash">
+<div class="stars" aria-hidden="true"></div>
+<nav class="side" aria-label="Your account">
+<a class="side-brand" href="#home"><span class="tile"><img src="/josi-mark-gold.png" alt="" width="15" height="21"></span><span>Hey Josi</span></a>
+<div class="side-links">
+<a href="#home" data-nav="home"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Home</a>
+<a href="#plan" data-nav="plan"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18v10H3zM3 11h18"/></svg>Plan and AI</a>
+<a href="#devices" data-nav="devices"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zM11 18h2"/></svg>Devices</a>
+<a href="#security" data-nav="security"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.4 8-8 9-4.6-1-8-4-8-9V6zM9 12l2 2 4-4"/></svg>Security</a>
+<a href="#privacy" data-nav="privacy"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5c5 0 9 4.5 10 7-1 2.500-5 7-10 7S3 14.500 2 12c1-2.500 5-7 10-7zM12 9.500a2.500 2.500 0 1 0 0 5 2.500 2.500 0 0 0 0-5z"/></svg>Privacy</a>
+</div>
+<div class="side-foot">
+<p data-text="email"></p>
+<button class="quiet" data-action="logout">Log out</button>
+</div>
+</nav>
+<main data-page="account">
+<div data-panel="home">
+<header class="hello">
+<p class="eyebrow">YOUR ADDRESS</p>
+<h1 data-text="address">Your account</h1>
+<p>Three steps and your own Josi is reachable from anywhere.</p>
+</header>
+<div class="grid three">
+<section>
+<span class="step">1</span>
+<h2>Get Josi</h2>
+<p>Josi runs on your own computer. Install it, then link it to this account.</p>
+<div class="row"><a class="cta" data-download href="https://get.heyjosi.com">Download Josi</a></div>
+</section>
+<section>
+<span class="step">2</span>
+<h2>Link your server</h2>
+<p data-link-status>Make a code and enter it on your Josi server. It works once, for 10 minutes.</p>
+<div class="code" data-link-code hidden></div>
+<p class="small" data-link-expiry hidden></p>
+<button data-action="link-code">Make a code</button>
+<p class="error" data-error="link" role="alert"></p>
+</section>
+<section>
+<span class="step">3</span>
+<h2>Pair your devices</h2>
+<p>Open Devices on your Josi server to pair your phone and other computers. They&rsquo;ll connect from anywhere.</p>
+<div class="row"><a class="quiet-link" href="#devices">See your devices</a></div>
+</section>
+</div>
+</div>
+<div data-panel="plan" hidden>
+<header class="hello"><h1>Plan and AI</h1><p>What you pay for, and how much AI you&rsquo;ve used.</p></header>
+<div class="grid two">
+<section>
+<h2>Plan</h2>
+<p><strong data-text="planLabel"></strong> <span data-text="planDetail"></span></p>
+<p class="error" data-payment hidden>Your last payment failed. Update your card to keep your plan.</p>
+<div class="row" data-plans></div>
+<p class="error" data-error="plan" role="alert"></p>
+</section>
+<section data-ai hidden>
+<h2>AI usage</h2>
+<div class="meter"><div data-meter></div></div>
+<p data-text="usage"></p>
+<p class="small" data-text="usageDetail"></p>
+<div class="row">
+<button class="quiet" data-action="topup" data-usd="10">Add $10</button>
+<button class="quiet" data-action="topup" data-usd="20">Add $20</button>
+<button class="quiet" data-action="ai-reset">Reset AI token</button>
+</div>
+<p class="small">Top-ups go into the shared pool and don&rsquo;t expire with the month.</p>
+<div data-topups></div>
+<p class="error" data-error="ai" role="alert"></p>
+</section>
+<section data-household hidden>
+<h2>Household</h2>
+<p class="small">Everyone here shares one AI allowance. A cap limits one person&rsquo;s spending each month.</p>
+<div data-members></div>
+<form data-form="invite" hidden>
+<label>Invite someone by email <input name="email" type="email" required></label>
+<button>Send invite</button>
+</form>
+<p class="error" data-error="household" role="alert"></p>
+</section>
+</div>
+</div>
+<div data-panel="devices" hidden>
+<header class="hello"><h1>Devices</h1><p>Everything paired with your Josi server.</p></header>
+<section>
+<h2>Devices</h2>
+<p class="small">Pair new devices from your Josi server, not here. Revoking takes a device off your server.</p>
+<div data-devices></div>
+<p class="error" data-error="devices" role="alert"></p>
+</section>
+</div>
+<div data-panel="security" hidden>
+<header class="hello"><h1>Security</h1><p>Your password and authenticator app for this account.</p></header>
+<div class="grid two">
+<section>
+<h2>Password</h2>
+<form data-form="password-create" hidden>
+<p>You signed up with Google, so this account has no password yet. Create one to log in with your email, and to turn on an authenticator.</p>
+<label>New password, at least 12 characters <input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+<button>Create password</button>
+<p class="error" role="alert"></p>
+</form>
+<form data-form="password" hidden>
+<label>Current password <input name="current" type="password" autocomplete="current-password" required></label>
+<label>New password, at least 12 characters <input name="next" type="password" autocomplete="new-password" minlength="12" required></label>
+<button>Change it</button>
+<p class="error" role="alert"></p>
+</form>
+</section>
+<section>
+<h2>Authenticator app</h2>
+<p data-text="twoFactor"></p>
+<p class="small">One authenticator for everything: once it&rsquo;s on, open Settings on your Josi server and choose <strong>Use my Hey Josi authenticator</strong>.</p>
+<form data-form="2fa-begin" hidden>
+<label>Your password <input name="password" type="password" autocomplete="current-password" required></label>
+<button>Set it up</button>
+</form>
+<form data-form="2fa-enable" hidden>
+<p>Scan this with your authenticator app, then enter the code it shows.</p>
+<img class="qr" data-qr alt="QR code for your authenticator app" width="220" height="220">
+<p class="small">Or enter this key: <span data-secret></span></p>
+<label>Code <input name="code" autocomplete="one-time-code" inputmode="numeric" required></label>
+<button>Turn it on</button>
+</form>
+<div data-recovery hidden>
+<p>Save these recovery codes somewhere safe. Each works once, and you won&rsquo;t see them again.</p>
+<div class="code" data-recovery-codes></div>
+</div>
+<form data-form="2fa-disable" hidden>
+<label>Your password <input name="password" type="password" autocomplete="current-password" required></label>
+<label>Code <input name="code" autocomplete="one-time-code" required></label>
+<div class="row"><button class="quiet" data-submit="recovery-codes">New recovery codes</button><button class="danger" data-submit="disable">Turn it off</button></div>
+</form>
+<p class="error" data-error="2fa" role="alert"></p>
+</section>
+</div>
+</div>
+<div data-panel="privacy" hidden>
+<header class="hello"><h1>Privacy</h1><p>What Hey Josi holds, and how to leave.</p></header>
+<div class="grid two">
+<section>
+<h2>What we can and can&rsquo;t see</h2>
+<p><strong>We can see:</strong> your email, your address, your plan and payments, the names of your paired devices, and how much AI you use, as token counts and cost.</p>
+<p><strong>We can&rsquo;t see:</strong> what passes between your devices and your server. It&rsquo;s encrypted end to end, and the relay only moves sealed bytes. This account can&rsquo;t sign in to your server.</p>
+<p><strong>Passing through:</strong> AI requests go through our gateway to OpenAI. We count their cost and don&rsquo;t keep their text. Google sign-in tokens go through us to your server, and we don&rsquo;t keep those either.</p>
+</section>
+<section>
+<h2>Delete your account</h2>
+<p>This cancels your plan, gives up your address and removes your data here. Your Josi server keeps working on your own network. It can&rsquo;t be undone.</p>
+<form data-form="delete">
+<label>Your password <input name="password" type="password" autocomplete="current-password" required></label>
+<label>Code, if you use two-step sign-in <input name="code" autocomplete="one-time-code"></label>
+<button class="danger">Delete my account</button>
+<p class="error" role="alert"></p>
+</form>
+</section>
+</div>
+</div>
+</main>
+</body>
+</html>

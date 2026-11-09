@@ -138,7 +138,9 @@ describe('a passing setup verification is the provider\'s verified state', () =>
     // surviving a change to the credential silently — that is asserted on the
     // admin save path, which clears activated_at, probed_at and probe_steps.
     const llmRoutes = readFileSync(join(root, 'apps/api/src/http/llmRoutes.ts'), 'utf8');
-    expect(llmRoutes).toContain('activated_at = null, probed_at = null');
+    expect(llmRoutes).toContain('saveModelConfiguration(');
+    const credentials = readFileSync(join(root, 'packages/llm/src/credentials.ts'), 'utf8');
+    expect(credentials).toContain("activated_at=null,probed_at=null,probe_steps='[]'");
   });
 });
 

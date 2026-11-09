@@ -8,3 +8,4 @@ export * from './protectedHost.js';
 export * from './deviceConsent.js';
 export * from './workspaceStorage.js';
 export * from './automationConsent.js';
+export * from './computerControl.js';

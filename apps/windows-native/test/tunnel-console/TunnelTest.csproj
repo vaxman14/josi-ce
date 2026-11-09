@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>CA1416</NoWarn>
+    <SrcDir>$(MSBuildProjectDirectory)/../../src</SrcDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Tests.cs" />
+    <Compile Include="Stubs.cs" />
+    <Compile Include="$(SrcDir)/TunnelCrypto.cs" />
+    <Compile Include="$(SrcDir)/TunnelNoise.cs" />
+    <Compile Include="$(SrcDir)/TunnelPairing.cs" />
+    <Compile Include="$(SrcDir)/TunnelClient.cs" />
+    <Compile Include="$(SrcDir)/TunnelConnection.cs" />
+    <Compile Include="$(SrcDir)/Wire.cs" />
+    <Compile Include="$(SrcDir)/JosiApi.cs" />
+    <Compile Include="$(SrcDir)/TunnelStore.cs" />
+    <Compile Include="$(SrcDir)/SessionStore.cs" />
+  </ItemGroup>
+</Project>

@@ -47,7 +47,7 @@ export function Calendar() {
     const displayTimeOptions:Intl.DateTimeFormatOptions={timeZone:zone,hour:'numeric',minute:'2-digit'};
     if(repeatedCivilMinute) displayTimeOptions.timeZoneName='short';
     const displayTime=timed&&e.start?new Date(e.start).toLocaleTimeString([],displayTimeOptions):time;
-    const sourceColor=e.sourceColor||'#7c3aed';
+    const sourceColor=e.sourceColor||'hsl(var(--primary))';
     const metadata=`${e.sourceName} · ${plain('calendar_provider', e.provider)} · ${e.account||e.connectionId}`;
     return <button type="button" key={`${e.sourceId}:${e.eventId}`} title={`${title} — ${time} — ${metadata}`} aria-label={`${title}, ${time}, ${metadata}`} onClick={click=>{lastEventButton.current=click.currentTarget;void inspect(e);}} className={`${timed?'calendar-event-card':allDayStrip?'calendar-all-day-event':'w-full bg-background p-2'} rounded border border-border text-left hover:bg-secondary focus-visible:ring-2 focus-visible:ring-primary ${compact?'text-xs':'text-sm'}`} style={{borderLeftWidth:4,borderLeftColor:sourceColor,...(timed||allDayStrip?{'--calendar-event-color':sourceColor} as React.CSSProperties:{})}}>{timed?<><span className="calendar-event-time">{displayTime}</span><span className="calendar-event-title">{title}</span><span className="calendar-event-metadata">{metadata}</span></>:allDayStrip?<span className="block overflow-hidden text-ellipsis whitespace-nowrap font-medium">{title}</span>:<><span className="block font-medium">{title}</span><span className="block">{time}</span><span className="block text-muted-foreground">{metadata}</span></>}</button>;
   };

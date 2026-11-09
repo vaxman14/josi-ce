@@ -168,7 +168,7 @@ namespace Josi.Native {
         Ui.Row(8, ModelText.Pill(Wires.Words(c["connectionStatus"].Text), c["connectionStatus"].Text == "active"), ModelText.Pill(enabled ? "Available to Josi" : "Not available to Josi", enabled)),
         Ui.Caption("Address: " + c["baseUrl"].Text), Ui.Caption("Josi will only ever call: " + c["host"].Text), Ui.Caption("Short name the assistant uses: " + c["slug"].Text),
         Ui.Caption("Authentication: " + auth + " · Credential: " + c["credentialMask"].Text), Ui.Caption("Last tested: " + (c["lastCheckAt"].Text.Length > 0 ? Wires.Date(c["lastCheckAt"].Text) : "not yet")) };
-      if (c["lastErrorCategory"].Text.Length > 0) items.Add(Ui.T(Wires.Words(c["lastErrorCategory"].Text), 13.5, null, Ui.Orange));
+      if (c["lastErrorCategory"].Text.Length > 0) items.Add(Ui.T(Wires.Words(c["lastErrorCategory"].Text), 13.5, null, Ui.Error));
       var toggle = Ui.Pill(enabled ? "Make Unavailable to Josi" : "Make Available to Josi", () => Perform(async (api, stamp) => {
         await api.Request("/admin/custom-apis/" + api.Uuid(id) + "/" + (enabled ? "disable" : "enable"), "POST", Wires.O());
         note = enabled ? "Josi can no longer use this API." : "Josi may now use the actions you have switched on.";

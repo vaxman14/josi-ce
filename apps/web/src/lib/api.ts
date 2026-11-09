@@ -125,9 +125,11 @@ export interface User {
   id: string;
   email: string;
   username: string;
-  display_name: string | null;
+  /** `/auth/me` and sign-in answer with this one. */
+  displayName?: string | null;
+  display_name?: string | null;
   role: 'super_admin' | 'member';
-  status: string;
+  status?: string;
 }
 
 export interface Thread {

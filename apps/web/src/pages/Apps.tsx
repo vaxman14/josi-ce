@@ -1,28 +1,35 @@
 // Companion apps.
 //
-// M101: labelled Coming soon, and with no download or install action, because
-// no platform build exists to download. A disabled-looking button would be a
-// promise; a sentence is not.
-import { Card, CardTitle, NotYet } from '@/components/ui';
+// Where to get them, and how one reaches this server. Pairing itself lives on
+// Devices, so this page only points there.
+import { Link } from 'react-router-dom';
+import { Card, CardTitle } from '@/components/ui';
 
 export function Apps() {
   return (
     <div className="page">
       <h1 className="page-title">Companion apps</h1>
 
-      <NotYet title="Coming soon">
-        There is no iPhone or Android build of Josi yet. When one exists it will be linked here — until
-        then there is nothing to install, and this page will not pretend otherwise.
-      </NotYet>
+      <Card>
+        <CardTitle>Get the app</CardTitle>
+        <ul className="space-y-1 text-sm text-muted-foreground">
+          <li>
+            iPhone and iPad:{' '}
+            <a className="underline" href="https://apps.apple.com/us/app/josi-ce/id6810549193" target="_blank" rel="noreferrer noopener">Josi CE on the App Store</a>
+          </li>
+          <li>
+            Android:{' '}
+            <a className="underline" href="https://play.google.com/store/apps/details?id=com.socalreceptionist.josice" target="_blank" rel="noreferrer noopener">Josi CE on Google Play</a>
+          </li>
+        </ul>
+      </Card>
 
       <Card>
-        <CardTitle>How signing in will work</CardTitle>
+        <CardTitle>Connect it to this server</CardTitle>
         <p className="text-sm text-muted-foreground">
-          You will enter your email address and your normal Josi password. The app asks a small directory
-          service which installation owns that address, then sends the password directly to this server over
-          HTTPS. The directory never receives your password, your messages, or anything else from this
-          installation — only enough to point the app at it. Your administrator has to add your address to
-          the approved list first.
+          Open <Link className="underline" to="/app/devices">Devices</Link> and make a pairing code. Scan it or
+          paste it into the app, then sign in with your normal Josi account. The connection is encrypted from
+          your phone to this server, and each device has its own key.
         </p>
       </Card>
     </div>

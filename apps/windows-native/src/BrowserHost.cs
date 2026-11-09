@@ -22,14 +22,29 @@ namespace Josi.Native {
     public const string ExtensionId = "peopadjeldgefmbfllgjgdndhabbagpl";
     /// Item 37: the Firefox add-on ID (fixed in development-identity.json; Mozilla ties the listing to it).
     public const string FirefoxExtensionId = "josi-browser@heyjosi.com";
-    /// The store-assigned Chromium IDs, once published, go here beside the development one.
-    public static readonly string[] ChromiumExtensionIds = { ExtensionId };
+    /// Store-assigned Chromium IDs (Chrome Web Store, Edge Add-ons) beside the
+    /// development one; keep in step with chromiumStoreIds in
+    /// apps/browser-extension/development-identity.json. Empty until published.
+    static readonly string[] StoreExtensionIds = { };
+    /// Every Chromium ID this Josi answers: development, store, and an
+    /// operator override file (%LOCALAPPDATA%\Josi\BrowserHost\extension-ids.json,
+    /// a JSON array of 32-letter IDs) for a store build published after this one.
+    public static readonly string[] ChromiumExtensionIds = new[] { ExtensionId }.Concat(StoreExtensionIds).Concat(OverrideIds()).Distinct().ToArray();
     public const int MaxFrame = 200 * 1024;
-    static string Origin { get { return "chrome-extension://" + ExtensionId + "/"; } }
+    static string Folder { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi", "BrowserHost"); } }
+    static bool ValidId(string id) { return id != null && id.Length == 32 && id.All(c => c >= 'a' && c <= 'p'); }
+    static IEnumerable<string> OverrideIds() {
+      try {
+        var file = Path.Combine(Folder, "extension-ids.json");
+        if (!File.Exists(file) || new FileInfo(file).Length > 8192) return new string[0];
+        return Wires.Parse(File.ReadAllText(file)).List.Select(w => w.Text).Where(ValidId).Take(16).ToList();
+      } catch (Exception) { return new string[0]; }
+    }
+    static IEnumerable<string> Origins { get { return ChromiumExtensionIds.Select(id => "chrome-extension://" + id + "/"); } }
     public static string PipeName { get { return "Josi.Native.Windows.Browser" + AppLinks.Instance + "." + WindowsIdentity.GetCurrent().User.Value; } }
 
     public static bool IsLaunch(string[] args) {
-      if (args.Length >= 1 && args[0] == Origin) return true;
+      if (args.Length >= 1 && Origins.Contains(args[0])) return true;
       // Firefox starts the host with the manifest path and the add-on ID.
       return args.Length >= 2 && args[1] == FirefoxExtensionId && args[0].EndsWith(Name + ".firefox.json", StringComparison.OrdinalIgnoreCase);
     }
@@ -40,11 +55,11 @@ namespace Josi.Native {
       if (AppLinks.Testing) return;
       try {
         var exe = Environment.ProcessPath; if (string.IsNullOrEmpty(exe)) return;
-        var folder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi", "BrowserHost");
+        var folder = Folder;
         Directory.CreateDirectory(folder);
         var manifest = Path.Combine(folder, Name + ".json");
         var json = Wires.Serialize(Wires.O("name", Name, "description", "Josi browser control", "path", exe, "type", "stdio",
-          "allowed_origins", new List<object> { Origin }));
+          "allowed_origins", Origins.Cast<object>().ToList()));
         if (!File.Exists(manifest) || File.ReadAllText(manifest) != json) File.WriteAllText(manifest, json);
         foreach (var browser in new[] { @"Software\Google\Chrome", @"Software\BraveSoftware\Brave-Browser", @"Software\Microsoft\Edge" })
           using (var key = Registry.CurrentUser.CreateSubKey(browser + @"\NativeMessagingHosts\" + Name)) key.SetValue("", manifest);

@@ -50,8 +50,8 @@ namespace Josi.Native {
       foreach (var known in CheckSteps) {
         var result = done.FirstOrDefault(s => s["id"].Text == known[0]);
         UIElement icon; Brush color; string note;
-        if (result != null) { var passed = result["passed"].Flag; icon = Ui.Icon(passed ? Glyph.Check : Glyph.Warning, 13, passed ? Ui.Green : Ui.Orange); color = Ui.Text; note = result["detail"].Text; }
-        else if (sawRunning && known[0] == current) { icon = Ui.Icon(Glyph.Circle, 13, Ui.Orange); color = Ui.Text; note = "Asking the model now…"; }
+        if (result != null) { var passed = result["passed"].Flag; icon = Ui.Icon(passed ? Glyph.Check : Glyph.Warning, 13, passed ? Ui.Green : Ui.Error); color = Ui.Text; note = result["detail"].Text; }
+        else if (sawRunning && known[0] == current) { icon = Ui.Icon(Glyph.Circle, 13, Ui.Accent); color = Ui.Text; note = "Asking the model now…"; }
         else { icon = Ui.Icon(Glyph.Circle, 13, Ui.Muted); color = Ui.Muted; note = ""; }
         Ui.Add(list, Ui.Row(8, icon, Ui.T(known[1], 13.5, FontWeights.Medium, color)), 6);
         if (note.Length > 0) { var detail = Ui.Caption(note); detail.Margin = new Thickness(21, 2, 0, 0); Ui.Add(list, detail, 0); }
@@ -65,9 +65,9 @@ namespace Josi.Native {
       return new Border { Background = Ui.Raised, CornerRadius = new CornerRadius(11), Padding = new Thickness(9, 3, 9, 3), Margin = new Thickness(0, 0, 6, 6),
         Child = Ui.T(text, 12, FontWeights.Medium, brush) };
     }
-    public static UIElement Pill(string text, bool good) { return Pill(text, good ? Ui.Green : Ui.Orange); }
+    public static UIElement Pill(string text, bool good) { return Pill(text, good ? Ui.Green : Ui.Accent); }
     public static UIElement Pill(string text, Brush color) {
-      return new Border { Background = Ui.OrangeFaint, CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 5, 10, 5), VerticalAlignment = VerticalAlignment.Center,
+      return new Border { Background = Ui.AccentFaint, CornerRadius = new CornerRadius(12), Padding = new Thickness(10, 5, 10, 5), VerticalAlignment = VerticalAlignment.Center,
         Child = Ui.Row(6, new System.Windows.Shapes.Ellipse { Width = 7, Height = 7, Fill = color }, Ui.T(text, 12, FontWeights.SemiBold, color)) };
     }
     public static UIElement Capabilities(Wire caps) {
@@ -82,7 +82,7 @@ namespace Josi.Native {
       var stack = new StackPanel();
       foreach (var step in steps) {
         var passed = step["passed"].Flag;
-        var line = Ui.Row(8, Ui.Icon(passed ? Glyph.Check : Glyph.Warning, 13, passed ? Ui.Green : Ui.Orange),
+        var line = Ui.Row(8, Ui.Icon(passed ? Glyph.Check : Glyph.Warning, 13, passed ? Ui.Green : Ui.Error),
           Ui.T(step["label"].Text, 13.5, FontWeights.Medium));
         Ui.Add(stack, line, 6);
         if (step["detail"].Text.Length > 0) { var detail = Ui.Copyable(step["detail"].Text, 12.5, Ui.Muted); detail.Margin = new Thickness(21, 2, 0, 0); Ui.Add(stack, detail, 0); }
@@ -157,13 +157,13 @@ namespace Josi.Native {
           status["busy"].Flag ? ModelText.Pill("In use", false) : null), 0);
         if (status["detail"].Text.Length > 0) Ui.Add(stack, Ui.Caption(status["detail"].Text), 8);
         if (!status["installed"].Flag) {
-          Ui.Add(stack, Ui.T("The server does not have the pinned " + (Claude ? "Claude Code" : "Codex") + " program it needs for this subscription.", 13.5, null, Ui.Orange), 8);
+          Ui.Add(stack, Ui.T("The server does not have the pinned " + (Claude ? "Claude Code" : "Codex") + " program it needs for this subscription.", 13.5, null, Ui.Accent), 8);
           Ui.Add(stack, Ui.Pill("Check Again", () => { var _ = Refresh(); }), 8);
         }
       }
       if (Claude) RenderClaude(stack); else RenderChatGpt(stack);
       if (stage.Length > 0) Ui.Add(stack, Ui.Working(stage, true), 10);
-      if (error.Length > 0) Ui.Add(stack, Ui.Copyable(error, 13.5, Ui.Orange), 10);
+      if (error.Length > 0) Ui.Add(stack, Ui.Copyable(error, 13.5, Ui.Error), 10);
       if (!endpoints.Setup && SignedIn && stage.Length == 0 && claude == null && !LoginActive) {
         var signOut = Ui.Danger("Sign Out of " + name + "…", () => {
           if (Dialogs.Confirm(owner, "Sign out of the server's " + name + " subscription?", "Josi will need a new sign-in before this subscription can answer.", "Sign Out"))
@@ -205,7 +205,7 @@ namespace Josi.Native {
           Ui.T("1. Sign in to ChatGPT on OpenAI's page in your browser.", 14),
           Ui.T("2. Enter this one-time code there:", 14),
           Ui.Row(12, code, Ui.PillIcon(Glyph.Copy, "Copy", () => { try { Clipboard.SetText(challenge["userCode"].Text); } catch (Exception) { } })),
-          valid ? (UIElement)Ui.Row(10, Ui.Pill("Open OpenAI's Page Again", () => ModelText.Open(page)), Ui.Caption(page.Host)) : Ui.T("The sign-in page address was not from OpenAI; it was not opened.", 13, null, Ui.Orange),
+          valid ? (UIElement)Ui.Row(10, Ui.Pill("Open OpenAI's Page Again", () => ModelText.Open(page)), Ui.Caption(page.Host)) : Ui.T("The sign-in page address was not from OpenAI; it was not opened.", 13, null, Ui.Accent),
           login["expiresAt"].Text.Length > 0 ? Ui.Caption("Expires " + Wires.Date(login["expiresAt"].Text) + ". Josi finishes automatically after you approve.") : null,
           Ui.Working("Waiting for your approval on OpenAI's page…", true)) };
         Ui.Add(stack, card, 12);
@@ -215,7 +215,7 @@ namespace Josi.Native {
       if (LoginActive) { stage = "Starting OpenAI's sign-in…"; return; }
       if (login["state"].Text == "failed" || login["state"].Text == "expired") {
         var message = login["message"].Text;
-        Ui.Add(stack, Ui.T(message.Length > 0 ? message : "The sign-in did not finish. Start it again.", 13.5, null, Ui.Orange), 10);
+        Ui.Add(stack, Ui.T(message.Length > 0 ? message : "The sign-in did not finish. Start it again.", 13.5, null, Ui.Accent), 10);
       }
       if (status["credential"]["state"].Text == "leased" && status["credential"]["expiredLease"].Flag) {
         Ui.Add(stack, Ui.Pill("Repair Interrupted Sign-In…", () => {
@@ -270,7 +270,7 @@ namespace Josi.Native {
       }
       if (status.IsNull || stage.Length > 0) return;
       if (status["credential"].IsNull) {
-        Ui.Add(stack, Ui.T("The server's Vault is not available for a subscription token. Unlock or initialize the Vault, then refresh.", 13.5, null, Ui.Orange), 10);
+        Ui.Add(stack, Ui.T("The server's Vault is not available for a subscription token. Unlock or initialize the Vault, then refresh.", 13.5, null, Ui.Accent), 10);
         return;
       }
       if (!status["installed"].Flag || status["busy"].Flag) return;
@@ -497,9 +497,9 @@ namespace Josi.Native {
       if (stepGroup != null) System.Windows.Automation.AutomationProperties.SetName(stepGroup, !checkResult.IsNull ? "Result" : checking ? "Checking" : StepNames[step]);
       for (var index = 0; index < StepNames.Length; index++) {
         var i = index; var current = i == step; var reachable = i < step || (i == step);
-        var label = Ui.T((i + 1) + "  " + StepNames[i], 13.5, current ? FontWeights.SemiBold : FontWeights.Normal, current ? Ui.Orange : i < step ? Ui.Text : Ui.Muted);
+        var label = Ui.T((i + 1) + "  " + StepNames[i], 13.5, current ? FontWeights.SemiBold : FontWeights.Normal, current ? Ui.Accent : i < step ? Ui.Text : Ui.Muted);
         var button = new Button { Content = label, Style = (Style)Ui.Resources["Plain"], Padding = new Thickness(10, 6, 10, 6), Margin = new Thickness(0, 0, 6, 0),
-          Background = current ? Ui.OrangeSoft : Brushes.Transparent, IsEnabled = reachable && checkResult.IsNull && !checking };
+          Background = current ? Ui.AccentSoft : Brushes.Transparent, IsEnabled = reachable && checkResult.IsNull && !checking };
         button.Click += delegate { if (i < step) { step = i; Render(); } };
         rail.Children.Add(button);
       }
@@ -566,12 +566,12 @@ namespace Josi.Native {
         var available = option == null || option["available"].Flag;
         var detail = ModelText.Subscription(id) ? "Uses your " + ModelText.PlanName(id) + " plan"
           : entry["external"].Flag ? (entry["residency"].Text.Length > 0 ? entry["residency"].Text : "Cloud service") : "Runs on hardware you control";
-        var title = Ui.T(entry["label"].Text, 14, FontWeights.SemiBold, selected ? Ui.Orange : Ui.Text);
+        var title = Ui.T(entry["label"].Text, 14, FontWeights.SemiBold, selected ? Ui.Accent : Ui.Text);
         title.TextWrapping = TextWrapping.NoWrap; title.TextTrimming = TextTrimming.CharacterEllipsis;
         var sub = Ui.Caption(detail); sub.TextWrapping = TextWrapping.NoWrap; sub.TextTrimming = TextTrimming.CharacterEllipsis;
         var row = new Button { Style = (Style)Ui.Resources["Plain"], Margin = new Thickness(0, 0, 8, 8), Padding = new Thickness(0),
           HorizontalContentAlignment = HorizontalAlignment.Stretch, IsEnabled = available,
-          Content = new Border { Background = selected ? Ui.OrangeFaint : Ui.Card, BorderBrush = selected ? Ui.Orange : Ui.Border,
+          Content = new Border { Background = selected ? Ui.AccentFaint : Ui.Card, BorderBrush = selected ? Ui.Accent : Ui.Border,
             BorderThickness = new Thickness(selected ? 2 : 1), CornerRadius = new CornerRadius(10), Padding = new Thickness(12, 8, 12, 8),
             Child = Ui.Stack(2, title, sub) } };
         Ui.Name(row, entry["label"].Text, available ? detail : (option == null ? null : option["reason"].Text));
@@ -675,10 +675,10 @@ namespace Josi.Native {
       return stack;
     }
     UIElement Row(string title, string detail, bool selected, Action pick, string id = null) {
-      var text = Ui.Stack(2, Ui.T(title, 14, selected ? FontWeights.SemiBold : FontWeights.Normal, selected ? Ui.Orange : Ui.Text), detail.Length > 0 ? Ui.Caption(detail) : null);
+      var text = Ui.Stack(2, Ui.T(title, 14, selected ? FontWeights.SemiBold : FontWeights.Normal, selected ? Ui.Accent : Ui.Text), detail.Length > 0 ? Ui.Caption(detail) : null);
       var button = new Button { Style = (Style)Ui.Resources["Plain"], Padding = new Thickness(12, 8, 12, 8), HorizontalContentAlignment = HorizontalAlignment.Stretch,
-        Background = selected ? Ui.OrangeSoft : Brushes.Transparent,
-        Content = Ui.Row(10, Ui.Icon(selected ? Glyph.Check : Glyph.Circle, 14, selected ? Ui.Orange : Ui.Muted), text) };
+        Background = selected ? Ui.AccentSoft : Brushes.Transparent,
+        Content = Ui.Row(10, Ui.Icon(selected ? Glyph.Check : Glyph.Circle, 14, selected ? Ui.Accent : Ui.Muted), text) };
       Ui.Name(button, title, null);
       if (id != null) Automation.Id(button, id);
       System.Windows.Automation.AutomationProperties.SetItemStatus(button, selected ? "selected" : "");
@@ -720,11 +720,11 @@ namespace Josi.Native {
     UIElement Finished() {
       var stack = new StackPanel();
       var passed = checkResult["provider"]["active"].Flag || checkResult["passed"].Flag;
-      Ui.Add(stack, Ui.Row(10, Ui.Icon(passed ? Glyph.Check : Glyph.Warning, 22, passed ? Ui.Green : Ui.Orange),
+      Ui.Add(stack, Ui.Row(10, Ui.Icon(passed ? Glyph.Check : Glyph.Warning, 22, passed ? Ui.Green : Ui.Error),
         Ui.Title2(passed ? "The model is ready" : "The model did not pass its check")), 0);
       Ui.Add(stack, ModelText.Capabilities(checkResult["provider"]["capabilities"]), 14);
       Ui.Add(stack, ModelText.Steps(checkResult["result"]["steps"].List), 10);
-      if (checkResult["result"]["fatal"].Text.Length > 0) Ui.Add(stack, Ui.Copyable(checkResult["result"]["fatal"].Text, 13.5, Ui.Orange), 10);
+      if (checkResult["result"]["fatal"].Text.Length > 0) Ui.Add(stack, Ui.Copyable(checkResult["result"]["fatal"].Text, 13.5, Ui.Accent), 10);
       Ui.Add(stack, Ui.Row(10, passed ? null : Automation.Id(Ui.Pill("Change Settings", () => { checkResult = Wire.Null; step = 1; Render(); }), "josi.models.setup.change-settings"),
         // Only the separate setup window closes; first-run setup embeds this panel in the main window.
         endpoints.Setup ? null : Automation.Id(Ui.Pill("Done", () => { var window = Window.GetWindow(this) as ModelSetupWindow; if (window != null) window.Close(); }, passed), "josi.models.setup.done")), 18);
@@ -848,7 +848,7 @@ namespace Josi.Native {
       Grid.SetColumn(fallback, 2); slots.Children.Add(primary); slots.Children.Add(fallback);
       Ui.Add(page, slots, 20);
       foreach (var feature in settings["disabledFeatures"].List)
-        Ui.Add(page, Ui.Row(8, Ui.Icon(Glyph.Warning, 13, Ui.Orange), Ui.Caption(Wires.Capitalize(feature["feature"].Text.Replace("_", " ")) + " is off: " + feature["reason"].Text)), 8);
+        Ui.Add(page, Ui.Row(8, Ui.Icon(Glyph.Warning, 13, Ui.Accent), Ui.Caption(Wires.Capitalize(feature["feature"].Text.Replace("_", " ")) + " is off: " + feature["reason"].Text)), 8);
 
       var available = settings["subscriptionOptions"].List.Where(o => o["available"].Flag).ToList();
       if (available.Count > 0) {

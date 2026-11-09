@@ -1,7 +1,9 @@
 // Claude subscription model transport. The production registry supplies a
 // Vault-managed setup token through the supervised first-party CLI. No personal
 // login, Keychain import, API key fallback or independent tool execution.
-import { assertCapability, SubscriptionCredentialError, SubscriptionCredentialBusyError } from '@josi-ce/core';
+import { assertCapability, privateTemporaryDirectory, SubscriptionCredentialError, SubscriptionCredentialBusyError } from '@josi-ce/core';
+import { rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { claudeSubscriptionArgs } from './claudeVaultPolicy.js';
 import {
   openHarnessSession, readExecutedCalls, resolveMcpServerPath, writeClaudeMcpConfig,
@@ -51,10 +53,24 @@ export function claudeChildEnvironment(
 
 export const claudeArgs = claudeSubscriptionArgs;
 
-/** Flattens a chat request into one prompt, exactly as the Codex path does. */
-export function renderClaudePrompt(request: ChatRequest): string {
+/** The system prompt as a private file for `--system-prompt-file`. Written
+ * beside the harness context when there is one (that folder is already
+ * private and removed after the turn), otherwise in a private folder of its
+ * own that `cleanup` removes. No system prompt: no file, nothing to clean. */
+export function writeSystemPromptFile(system: string | undefined, besideContextPath: string | null): { path: string | null; cleanup: () => void } {
+  if (!system || !system.trim()) return { path: null, cleanup: () => undefined };
+  const own = besideContextPath ? null : privateTemporaryDirectory('josi-claude-');
+  const path = join(besideContextPath ? dirname(besideContextPath) : own!, 'system-prompt.md');
+  writeFileSync(path, system, { mode: 0o600 });
+  return { path, cleanup: () => { if (own) { try { rmSync(own, { recursive: true, force: true }); } catch { /* already gone */ } } } };
+}
+
+/** Flattens a chat request into one prompt, exactly as the Codex path does.
+ * `withSystem: false` leaves the system instructions out, because they travel
+ * to the CLI as its system prompt file instead of as user text. */
+export function renderClaudePrompt(request: ChatRequest, withSystem = true): string {
   const parts: string[] = [];
-  if (request.system) parts.push(request.system);
+  if (withSystem && request.system) parts.push(request.system);
   for (const message of request.messages) {
     if (!message.content) continue;
     parts.push(`${message.role === 'assistant' ? 'Assistant' : 'User'}: ${message.content}`);
@@ -74,11 +90,11 @@ export function claudeImages(request: ChatRequest): NonNullable<ChatRequest['mes
 
 /** One stream-json user message: the images as real image blocks, then the
  * same flattened prompt the text path sends. */
-export function renderClaudeStructuredInput(request: ChatRequest): string {
+export function renderClaudeStructuredInput(request: ChatRequest, withSystem = true): string {
   const content: unknown[] = claudeImages(request).map((image) => ({
     type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.base64 },
   }));
-  content.push({ type: 'text', text: renderClaudePrompt(request) });
+  content.push({ type: 'text', text: renderClaudePrompt(request, withSystem) });
   return `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`;
 }
 
@@ -226,18 +242,24 @@ export function claudeCliProvider(opts: ClaudeCliOptions): LlmProvider {
       const started = Date.now();
       let result: Awaited<ReturnType<SpawnRunner>>;
       let executedToolCalls: ChatResponse['executedToolCalls'];
+      // Josi's system instructions go to the CLI as its system prompt (a
+      // private file beside the MCP config, or in its own private folder),
+      // never as user text: otherwise the CLI keeps its coding-assistant
+      // identity and answers as Claude Code instead of as Josi.
+      const { path: systemPromptPath, cleanup: cleanupSystemPrompt } = writeSystemPromptFile(request.system, harness?.contextPath ?? null);
       // A turn with images goes in as structured input so the model sees the
       // pictures themselves; every other turn keeps the plain text path.
       const structured = claudeImages(request).length > 0;
-      const input = structured ? renderClaudeStructuredInput(request) : renderClaudePrompt(request);
+      const withSystem = systemPromptPath === null;
+      const input = structured ? renderClaudeStructuredInput(request, withSystem) : renderClaudePrompt(request, withSystem);
       if (Buffer.byteLength(input) > CLAUDE_MAX_INPUT_BYTES) {
-        harness?.cleanup();
+        cleanupSystemPrompt(); harness?.cleanup();
         throw new LlmError('These images are too large to send through Claude Code together. Attach fewer or smaller images.');
       }
       try {
         result = await runner({
           command,
-          args: claudeArgs(opts.model, mcpConfigPath, structured),
+          args: claudeArgs(opts.model, mcpConfigPath, structured, systemPromptPath),
           input,
           env: claudeChildEnvironment(configDir),
           timeoutMs,
@@ -263,6 +285,7 @@ export function claudeCliProvider(opts: ClaudeCliOptions): LlmProvider {
         }
         throw new LlmError('The Claude Code CLI could not be started.', { needsReconfiguration: true });
       } finally {
+        cleanupSystemPrompt();
         if (harness) {
           // Read before cleanup: the calls file is the ground truth of which
           // tools genuinely reached Josi's server, recorded by our own code

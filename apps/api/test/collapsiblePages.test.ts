@@ -50,11 +50,13 @@ describe('compact settings disclosures', () => {
   });
 
   it('shows parental controls only as an honest disabled coming-soon teaser', () => {
+    const menu = read('apps/web/src/components/layout/mobileNavigation.ts');
     const shell = read('apps/web/src/components/layout/Shell.tsx');
     const admin = read('apps/web/src/pages/admin/ParentalControls.tsx');
     const family = read('apps/web/src/pages/Family.tsx');
-    expect(shell).toContain('Family (Coming Soon)');
-    expect(shell).toContain('Parental controls (Coming Soon)');
+    expect(menu).toMatch(/label: 'Family'.*soon: true/);
+    expect(menu).toMatch(/label: 'Parental controls'.*soon: true/);
+    expect(shell).toContain('Coming soon');
     expect(admin).toContain('No supervision, schedules, limits, monitoring, or child-safety enforcement');
     expect(family).toContain('No supervision, schedules, limits, monitoring, or child-safety enforcement');
     expect(admin).toContain('roman@socalreceptionist.com');

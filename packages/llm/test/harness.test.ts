@@ -100,7 +100,8 @@ describe('the harness context file', () => {
         JOSI_NATIVE_ISOLATED_ROOT: '/native/data', JOSI_DATA_DIR: '/native/data',
         JOSI_STORAGE_ROOT_BASE: '/native/data/roots', JOSI_WORKSPACE_NATIVE_PATH: '/selected', JOSI_WORKSPACE_NATIVE_ID: '1:2' };
       expect(s.serverEnvironment).toEqual(expected);
-      expect(JSON.parse(readFileSync(writeClaudeMcpConfig(s), 'utf8')).mcpServers.josi.env).toEqual(expected);
+      // The server is the CLI's child: the token it was given is blanked, not inherited.
+      expect(JSON.parse(readFileSync(writeClaudeMcpConfig(s), 'utf8')).mcpServers.josi.env).toEqual({ ...expected, CLAUDE_CODE_OAUTH_TOKEN: '' });
       const override = codexArgs('m', s).find(arg => arg.startsWith('mcp_servers.josi.env='))!;
       for (const [key, value] of Object.entries(expected)) expect(override).toContain(`${key} = ${JSON.stringify(value)}`);
       for (const key of ['DATABASE_URL', 'PGPASSWORD_FILE', 'MASTER_KEY_FILE', 'OPENAI_API_KEY', 'UNKNOWN_VARIABLE']) expect(override).not.toContain(key);
@@ -160,7 +161,9 @@ describe('the claude command line with a harness', () => {
       expect(args).toContain('--mcp-config');
       expect(args).toContain('--strict-mcp-config');
       expect(args).toContain('mcp__josi');
-      expect(args).toContain('Bash'); // still denied by name
+      // Every built-in off, including ones a future CLI adds.
+      expect(args[args.indexOf('--tools') + 1]).toBe('');
+      expect(args).toContain('--restricted');
     } finally {
       s.cleanup();
     }
@@ -168,7 +171,12 @@ describe('the claude command line with a harness', () => {
 
   it('without a harness the command line is unchanged', () => {
     expect(claudeArgs('m')).toEqual(claudeArgs('m', null));
-    expect(claudeArgs('m').join(' ')).not.toContain('mcp');
+    // The flags stay and name no server, so nothing configured elsewhere loads.
+    const args = claudeArgs('m');
+    expect(args).toContain('--strict-mcp-config');
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe('{"mcpServers":{}}');
+    expect(args).not.toContain('--allowed-tools');
+    expect(args.join(' ')).not.toContain('mcp__josi');
   });
 });
 

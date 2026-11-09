@@ -1,0 +1,659 @@
+<blockquote>
+<p><strong>This guide covers the new iPhone app, version 0.5, which is in beta.</strong>
+Some screens may look different in the version on the App Store until the new
+one is released. Screenshots use made-up demo data on a test server, so your
+server's name and address will differ.</p>
+</blockquote>
+
+<h2 id="get-started">Get started</h2>
+<p>Josi on iPhone is a window onto your own Josi server. Your conversations,
+contacts and settings live on that server, not in the app, so you need a running
+server before the app can do anything. If you don't have one yet, start with
+<a href="../install/">Install Josi</a>.</p>
+
+<h3 id="install-the-app">Install the app</h3>
+<p><a href="https://apps.apple.com/us/app/josi-ce/id6810549193">Install Josi CE from the App Store</a>.
+If you were invited to the beta, install it from the TestFlight app instead.</p>
+
+<h3 id="choose-a-skin">Choose a skin</h3>
+<p>The first time you open the app, it asks you to choose how Josi looks. Tap a
+skin to try it, then tap <strong>Continue</strong>. Plum &amp; Gold is the default.
+You can change this at any time under <a href="#personalization">Personalization</a>.</p>
+<div class="shots">
+<figure class="shot"><img src="img/skin-picker.jpg" alt="The Choose your Josi screen listing skins, with Plum and Gold selected" width="540" height="1174" loading="lazy"><figcaption>Choose your Josi, shown once on first launch.</figcaption></figure>
+</div>
+
+<h3 id="pair-with-your-server">Pair with your server</h3>
+<ol>
+<li>On your server, open <strong>Devices</strong> and tap <strong>Make a pairing code</strong>.</li>
+<li>On your iPhone, tap <strong>Scan the QR code</strong> and point the camera at it.</li>
+<li>Or copy the code or link, tap <strong>Paste</strong> or type it into <strong>Pairing code or link</strong>, then tap <strong>Pair</strong>.</li>
+</ol>
+<p>Pairing makes an encrypted connection from this iPhone to your server. The relay
+that carries it can't read what passes through.</p>
+<p>If your server doesn't use the relay, tap <strong>Use a server address instead</strong>,
+enter its <code>https://</code> address and tap <strong>Connect</strong>. This only
+works where that address can be reached. Tap <strong>Pair with a code instead</strong>
+to go back.</p>
+<div class="shots">
+<figure class="shot"><img src="img/pair.jpg" alt="The Pair with your server screen with Scan the QR code, a code field, Paste and Pair" width="540" height="1174" loading="lazy"><figcaption>Pair with a QR code, a code or a link.</figcaption></figure>
+<figure class="shot"><img src="img/pair-address.jpg" alt="The server address field with a Connect button" width="540" height="1174" loading="lazy"><figcaption>Or connect straight to a server address.</figcaption></figure>
+</div>
+
+<h3 id="sign-in">Sign in</h3>
+<p>Use the same account you use on your server. You can sign in three ways:</p>
+<ul>
+<li><strong>Continue with Apple</strong>. The first time, Josi may ask for your workspace password once to link your Apple ID to your account.</li>
+<li><strong>Continue with Google</strong>. This only works when you connected with a server address. It can't reach a server over a paired connection yet, so use your password there.</li>
+<li><strong>Username or email</strong> and <strong>Password</strong>, then <strong>Sign in</strong>. Tap <strong>Show</strong> to see the password as you type.</li>
+</ul>
+<p><strong>Keep me signed in on this device</strong> is on by default. Below the form,
+the app shows which server you're signing in to. <strong>Change server</strong> takes
+you back to pairing.</p>
+<div class="shots">
+<figure class="shot"><img src="img/signin.jpg" alt="The sign-in screen with Apple, Google, username and password" width="540" height="1174" loading="lazy"><figcaption>Sign in. Your own server's address appears near the bottom.</figcaption></figure>
+</div>
+
+<h3 id="authenticator-code">Authenticator code</h3>
+<p>If your account uses an authenticator app, Josi asks for the 6-digit code after
+your password, Apple or Google sign-in. Enter it and tap <strong>Verify</strong>.
+A recovery code works here too. <strong>Start over</strong> goes back to the sign-in
+screen.</p>
+<div class="shots">
+<figure class="shot"><img src="img/signin-code.jpg" alt="Six code boxes with a Verify button and Start over" width="540" height="1174" loading="lazy"><figcaption>The code step.</figcaption></figure>
+</div>
+
+<h3 id="forgot-password">Forgot your password</h3>
+<p>Tap <strong>Forgot password?</strong>, enter your username or email and tap
+<strong>Send reset link</strong>. If the account exists, your server emails a link.
+<strong>Back to sign in</strong> closes the sheet.</p>
+<div class="shots">
+<figure class="shot"><img src="img/forgot.jpg" alt="The Reset password sheet" width="540" height="1174" loading="lazy"><figcaption>Reset password.</figcaption></figure>
+</div>
+
+<h3 id="allow-ai-processing">Allow AI processing</h3>
+<p>Before Josi sends anything for AI processing, it shows exactly what would be sent:</p>
+<ul>
+<li><strong>Sent to</strong>: your server.</li>
+<li><strong>AI provider</strong>: the model your server uses, and whether it's external.</li>
+<li><strong>What is sent</strong>: your messages, attachments and voice transcripts, plus email, calendar, contact, task and other connected-service details only when your request needs them.</li>
+<li><strong>Why</strong>: to generate the response or carry out the action you asked for.</li>
+</ul>
+<p>Tap <strong>Allow AI Processing</strong> to continue. If you tap <strong>Don't Allow</strong>,
+nothing is sent and chat stays blocked. You can tap <strong>Review the disclosure again</strong>
+at any time, or <strong>Sign out</strong> or <strong>Change server</strong>. You can
+withdraw permission later from <a href="#settings">Settings</a>.</p>
+<div class="shots">
+<figure class="shot"><img src="img/consent.jpg" alt="The Allow AI processing screen listing what is sent, where and why" width="540" height="1174" loading="lazy"><figcaption>Allow AI processing.</figcaption></figure>
+<figure class="shot"><img src="img/consent-declined.jpg" alt="The Nothing will be sent screen" width="540" height="1174" loading="lazy"><figcaption>What you see if you don't allow it.</figcaption></figure>
+</div>
+
+<h2 id="chat">Chat</h2>
+<p>Chat is the home screen. It's the same conversation you see on your other devices.</p>
+<div class="shots">
+<figure class="shot"><img src="img/chat.jpg" alt="A chat with Josi showing an email waiting for approval" width="540" height="1174" loading="lazy"><figcaption>Chat, with an action waiting for your OK.</figcaption></figure>
+<figure class="shot"><img src="img/chat-thinking.jpg" alt="Chat with the words Josi is thinking under the last message" width="540" height="1174" loading="lazy"><figcaption>The J glows while Josi works.</figcaption></figure>
+</div>
+
+<h3 id="the-header">The header</h3>
+<ul>
+<li><strong>online</strong> or <strong>offline</strong> shows whether the app can reach your server. When it can't, some pages show what was last saved.</li>
+<li><strong>Local-only</strong> appears when your server only allows self-hosted models.</li>
+<li>The button at the top right opens <a href="#the-menu">the menu</a>. Its number counts your open tasks and approvals.</li>
+</ul>
+
+<h3 id="send-a-message">Send a message</h3>
+<p>Type in <strong>Message Josi…</strong> and tap the send button, or press Return.
+Pull down on the conversation to refresh it. You can select text in any message.
+Under each message you'll see the time. Under yours, two ticks mean it was sent.
+You may also see:</p>
+<ul>
+<li><strong>Queued</strong>: waiting to be sent.</li>
+<li><strong>Sending</strong>: on its way.</li>
+<li><strong>Working</strong>: your server has it and Josi is working on it.</li>
+<li><strong>Failed</strong>: it didn't go through. Tap <strong>Retry</strong>.</li>
+</ul>
+<p>When Josi used your connected accounts to answer, <strong>What Josi read</strong>
+appears under the reply and lists what it looked at.</p>
+
+<h3 id="attach-photos-and-files">Attach photos and files</h3>
+<p>Tap <strong>+</strong>, then <strong>Photos</strong> or <strong>Files</strong>.
+You can add up to 10 at a time. Attachments appear above the message box. Tap the
+<strong>×</strong> on one to remove it, then send. Files can be pictures, PDFs,
+Word, Excel, PowerPoint, OpenDocument, RTF, text, Markdown or CSV.</p>
+<div class="shots">
+<figure class="shot"><img src="img/chat-attach.jpg" alt="The attach menu with Files and Photos" width="540" height="1174" loading="lazy"><figcaption>Attach from Photos or Files.</figcaption></figure>
+</div>
+
+<h3 id="talk-with-your-voice">Talk with your voice</h3>
+<p>Tap the microphone to start talking and tap it again to stop. Your words appear
+above the message box as Josi hears them, and Josi answers out loud. The first time,
+iPhone asks for permission to use the microphone.</p>
+<p>Voice needs Voice Box on your server. An owner can set that up under
+<a href="#admin-voice-box">Voice Box</a>.</p>
+
+<h3 id="approve-what-josi-wants-to-do">Approve what Josi wants to do</h3>
+<p>When Josi needs your OK, a <strong>Needs your OK</strong> card appears in the chat
+showing exactly what it will do.</p>
+<ul>
+<li><strong>Send it</strong> approves the action. Your iPhone asks for Face ID, Touch ID or your passcode first. The card then says <strong>Sent</strong>.</li>
+<li><strong>Not now</strong> saves it for later. Nothing runs, and it stays under <a href="#approvals">Approvals</a> until you decide or it expires.</li>
+</ul>
+<p>You may also see <strong>Denied. It won't run.</strong> or <strong>Expired. Review it again.</strong></p>
+
+<h2 id="the-menu">The menu</h2>
+<p>Tap the button at the top right to open the menu, and tap <strong>×</strong> to
+close it. Tap a tile to open that section. To go back, tap the arrow beside the J at
+the top left, or swipe right from the left edge of the screen.</p>
+<p>The tiles for Tasks and Approvals show how many are waiting. Tiles marked
+<strong>Coming soon</strong> aren't available yet. The <strong>Admin</strong> tiles
+only appear for owners.</p>
+<p>At the bottom of the menu:</p>
+<ul>
+<li><strong>Help</strong> opens your server's built-in help.</li>
+<li><strong>Live Help chat</strong> opens this site in your browser, where you can ask questions.</li>
+<li><strong>Sign out</strong> signs you out of this iPhone. It stays paired with your server.</li>
+<li>Your name and role are shown at the very bottom.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/menu.jpg" alt="The menu showing the Workspace tiles" width="540" height="1174" loading="lazy"><figcaption>Workspace tiles.</figcaption></figure>
+<figure class="shot"><img src="img/menu-admin.jpg" alt="The menu scrolled down to the Admin tiles, Help and Sign out" width="540" height="1174" loading="lazy"><figcaption>Admin tiles, for owners, and the buttons at the bottom.</figcaption></figure>
+</div>
+
+<h2 id="workspace">Workspace</h2>
+<p>These sections are for your own account.</p>
+
+<h3 id="tasks">Tasks</h3>
+<p>Work Josi has taken on. Each card shows the kind of task, where it's up to, and
+its details, such as who it's for. To start a task, ask Josi in chat.</p>
+<div class="shots">
+<figure class="shot"><img src="img/tasks.jpg" alt="A list of tasks with their status" width="540" height="1174" loading="lazy"><figcaption>Tasks.</figcaption></figure>
+</div>
+
+<h3 id="approvals">Approvals</h3>
+<p>Everything waiting for your decision, including anything you set aside with
+<strong>Not now</strong>. Tap <strong>Approve</strong> or <strong>Deny</strong>.
+Your iPhone asks for Face ID, Touch ID or your passcode first, so your iPhone needs
+a passcode set.</p>
+<div class="shots">
+<figure class="shot"><img src="img/approvals.jpg" alt="An email waiting for approval with Deny and Approve" width="540" height="1174" loading="lazy"><figcaption>Approvals.</figcaption></figure>
+</div>
+
+<h3 id="conversations">Conversations</h3>
+<p>Your conversation history. Tap one to open it in chat, or tap
+<strong>New conversation</strong> to start fresh.</p>
+<div class="shots">
+<figure class="shot"><img src="img/conversations.jpg" alt="The conversation list with New conversation" width="540" height="1174" loading="lazy"><figcaption>Conversations.</figcaption></figure>
+</div>
+
+<h3 id="calendar">Calendar</h3>
+<p>Your calendar for the month. Dots mark days with events. Tap a day to see its events
+below, and use the arrows to change month. Each event shows its time, place, which
+calendar it's on and whether it has synced. Pull down to refresh.</p>
+<p>To add an event, tap <strong>+</strong>. This takes you to chat, where you ask Josi
+to create it.</p>
+<div class="shots">
+<figure class="shot"><img src="img/calendar.jpg" alt="A month calendar with today's two events below" width="540" height="1174" loading="lazy"><figcaption>Calendar.</figcaption></figure>
+</div>
+
+<h3 id="email-templates">Email / Templates</h3>
+<p>Reusable emails you can preview and prepare for approval.</p>
+<ul>
+<li><strong>Saved template</strong> picks a template to edit. <strong>New template</strong> starts a blank one.</li>
+<li>Fill in <strong>Template name</strong>, <strong>Subject</strong>, <strong>Heading</strong>, <strong>Body</strong>, <strong>Accent color</strong>, <strong>Button label</strong>, <strong>Button URL</strong> and <strong>Footer / signature</strong>, then tap <strong>Save template</strong>. <strong>Delete</strong> removes a saved one after you confirm.</li>
+<li><strong>Live preview</strong> shows it as <strong>Desktop</strong> or <strong>Mobile</strong>. <strong>Plain-text fallback</strong> shows the text-only version.</li>
+<li><strong>Merge fields</strong>: <code>{{recipient}}</code>, <code>{{name}}</code>, <code>{{date}}</code> and <code>{{time}}</code> are filled in for you. They don't work in button URLs.</li>
+<li><strong>Draft an email</strong>: choose a <strong>Template</strong> or <strong>No template — plain text</strong>, fill in <strong>To</strong> and the other fields, then tap <strong>Prepare for approval</strong>. No email is sent until you approve it. <strong>Review and approve</strong> takes you to Approvals.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/email.jpg" alt="The email template editor" width="540" height="1174" loading="lazy"><figcaption>Email / Templates.</figcaption></figure>
+</div>
+
+<h3 id="contacts">Contacts</h3>
+<p>Your contacts, private to your account. Use <strong>Search contacts</strong> to find
+someone by name, email or number. Pull down to refresh.</p>
+<p>To add someone, tap the add button at the top right, enter a <strong>Name</strong>,
+and optionally <strong>Email</strong> and <strong>Phone</strong>, then tap
+<strong>Save contact</strong>.</p>
+<p>If you've connected Google, you'll also see <strong>Two-way sync with Google</strong>.
+Turn it on and changes you make here go back to Google. If a contact was changed in
+both places, it shows a warning and nothing is overwritten.</p>
+<div class="shots">
+<figure class="shot"><img src="img/contacts.jpg" alt="The contact list with a search field" width="540" height="1174" loading="lazy"><figcaption>Contacts.</figcaption></figure>
+<figure class="shot"><img src="img/contacts-add.jpg" alt="The New contact form" width="540" height="1174" loading="lazy"><figcaption>Add a contact.</figcaption></figure>
+</div>
+
+<h3 id="connections">Connections</h3>
+<p>Your Google and Microsoft 365 accounts. <strong>Connect Google</strong> lets Josi
+read Gmail, Calendar, Contacts and Drive and, when you approve it, act in them. If it
+says <strong>Not set up on this server</strong>, an administrator needs to register
+the provider first under <a href="#admin-connectors">Connectors</a>.</p>
+<p>Once an account is connected, each thing Josi can do has its own switch, and the
+text under it explains what it means. A switch that's greyed out has been turned off
+by your administrator. <strong>Disconnect</strong> revokes access, and Josi deletes its
+copy.</p>
+<div class="shots">
+<figure class="shot"><img src="img/connections.jpg" alt="Google and Microsoft 365 cards" width="540" height="1174" loading="lazy"><figcaption>Connections, before a provider is set up.</figcaption></figure>
+</div>
+
+<h3 id="local-workspace">Local Workspace</h3>
+<p>Browse folders that have been connected to Josi and, where you're allowed, change
+the files in them.</p>
+<ul>
+<li><strong>Connected folder</strong> picks a folder. <strong>Refresh folders</strong> updates the list. If none is connected, choose an <strong>Available folder</strong> and tap <strong>Connect folder</strong>, or ask your administrator.</li>
+<li>Inside a folder, use <strong>Search this folder</strong>, <strong>Sort</strong> (Name A–Z or Name Z–A) and <strong>Refresh</strong>.</li>
+<li>For each file: <strong>Preview</strong> and <strong>Download</strong>. If allowed, also <strong>Edit text</strong>, <strong>Rename / move</strong> and <strong>Delete…</strong></li>
+<li><strong>Create or upload text</strong> adds a text file. Enter a <strong>Filename</strong> and <strong>Contents</strong>, or use <strong>Upload text</strong> (up to 256 KiB). You can also make a folder with <strong>Review folder creation</strong>.</li>
+<li><strong>Coding sandbox</strong>, if your administrator turned it on for you: pick an <strong>Operation</strong> (Check syntax or Execute JavaScript), paste the <strong>Exact source</strong> and tap <strong>Prepare for review</strong>.</li>
+</ul>
+<p>Every change shows you the exact result first. Tap <strong>Approve exact change</strong>
+or <strong>Cancel</strong>.</p>
+<p>Downloading a file from this page doesn't work in the iPhone app yet. Use the web
+app for that.</p>
+<div class="shots">
+<figure class="shot"><img src="img/workspace.jpg" alt="Local Workspace with no folders connected" width="540" height="1174" loading="lazy"><figcaption>Local Workspace.</figcaption></figure>
+</div>
+
+<h3 id="workflows">Workflows</h3>
+<p>Run Zapier, n8n and Make workflows that your administrator made available. Every run
+waits for your approval.</p>
+<ul>
+<li>Each workflow has an <strong>Input (JSON)</strong> box and a <strong>Prepare for approval</strong> button.</li>
+<li><strong>Run history and approvals</strong> lists each run: Waiting for approval, Approved, Running, Completed, Failed, Declined or Expired.</li>
+<li>For a waiting run, tap <strong>Review exact input</strong>, then <strong>Approve exact run</strong> or <strong>Deny</strong>.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/workflows.jpg" alt="The Automation workflows page" width="540" height="1174" loading="lazy"><figcaption>Workflows.</figcaption></figure>
+</div>
+
+<h3 id="vault">Vault</h3>
+<p>Your own encrypted credentials. Values are never shown again after you save them.</p>
+<ul>
+<li><strong>Unlock for five minutes</strong>: enter your sign-in password and tap <strong>Unlock</strong>.</li>
+<li><strong>Store a credential</strong>: choose a <strong>Type</strong> (password, api key, oauth token, secure note, recovery code, certificate, private key or other), fill in <strong>Service</strong>, <strong>Account or slot</strong>, <strong>Label</strong> and <strong>Secret</strong>, then tap <strong>Save encrypted</strong>.</li>
+<li><strong>Saved credentials</strong>: <strong>Check</strong> or <strong>Delete</strong> each one.</li>
+</ul>
+<p>If it says <strong>Master Vault locked</strong>, an administrator needs to unlock it.</p>
+<div class="shots">
+<figure class="shot"><img src="img/vault.jpg" alt="The Vault asking for a password to unlock" width="540" height="1174" loading="lazy"><figcaption>Vault.</figcaption></figure>
+</div>
+
+<h3 id="usage">Usage</h3>
+<p>Your own usage this month: <strong>Tokens</strong>, <strong>Calls</strong>, the cost
+<strong>Reported by providers</strong> and the <strong>Estimated</strong> cost. If your
+administrator has set a budget, the <strong>Budget</strong> card shows where you stand.
+There's nothing to change here.</p>
+<div class="shots">
+<figure class="shot"><img src="img/usage.jpg" alt="Token, call and cost figures" width="540" height="1174" loading="lazy"><figcaption>Usage.</figcaption></figure>
+</div>
+
+<h3 id="personalization">Personalization</h3>
+<p><strong>Skin</strong> changes how the app looks, straight away. There are nine:</p>
+<ul>
+<li>Plum &amp; Gold (dark, the default)</li>
+<li>Josi Warm (frosted bar)</li>
+<li>Josi CE Mocha Cloud (light)</li>
+<li>Midnight Apricot (dark)</li>
+<li>Arctic Blue (light)</li>
+<li>Frosted versions of Mocha Cloud, Midnight Apricot, Plum &amp; Gold and Arctic Blue</li>
+</ul>
+<p>You can also change the skin in the iPhone's Settings app, under Josi.</p>
+<p><strong>Chat text size</strong> makes chat messages bigger or smaller: 90%, 100%,
+115% or 130%.</p>
+<p>Under <strong>Josi</strong>:</p>
+<ul>
+<li><a href="#your-assistant"><strong>Your assistant</strong></a>: how Josi talks to you and what it remembers.</li>
+<li><a href="#remembered"><strong>Remembered</strong></a>: links and notes you saved.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/personalization.jpg" alt="The skin list in Personalization" width="540" height="1174" loading="lazy"><figcaption>Personalization.</figcaption></figure>
+</div>
+
+<h3 id="your-assistant">Your assistant</h3>
+<p>How Josi talks to you and what it knows about you. These settings can't change what
+Josi is allowed to do.</p>
+<ul>
+<li><strong>Set up your assistant</strong> appears the first time. Pick a style (Brief and direct, Warm and personal, Thorough, Dry or Formal), or tap <strong>Skip — use the default</strong>.</li>
+<li>Three tabs, <strong>Soul</strong>, <strong>About me</strong> and <strong>Working style</strong>, each hold a short file you can edit. Each tab lists what it can and can't do. Tap <strong>Save</strong> when you're done.</li>
+<li>On Soul, <strong>Start from a preset</strong> fills in a style and <strong>Hear how it sounds</strong> shows a sample reply.</li>
+<li><strong>Earlier versions</strong> lets you <strong>Restore</strong> a previous file.</li>
+<li><strong>What is actually in force</strong>, on Working style, shows your choices after any rules your administrator set.</li>
+<li><strong>Memory</strong>: type something for Josi to remember and tap <strong>Add</strong>. Each memory can be changed with <strong>Correct</strong>, kept on top with <strong>Pin</strong> or removed with <strong>Delete</strong>. Under <strong>Review proposed memories</strong>, tap <strong>Keep this memory</strong> or <strong>Discard</strong>.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/assistant.jpg" alt="The Personalization page with assistant styles" width="540" height="1174" loading="lazy"><figcaption>Your assistant, opened from Personalization.</figcaption></figure>
+</div>
+
+<h3 id="remembered">Remembered</h3>
+<p>Type <strong>A note or link</strong> and tap <strong>Save</strong>. Saved items are
+listed below, and links can be tapped. <strong>Delete</strong> removes one.</p>
+<div class="shots">
+<figure class="shot"><img src="img/remembered.jpg" alt="A saved note with a Delete button" width="540" height="1174" loading="lazy"><figcaption>Remembered.</figcaption></figure>
+</div>
+
+<h3 id="channels">Channels</h3>
+<p>Reach the same private workspace from another messaging app.</p>
+<ul>
+<li><strong>Telegram</strong>: tap <strong>Set up Telegram</strong>.</li>
+<li><strong>WhatsApp</strong> and <strong>Slack</strong>: tap <strong>Create link code</strong> and follow the instruction. The code works once and lasts 10 minutes. If the channel shows <strong>Off</strong>, an administrator needs to turn it on under <a href="#admin-channels">Channels</a> in Admin.</li>
+<li><strong>Your linked identities</strong> lists what you've linked. <strong>Disconnect</strong> removes one.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/channels.jpg" alt="Telegram, WhatsApp and Slack cards" width="540" height="1174" loading="lazy"><figcaption>Channels.</figcaption></figure>
+</div>
+
+<h3 id="apps">Apps</h3>
+<p>Links to the iPhone and Android apps, and how to connect one to your server. There's nothing to change here.</p>
+<div class="shots">
+<figure class="shot"><img src="img/apps.jpg" alt="The Companion apps page with store links" width="540" height="1174" loading="lazy"><figcaption>Apps.</figcaption></figure>
+</div>
+
+<h3 id="family">Family</h3>
+<p>Coming soon.</p>
+
+<h2 id="settings">Settings</h2>
+<p>Settings holds your account and this iPhone.</p>
+<div class="shots">
+<figure class="shot"><img src="img/settings.jpg" alt="Settings with Account, Devices, This iPhone, Drive folders, Withdraw AI permission and Change server" width="540" height="1174" loading="lazy"><figcaption>Settings.</figcaption></figure>
+</div>
+
+<h3 id="account">Account</h3>
+<p>Your approval choices, your data and your sign-in security.</p>
+<p><strong>What Josi may do without asking.</strong> There's one choice each for
+<strong>Sending email on your behalf</strong>, <strong>Creating and changing calendar
+events</strong>, <strong>Creating and changing contacts</strong> and <strong>Creating and
+changing tasks</strong>:</p>
+<ul>
+<li>Always ask me first</li>
+<li>Ask only for risky or destructive actions</li>
+<li>Allow routine actions automatically</li>
+</ul>
+<p>Your administrator can limit these, in which case the looser options disappear. Some
+actions always ask: adding someone to an existing conversation, sending an attachment and
+anything that deletes.</p>
+<p><strong>Data &amp; Backup.</strong> <strong>Migrate from another assistant</strong>
+brings in your history in four steps: upload, select, review, receipt. Choose a
+<strong>Source assistant</strong> (Detect from documented format, OpenClaw, Hermes or Josi
+version-1 export) and your files, tap <strong>Scan and preview</strong>, pick what to keep,
+then import it. Under <strong>Your import batches</strong> you can read a
+<strong>Receipt</strong> or <strong>Roll back batch</strong>. The
+<strong>Imported conversation archive</strong> lets you search and read what came in.</p>
+<p><strong>Confirm it is you.</strong> Enter your <strong>Password</strong> and tap
+<strong>Confirm</strong>. This lasts 15 minutes.</p>
+<p><strong>Multi-factor authentication.</strong></p>
+<ul>
+<li>To turn it on, tap <strong>Set up MFA</strong>, scan the QR code with your authenticator app or use the key shown, enter the code and tap <strong>Verify and enable</strong>. Save your recovery codes when they appear.</li>
+<li>If your server is linked to a Hey Josi account, you can tap <strong>Use my Hey Josi authenticator</strong> instead.</li>
+<li>To turn it off, enter your password and tap <strong>Disable MFA</strong>.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/account.jpg" alt="Account settings showing approval choices" width="540" height="1174" loading="lazy"><figcaption>Account.</figcaption></figure>
+</div>
+
+<h3 id="devices">Devices</h3>
+<p>Everything paired with your server.</p>
+<ul>
+<li><strong>Make a pairing code</strong> shows a QR code and a code for a new device. The code works once.</li>
+<li><strong>Your devices</strong> lists each one as <strong>Connected now</strong> or when it was last seen. <strong>Remove</strong> disconnects it after you confirm.</li>
+<li><strong>What the relay can and can't see</strong> explains what passes through the relay.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/devices.jpg" alt="The Devices page with a pairing button and two iPhones" width="540" height="1174" loading="lazy"><figcaption>Devices.</figcaption></figure>
+</div>
+
+<h3 id="this-iphone">This iPhone</h3>
+<p>Shows how this iPhone reaches your server: <strong>Connected directly on your
+network</strong>, or <strong>Connected through the relay</strong>. This only appears
+when the iPhone is paired.</p>
+<p><strong>Replace device key</strong> makes a new encryption key for this iPhone.</p>
+<div class="shots">
+<figure class="shot"><img src="img/device.jpg" alt="This iPhone showing the connection and Replace device key" width="540" height="1174" loading="lazy"><figcaption>This iPhone.</figcaption></figure>
+</div>
+
+<h3 id="drive-folders">Drive folders</h3>
+<p>The Google Drive folders Josi can read. Add folders from the web app and they appear
+here. <strong>Sync</strong> refreshes a folder and <strong>Remove</strong> takes it away.</p>
+<div class="shots">
+<figure class="shot"><img src="img/drive.jpg" alt="Drive folders with no folders yet" width="540" height="1174" loading="lazy"><figcaption>Drive folders.</figcaption></figure>
+</div>
+
+<h3 id="withdraw-ai-permission">Withdraw AI permission</h3>
+<p>Stops your messages and connected details from being sent for AI processing. Tap it,
+then tap <strong>Withdraw</strong>. Chat stays blocked until you review the disclosure
+and allow it again.</p>
+
+<h3 id="change-server">Change server</h3>
+<p>Signs you out and forgets this server on this iPhone, so you can choose another.
+Tap it, then confirm. You'll need a new pairing code to come back. Your server keeps
+its record of this iPhone until someone removes it under <a href="#devices">Devices</a>.</p>
+
+<h2 id="admin">Admin</h2>
+<p>These sections only appear for owners. They control the whole server, so changes
+here affect everyone on it.</p>
+
+<h3 id="admin-overview">Overview</h3>
+<p>Your server at a glance. <strong>Check again</strong> refreshes it. You'll see counts
+of conversations, messages and tasks, then <strong>System checkup</strong> with a status
+for each part of the server. Tap a row to open that part. <strong>Recommendations</strong>
+lists what to fix. <strong>How reliably work completes</strong> and
+<strong>Activity per person</strong> show how things are going.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-overview.jpg" alt="The Overview page with counts and system status" width="540" height="1174" loading="lazy"><figcaption>Overview.</figcaption></figure>
+</div>
+
+<h3 id="admin-system-checkup">System checkup</h3>
+<p>Josi Doctor checks your installation and explains what it finds.</p>
+<ul>
+<li><strong>Josi updates</strong> shows your version. Where updates are handled here, use <strong>Check for updates</strong>. To install one, type the words it asks for and tap <strong>Back up and update</strong>. On a Mac server, updates come from the signed Josi installer instead.</li>
+<li><strong>Check system</strong> runs the checks. <strong>What Josi checked</strong> lists the results, and failed checks link to the page that fixes them.</li>
+<li>If a safe repair exists, tap <strong>Prepare automatic fix</strong>, review it, then tap <strong>Apply approved fix</strong> or <strong>Cancel</strong>.</li>
+</ul>
+
+<h3 id="admin-getting-started">Getting started</h3>
+<p>A checklist of what's left after setup, grouped as <strong>Protect this
+installation</strong>, <strong>Finish essential setup</strong>, <strong>Optional
+capabilities</strong> and <strong>Optional connections and devices</strong>. Each item
+has <strong>Do this</strong> and, unless it's critical, <strong>Skip</strong>.
+<strong>Put it back on the list</strong> undoes a skip. <strong>Done — go to my
+dashboard</strong> leaves the page.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-launch.jpg" alt="The Getting started checklist" width="540" height="1174" loading="lazy"><figcaption>Getting started.</figcaption></figure>
+</div>
+
+<h3 id="admin-people">People</h3>
+<p><strong>Add someone</strong>: enter an <strong>Email</strong> and <strong>Username</strong>
+and tap <strong>Add person</strong>, then give them the invite link that appears. They use
+it once to set a password.</p>
+<p>For each person:</p>
+<ul>
+<li><strong>Local folders</strong>, <strong>Cloud folders</strong> and <strong>Index/search</strong> switch on or off. Turning indexing off removes their searchable text.</li>
+<li><strong>Storage limit (GB)</strong> sets their limit. Tap <strong>Save</strong>, or <strong>Reset to default</strong> to go back to the default.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/admin-people.jpg" alt="The People page" width="540" height="1174" loading="lazy"><figcaption>People.</figcaption></figure>
+</div>
+
+<h3 id="admin-model">Model</h3>
+<p>Choose the AI model Josi uses. <strong>Currently using</strong> shows it and whether it
+passed its test.</p>
+<ol>
+<li>Tap <strong>Change model</strong> and choose a <strong>Provider</strong>. This can be a model on your own hardware, a cloud provider such as OpenAI, Anthropic, Google Gemini, Mistral or OpenRouter, or Hey Josi AI. Some servers also offer your own ChatGPT or Claude plan.</li>
+<li>Enter what that provider needs, usually an <strong>API key</strong>, or an address for your own model server.</li>
+<li>Tap <strong>Show me my models</strong> and pick one from <strong>Model</strong>, or type its name.</li>
+<li>For an outside provider, tick the box to confirm that data leaves your server.</li>
+<li>Tap <strong>Save &amp; test</strong>.</li>
+</ol>
+<p><strong>Connection &amp; advanced</strong> shows the model's details and has
+<strong>Test again</strong>.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-model.jpg" alt="The Model page showing the current model" width="540" height="1174" loading="lazy"><figcaption>Model.</figcaption></figure>
+</div>
+
+<h3 id="admin-voice-box">Voice Box</h3>
+<p>Optional voice chat that runs on your server. Tap <strong>Install Voice Box</strong> or
+<strong>Enable Voice Box</strong>, depending on your server.</p>
+<p>Once it's ready, <strong>Speech settings</strong> has:</p>
+<ul>
+<li><strong>Voice</strong>: Heart or Bella, both US English.</li>
+<li><strong>Transcription model</strong>: Whisper Base, or the lighter Whisper Tiny.</li>
+<li><strong>Transcription acceleration</strong>: CPU or NVIDIA GPU.</li>
+<li><strong>Speech detection threshold</strong>, <strong>Pause before sending (ms)</strong> and <strong>Speaking speed</strong>.</li>
+</ul>
+<p>Tap <strong>Save and verify</strong> to apply changes and <strong>Preview voice</strong>
+to hear it. You can also <strong>Restart</strong>, update, roll back, or uninstall or turn
+it off.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-voice.jpg" alt="The Voice Box page" width="540" height="1174" loading="lazy"><figcaption>Voice Box.</figcaption></figure>
+</div>
+
+<h3 id="admin-policy">Policy</h3>
+<p>Sets the loosest approval level anyone on your server may choose. It can only tighten
+what people pick for themselves. There's one choice per action: Ask me every time, Ask only
+for risky actions, or Let each person decide for themselves.</p>
+<p>The actions are sending email and creating and changing calendar events, contacts and
+tasks. Actions marked <strong>High impact</strong> are deleting anything, cancelling a
+commitment, involving people outside the organisation, publishing anything publicly,
+spending money, signing or accepting terms, and changing who can see or do what. For these,
+Josi asks before each one whatever you choose.</p>
+<p>Changes save straight away and are recorded against your account.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-policy.jpg" alt="The Approval policy page" width="540" height="1174" loading="lazy"><figcaption>Policy.</figcaption></figure>
+</div>
+
+<h3 id="admin-storage">Storage</h3>
+<ul>
+<li><strong>Coding sandbox access</strong>: tick each person who may use it. This saves straight away.</li>
+<li><strong>Indexing limits</strong>: <strong>Maximum file size (MB)</strong>, <strong>Maximum storage per person (MB)</strong> and <strong>Maximum files per person</strong>.</li>
+<li><strong>Allowed file types</strong>: a list of file extensions.</li>
+<li><strong>Archives</strong>: <strong>Index supported archives</strong>, with limits on entries, size, depth and time.</li>
+<li><strong>Windows antivirus</strong>, on Windows servers: <strong>Require malware scanning before file processing</strong>.</li>
+</ul>
+<p>Tap <strong>Save storage settings</strong> when you're done.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-storage.jpg" alt="The Storage page" width="540" height="1174" loading="lazy"><figcaption>Storage.</figcaption></figure>
+</div>
+
+<h3 id="admin-connectors">Connectors</h3>
+<p>Decides what people may connect. It has two views, <strong>Account providers</strong> and
+<strong>Developer services</strong>.</p>
+<p><strong>Account providers.</strong> Google, Microsoft 365, Dropbox and Box each need an
+application registered with that company, which needs a public address for your server.
+Copy the redirect URL into the provider's console, enter the <strong>Client ID</strong> and
+<strong>Client secret</strong> and tap <strong>Save</strong>. Nextcloud needs no application.</p>
+<p><strong>Member permissions</strong> switches each permission <strong>Allowed</strong> or
+<strong>Switched off</strong> for everyone, such as reading mail or changing calendar events.
+<strong>Connection health</strong> shows each person's connections, with
+<strong>Disconnect</strong>.</p>
+<p><strong>Developer services.</strong> For each service, such as GitHub, GitLab, Cloudflare,
+Netlify, Notion or Linear, choose <strong>Who may connect this</strong>: Not allowed, Allowed
+for everyone, or Allowed for specific people. Then tap <strong>Save who may connect</strong>.
+<strong>Manage Custom APIs</strong> connects other REST services. Obsidian vaults are read
+from here too.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-connectors.jpg" alt="The Connectors page" width="540" height="1174" loading="lazy"><figcaption>Connectors.</figcaption></figure>
+</div>
+
+<h3 id="admin-workflows">Workflows</h3>
+<p>Connects Zapier, n8n or Make. Under <strong>Add or reconnect provider</strong>, choose the
+<strong>Provider</strong>, enter a <strong>Name</strong> and its connection details, and tap
+<strong>Test and save provider</strong>.</p>
+<p>On a connected provider, tap <strong>Discover workflows</strong>, then <strong>Expose to
+Josi</strong> on each one people may run. <strong>Remove from Josi</strong> takes one back and
+<strong>Disconnect</strong> removes the provider.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-workflows.jpg" alt="The Native workflow providers page" width="540" height="1174" loading="lazy"><figcaption>Workflows, in Admin.</figcaption></figure>
+</div>
+
+<h3 id="admin-channels">Channels</h3>
+<p>Sets up messaging for your server. Choose <strong>Telegram</strong>,
+<strong>WhatsApp</strong> or <strong>Slack</strong>, fill in the details from that service,
+then tap <strong>Save</strong> and <strong>Test</strong>. <strong>Turn on</strong> is available
+after a passing test. <strong>Webhook URLs</strong> shows where each service should deliver
+messages.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-channels.jpg" alt="The Messaging channels page" width="540" height="1174" loading="lazy"><figcaption>Channels, in Admin.</figcaption></figure>
+</div>
+
+<h3 id="admin-backups">Backups</h3>
+<ul>
+<li><strong>Back up now</strong> takes a full backup, which is what a restore reads. <strong>Portable export</strong> makes a copy of your data you can take elsewhere.</li>
+<li><strong>Where backups are kept</strong>: choose a <strong>Storage service</strong> (NAS / network share, Amazon S3, Cloudflare R2 or Backblaze B2), fill in its details and tap <strong>Save destination</strong>. <strong>Encrypt off-site backups</strong> is on by default. If a backup recovery key appears, save it.</li>
+<li><strong>Test connection</strong>, <strong>Change</strong> and <strong>Remove destination</strong> manage a saved destination.</li>
+<li><strong>History</strong> lists past backups. Downloading from this page doesn't work in the iPhone app yet, so use the web app for that.</li>
+</ul>
+<p>Your master key is never in a backup. Keep it separately.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-backups.jpg" alt="The Backups page" width="540" height="1174" loading="lazy"><figcaption>Backups.</figcaption></figure>
+</div>
+
+<h3 id="admin-master-vault">Master Vault</h3>
+<p>Health and emergency controls. Administrators can't see anyone's secrets.</p>
+<ul>
+<li><strong>Status</strong> shows user boxes, credentials, key version and the recovery fingerprint.</li>
+<li><strong>Emergency lock</strong>: enter your password and tap <strong>Lock Master Vault</strong> to stop saved credentials being used, or <strong>Unlock</strong> to start again.</li>
+<li><strong>Upgrade stored credentials</strong>: tap <strong>Check and migrate credentials</strong>.</li>
+<li><strong>Offline recovery</strong>: enter your recovery key and tap <strong>Recover Master Vault</strong>.</li>
+</ul>
+<div class="shots">
+<figure class="shot"><img src="img/admin-vault.jpg" alt="The Master Vault page" width="540" height="1174" loading="lazy"><figcaption>Master Vault.</figcaption></figure>
+</div>
+
+<h3 id="admin-integrations">Integrations</h3>
+<p>This tile opens the <strong>Developer services</strong> view of
+<a href="#admin-connectors">Connectors</a>.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-integrations.jpg" alt="The Developer services view" width="540" height="1174" loading="lazy"><figcaption>Integrations.</figcaption></figure>
+</div>
+
+<h3 id="admin-network">Network &amp; address</h3>
+<ul>
+<li><strong>Addresses</strong> shows your server's public address and its address on your network.</li>
+<li><strong>Tailscale</strong> lets you reach your server without a public domain. Once Tailscale is connected, tap <strong>Use the Tailscale address</strong>. Your server needs a restart afterwards.</li>
+<li><strong>Open protected maintenance</strong>: enter your <strong>Admin password</strong> and tap <strong>Continue</strong> to change network, domain and port settings. It opens a separate tool for a short time.</li>
+</ul>
+
+<h3 id="admin-parental-controls">Parental controls</h3>
+<p>Coming soon.</p>
+
+<h3 id="admin-workspace">Workspace</h3>
+<p><strong>Business profile</strong>: set your <strong>Name</strong> and <strong>Time
+zone</strong> and tap <strong>Save</strong>. <strong>Name and identity</strong> explains the
+licence and trademark.</p>
+<div class="shots">
+<figure class="shot"><img src="img/admin-workspace.jpg" alt="The Workspace page with name and time zone" width="540" height="1174" loading="lazy"><figcaption>Workspace, in Admin.</figcaption></figure>
+</div>
+
+<h2 id="troubleshooting">Troubleshooting</h2>
+<h3 id="could-not-reach-your-server">Josi couldn't reach your server</h3>
+<p>Check that your iPhone is online and that your server is running, then try again.
+If your iPhone is paired, its connection goes through the relay when you're away from
+your network, so your server needs internet access too.</p>
+<h3 id="that-code-is-wrong">That code is wrong, used, or expired</h3>
+<p>Authenticator codes change every 30 seconds and each one works once. Wait for a new
+code and enter it. Also check that the time on your iPhone is set automatically.</p>
+<h3 id="google-sign-in-cant-reach">Google sign-in can't reach a server through the encrypted connection yet</h3>
+<p>Google sign-in only works with a server address. On a paired iPhone, sign in with
+your password or Apple.</p>
+<h3 id="sign-in-isnt-set-up">Sign-in isn't set up on this server</h3>
+<p>Apple or Google sign-in hasn't been set up on your server. Use your password.</p>
+<h3 id="that-google-account-isnt-linked">That Google account isn't linked to anyone on this server</h3>
+<p>Sign in with your password, or ask your administrator to link your Google account.</p>
+<h3 id="ai-sharing-is-locked">AI sharing is locked</h3>
+<p>Your server hasn't published its AI privacy disclosure yet, so Josi won't send
+messages. Ask your administrator to finish setting up a <a href="#admin-model">model</a>,
+then tap <strong>Try again</strong>.</p>
+<h3 id="voice-isnt-set-up">Voice isn't set up on your server yet</h3>
+<p>An owner can set it up under <a href="#admin-voice-box">Voice Box</a>.</p>
+<h3 id="josi-needs-the-microphone">Josi needs the microphone for voice chat</h3>
+<p>Open the iPhone's Settings app, find Josi and turn on Microphone.</p>
+<h3 id="set-a-passcode">Set a passcode on this iPhone to decide approvals</h3>
+<p>Approvals need Face ID, Touch ID or a passcode. Set a passcode in the iPhone's
+Settings app.</p>
+<h3 id="this-iphone-was-removed">This iPhone was removed from your server</h3>
+<p>Someone removed it under Devices. <a href="#pair-with-your-server">Pair it again</a>
+with a new code.</p>
+<h3 id="offline-showing-saved">Offline, showing saved tasks, contacts or calendar</h3>
+<p>The app can't reach your server right now, so it's showing the last copy it saved.
+Open the page again once you're back online.</p>
+<h3 id="josi-couldnt-verify-your-session">Josi couldn't verify your session</h3>
+<p>Your sign-in is still saved. Check your connection and tap <strong>Try again</strong>.</p>

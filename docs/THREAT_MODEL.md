@@ -712,3 +712,45 @@ possible and cannot make it true.
 host disk. Encrypting them with the master key would put a decryption oracle
 next to the data; the honest answer is full-disk encryption, and the product
 says so in the words the user sees.
+
+### T-73 The relay reads or alters a person's traffic
+**Attacker:** whoever runs the relay, or has broken into it
+**Impact:** everything said to the assistant, in the clear
+**Control:** packages/tunnel/src/noise.ts — Noise IK end to end; the relay holds no key, and any changed byte ends the session
+**Test:** carries a request end to end, and the relay holds only ciphertext
+
+### T-74 The relay answers as the server
+**Attacker:** whoever runs the relay
+**Impact:** a device talks to an impostor
+**Control:** packages/tunnel/src/client.ts — the device pins the server's static key from pairing
+**Test:** cannot be fooled by a relay that answers with its own key
+
+### T-75 A stolen Hey Josi login opens the server
+**Attacker:** someone with a person's account password, or the hosted database
+**Impact:** the person's assistant, mail and files
+**Control:** apps/api/src/relay/relayService.ts — hosted can pass a plan and a revocation; it can't add a device, and a paired device still meets the server's own sign-in
+**Test:** gives no one a session: a paired device still meets the sign-in
+
+### T-76 A pairing code is reused or raced
+**Attacker:** someone who saw a code on a screen
+**Impact:** a device of theirs on the server
+**Control:** apps/api/src/relay/relayService.ts — 160-bit code, stored hashed, spent in one statement, ten minutes
+**Test:** lets exactly one of two racing devices have a code
+
+### T-77 A removed device comes back
+**Attacker:** someone holding a device that was removed
+**Impact:** continued access to the transport
+**Control:** apps/api/src/relay/relayService.ts — the device row is checked on every handshake, and a revoked key can't pair again
+**Test:** won't let a revoked key pair its way back in
+
+### T-78 A forged Google handoff plants an attacker's account
+**Attacker:** anyone who can reach the server as a tunnel peer
+**Impact:** a person's assistant reading an account the attacker controls
+**Control:** apps/api/src/relay/relayService.ts — handoff hellos are only accepted from the hosted key pinned at link time
+**Test:** accepts tokens only from the pinned hosted key
+
+### T-79 A dishonest relay swaps the browser's starter page
+**Accepted:** the first page a browser loads at a Hey Josi address comes from the relay, so a dishonest operator could serve one that steals what's typed. Native apps don't have this exposure. docs/RELAY_PRIVACY.md says so, the page is small and rebuildable from source, and running your own relay moves the trust to you.
+
+### T-80 The AI gateway sees Connect + AI requests
+**Accepted:** it has to read a request to forward it to OpenAI. It stores counts and cost, never text, and the product says so where the choice is made. A person's own AI key avoids it.

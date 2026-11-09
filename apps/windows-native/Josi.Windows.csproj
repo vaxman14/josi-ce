@@ -6,6 +6,8 @@
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
+    <!-- The notification-area icon (Tray.cs) is the one Windows Forms control used. -->
+    <UseWindowsForms>true</UseWindowsForms>
     <LangVersion>latest</LangVersion>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
@@ -24,11 +26,16 @@
     <Version>0.7.0</Version>
     <InformationalVersion>0.7.0-windows.1</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <!-- Josi is the server app. Build with -p:JosiEdition=Client for Josi Client. See src/Flags.cs. -->
+    <DefineConstants Condition="'$(JosiEdition)' != 'Client'">$(DefineConstants);JOSI_SERVER_APP</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="src\Theme.xaml" LogicalName="Theme.xaml" />
     <EmbeddedResource Include="assets\josi-mark.png" LogicalName="josi-mark.png" />
     <EmbeddedResource Include="obj\Josi.ico" LogicalName="Josi.ico" />
+    <!-- Built by tools/build-ghost.mjs from the Masko clips. -->
+    <EmbeddedResource Include="assets\ghost\*" LogicalName="ghost/%(Filename)%(Extension)" />
+    <Resource Include="assets\fonts\*.ttf" />
     <Compile Remove="test\**" />
   </ItemGroup>
   <ItemGroup>

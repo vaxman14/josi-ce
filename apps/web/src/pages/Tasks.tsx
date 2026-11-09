@@ -285,7 +285,7 @@ export function Tasks() {
                     ) : null}
 
                     {task.state === 'awaiting_approval' ? (
-                      <div className="mb-4 space-y-2 rounded-md border border-input p-3">
+                      <div className="mb-4 space-y-2 rounded-md border border-border p-3">
                         <p className="text-sm font-medium">Your approval is required</p>
                         <Input type="password" autoComplete="current-password" placeholder="Confirm your password" value={approvalPassword} onChange={(event) => setApprovalPassword(event.target.value)} />
                         <Button disabled={busy || !approvalPassword} onClick={() => void approveTask(task.id)}>Approve and continue</Button>
@@ -332,11 +332,11 @@ export function Tasks() {
         </div>
       )}
 
-      <details className="rounded-2xl border border-border bg-card p-5">
+      <details className="rounded-lg border border-border bg-card p-5">
         <summary className="min-h-11 cursor-pointer py-2 text-sm font-medium">Create a task manually</summary>
         <form onSubmit={create} className="mt-3 space-y-3 border-t border-border pt-4">
           <CardTitle>New background task</CardTitle>
-          <select value={templateKey} onChange={(event) => setTemplateKey(event.target.value)} className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm">
+          <select value={templateKey} onChange={(event) => setTemplateKey(event.target.value)} className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm">
             {types.map((type) => <option key={type.key} value={type.key}>{type.name}</option>)}
           </select>
           {selected?.requiresCapability ? <p className="text-sm text-muted-foreground">This will wait until {selected.requiresCapability.replace(/_/g, ' ')} is connected.</p> : null}

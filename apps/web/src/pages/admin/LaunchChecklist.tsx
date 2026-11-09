@@ -46,9 +46,9 @@ const STATE_LABEL: Record<State, string> = {
 };
 
 const STATE_TONE: Record<State, string> = {
-  done: 'text-emerald-600 dark:text-emerald-400',
-  outstanding: 'text-amber-600 dark:text-amber-400',
-  failed: 'text-red-600 dark:text-red-400',
+  done: 'text-success',
+  outstanding: 'text-warning',
+  failed: 'text-destructive',
   dismissed: 'text-muted-foreground',
   unavailable: 'text-muted-foreground',
 };
@@ -134,10 +134,10 @@ export function AdminLaunchChecklist() {
 
       <Card>
         <CardTitle>Optional connections and devices</CardTitle>
-        <p className="mt-1 text-sm text-muted-foreground">Connect services when you need them. Companion-device pairing is unavailable until a compatible app is provided; it is not required to use Josi.</p>
+        <p className="mt-1 text-sm text-muted-foreground">Connect services when you need them. To add a phone or computer, make a pairing code under Devices. Neither is required to use Josi.</p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Button variant="secondary" onClick={() => navigate('/app/connections')}>Connect services</Button>
-          <Button variant="secondary" onClick={() => navigate('/app/apps')}>Companion devices</Button>
+          <Button variant="secondary" onClick={() => navigate('/app/devices')}>Devices</Button>
         </div>
       </Card>
 
@@ -164,7 +164,7 @@ export function AdminLaunchChecklist() {
           defaultOpen={needsAttention}>
         <ul className="space-y-4">
           {group.items.map((item) => (
-            <li key={item.key} className="border-t border-input pt-4 first:border-0 first:pt-0">
+            <li key={item.key} className="border-t border-border pt-4 first:border-0 first:pt-0">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <span className="text-sm font-medium">{item.label}</span>
                 <span className={`text-xs font-medium ${STATE_TONE[item.state]}`}>

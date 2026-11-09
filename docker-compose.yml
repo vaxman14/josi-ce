@@ -110,6 +110,13 @@ services:
       # Empty means infer from APP_URL: secure for https, non-secure for LAN
       # http. Explicit true/false remains available as an advanced override.
       COOKIE_SECURE: ${JOSI_COOKIE_SECURE:-}
+      # Who may vouch for a visitor's address in X-Forwarded-For. Here that is
+      # Caddy, whose address moves with the Docker network, so this names the
+      # private ranges Docker draws from. It is safe only because web publishes
+      # no port: nothing but Caddy reaches it, and the Caddyfile replaces the
+      # header with the address it saw. docker-compose.noproxy.yml publishes web,
+      # so it resets this.
+      JOSI_TRUSTED_PROXIES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,fc00::/7
       # Where the built web bundle lives inside the image. The API serves it
       # from its own origin; unset, the API runs headless.
       WEB_DIR: /app/web
@@ -148,6 +155,9 @@ services:
       # Backups and diagnostics bundles. Named volumes so `docker compose down`
       # does not take the only copy with it.
       - josi_backups:/data/backups
+      # The server's relay keys. Its own volume, so a recreated container keeps
+      # its identity, and web and worker read the same keys.
+      - josi_keys:/data/keys
       - josi_diagnostics:/data/diagnostics
       # The Codex CLI's home on the ChatGPT subscription path. Its own volume
       # so replacing a container does not sign the operator out, and so
@@ -224,6 +234,9 @@ services:
       # Backups and diagnostics bundles. Named volumes so `docker compose down`
       # does not take the only copy with it.
       - josi_backups:/data/backups
+      # The server's relay keys. Its own volume, so a recreated container keeps
+      # its identity, and web and worker read the same keys.
+      - josi_keys:/data/keys
       - josi_diagnostics:/data/diagnostics
       # The Codex CLI's home on the ChatGPT subscription path. Its own volume
       # so replacing a container does not sign the operator out, and so
@@ -371,6 +384,7 @@ volumes:
   db_data:
   josi_versions:
   josi_backups:
+  josi_keys:
   josi_diagnostics:
   josi_codex:
   josi_claude:

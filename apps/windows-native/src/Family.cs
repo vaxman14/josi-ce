@@ -57,8 +57,8 @@ namespace Josi.Native {
       }
     }
     UIElement Beta() {
-      return new Border { Background = Ui.OrangeFaint, BorderBrush = Ui.Orange, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(14),
-        Child = Ui.Stack(4, Ui.T("BETA: do not rely on these controls for a child's safety.", 14, FontWeights.SemiBold, Ui.Orange),
+      return new Border { Background = Ui.AccentFaint, BorderBrush = Ui.Accent, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(14),
+        Child = Ui.Stack(4, Ui.T("BETA: do not rely on these controls for a child's safety.", 14, FontWeights.SemiBold, Ui.Accent),
           Ui.Caption("This feature is experimental and may fail, be delayed or behave unexpectedly. It controls only access to Josi; it cannot supervise a device, block other apps or websites, provide emergency monitoring, or replace active adult supervision and device-level parental controls. Verify important restrictions yourself.")) };
     }
     Control Field(string key, string placeholder = "", string value = "", bool secret = false) {
@@ -292,7 +292,7 @@ namespace Josi.Native {
       if (days.Count == 0) items.Add(Ui.Caption("Nothing in this period."));
       var busiest = Math.Max(1, days.Count == 0 ? 1 : days.Max(d => d["minutes"].Integer));
       foreach (var day in days) {
-        var bar = new Border { Background = Ui.Orange, CornerRadius = new CornerRadius(3), Height = 8, Width = Math.Max(2, 300.0 * day["minutes"].Integer / busiest), VerticalAlignment = VerticalAlignment.Center };
+        var bar = new Border { Background = Ui.Accent, CornerRadius = new CornerRadius(3), Height = 8, Width = Math.Max(2, 300.0 * day["minutes"].Integer / busiest), VerticalAlignment = VerticalAlignment.Center };
         var date = Ui.Caption(day["day"].Text); date.Width = 100;
         items.Add(Ui.Row(10, date, bar, Ui.Caption(day["minutes"].Integer + " min")));
       }
@@ -328,12 +328,12 @@ namespace Josi.Native {
     }
     protected override UIElement Build() {
       var page = Page(Ui.HeadingWith("Parental Controls", "Parental controls are a licensed feature. This page is where the licence is activated and managed.", Ui.Pill("Refresh", StartLoad)));
-      Ui.Add(page, new Border { Background = Ui.OrangeFaint, BorderBrush = Ui.Orange, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(14),
-        Child = Ui.Stack(4, Ui.T("BETA: experimental and not suitable as a safety control.", 14, FontWeights.SemiBold, Ui.Orange),
+      Ui.Add(page, new Border { Background = Ui.AccentFaint, BorderBrush = Ui.Accent, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(14),
+        Child = Ui.Stack(4, Ui.T("BETA: experimental and not suitable as a safety control.", 14, FontWeights.SemiBold, Ui.Accent),
           Ui.Caption("Do not trust or rely on this feature to protect a child. It controls only Josi, not the device, other apps, websites, location or emergencies. Use active adult supervision and proven device-level controls, and verify restrictions independently.")) }, 0);
       if (view.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading…" : "The licence has not loaded."), 0); return page; }
       var state = view["state"].Text; var licensed = state == "active";
-      var items = new List<UIElement> { Ui.Row(10, ModelText.Pill(StateLabel(state), licensed ? Ui.Green : state == "none" ? Ui.Muted : Ui.Orange)), Ui.Secondary(view["detail"].Text) };
+      var items = new List<UIElement> { Ui.Row(10, ModelText.Pill(StateLabel(state), licensed ? Ui.Green : state == "none" ? Ui.Muted : Ui.Accent)), Ui.Secondary(view["detail"].Text) };
       var licence = view["licence"];
       if (!licence.IsNull) {
         items.Add(Ui.Caption("Issued to: " + licence["subject"].Text));

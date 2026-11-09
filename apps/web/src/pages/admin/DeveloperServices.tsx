@@ -95,7 +95,7 @@ export function AdminDeveloperServices({ embedded = false }: { embedded?: boolea
   return (
     <div className={embedded ? 'contents' : 'page'}>
       {embedded ? null : <h1 className="page-title">Developer services</h1>}
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+      <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
         More integrations are coming soon. Have a special request?{' '}
         <a className="underline" href="mailto:roman@socalreceptionist.com">Email us at roman@socalreceptionist.com</a>.
       </div>
@@ -305,7 +305,7 @@ function ServiceCard(
                     {c.lastUsedAt ? ` · used ${new Date(c.lastUsedAt).toLocaleString()}` : ''}
                   </span>
                   {c.lastCheckOk === false && c.lastError ? (
-                    <span className="block text-xs text-red-600 dark:text-red-400">{c.lastError}</span>
+                    <span className="block text-xs text-destructive">{c.lastError}</span>
                   ) : null}
                 </span>
                 <Badge tone={c.lastCheckOk === false ? 'danger' : c.status === 'active' ? 'ok' : 'muted'}>

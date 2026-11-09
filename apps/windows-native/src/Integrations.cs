@@ -232,7 +232,7 @@ namespace Josi.Native {
         foreach (var c in row["connections"].List) {
           var bad = c["lastCheckOk"].IsBool && !c["lastCheckOk"].Flag;
           stack.Children.Add(Ui.Spread(Ui.Stack(2, Ui.T(c["username"].Text), Ui.Caption((c["accountLabel"].Text.Length > 0 ? c["accountLabel"].Text : "account not named") +
-              (c["lastCheckAt"].Text.Length > 0 ? " · checked " + Wires.Date(c["lastCheckAt"].Text) : "")), bad ? Ui.T(c["lastError"].Text, 12, null, Ui.Orange) : null),
+              (c["lastCheckAt"].Text.Length > 0 ? " · checked " + Wires.Date(c["lastCheckAt"].Text) : "")), bad ? Ui.T(c["lastError"].Text, 12, null, Ui.Error) : null),
             ModelText.Pill(bad ? "Needs attention" : Wires.Words(c["status"].Text), !bad)));
         }
         return stack;

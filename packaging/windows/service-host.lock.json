@@ -3,7 +3,7 @@
   "variant": "2.12.0+josi.windows1",
   "asset": "WinSW.Josi-2.12.0-windows1.exe",
   "size": 772608,
-  "sha256": "1cb7b57bdfded3844ea68a491b2eb5ca68e1b8ebcfe88ed231f71f9e9d4d3e87",
+  "sha256": "09ffc5b6c81d227d2f46a249aaea11da34fd57c7a7675b3d8cca6e0bde78753e",
   "upstreamCommit": "eef5bade59fca0254e387ac73ed7625ba6aa7147",
   "sourceArchiveSha256": "15581a065018d6828041dfd764876b1bf9087a8fe0cc26506e1e9f5a81951c43",
   "license": "MIT AND Apache-2.0",

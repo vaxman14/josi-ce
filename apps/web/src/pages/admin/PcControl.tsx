@@ -5,7 +5,7 @@ import { Button, ErrorNote } from '@/components/ui';
 type Scope={kind:string;target:string;application?:string;profile?:string};
 type Requirement={action:string;scope:Scope};
 type Policy=Requirement&{id:string;mode:string;taskId?:string;expiresAt?:string;active:boolean};
-type Catalog={action:string;label:string;kind:string;highRisk:boolean;access:string};
+type Catalog={action:string;label:string;kind:string;highRisk:boolean;grantable?:boolean;access:string};
 type Pending={id:string;description:string;requirements:Requirement[];taskId?:string;expiresAt:string;highRisk:boolean;access:string};
 type Activity={id:string;at:string;kind:string;description?:string;requirements?:Requirement[]};
 type State={enabled:boolean;pcId:string;catalog:Catalog[];policies:Policy[];requests:Pending[];activity:Activity[];tasks:{id:string;name:string;created_at:string}[];executorAvailable:boolean;availability:string;uac:string};
@@ -17,7 +17,7 @@ export function AdminPcControl(){
   const [state,setState]=useState<State|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
   const [action,setAction]=useState('browser.view'),[target,setTarget]=useState(''),[application,setApplication]=useState(''),[profile,setProfile]=useState('');
   const [mode,setMode]=useState('ask'),[taskId,setTaskId]=useState(''),[expires,setExpires]=useState('');
-  const [passwords,setPasswords]=useState<Record<string,string>>({});
+  const [passwords,setPasswords]=useState<Record<string,string>>({}),[savePassword,setSavePassword]=useState('');
   const spec=state?.catalog.find(s=>s.action===action);
   async function refresh(){setState(await api.get<State>(endpoint));}
   useEffect(()=>{void refresh().catch(e=>setError(e instanceof Error?e.message:'Could not load PC permissions.'));},[]);
@@ -25,10 +25,13 @@ export function AdminPcControl(){
   // open. No optimistic permission updates: success comes from durable storage.
   useEffect(()=>{const timer=setInterval(()=>{void refresh().catch(()=>undefined);},15000);return()=>clearInterval(timer);},[]);
   async function change(work:()=>Promise<unknown>){setBusy(true);setError('');try{await work();await refresh();}catch(e){setError(e instanceof Error?e.message:'Could not save that.');}finally{setBusy(false);}}
+  // A standing grant for a high-risk action (commands in a shell and folder tree) is confirmed with the account password, like full control.
+  const needsPassword=!!spec?.highRisk&&spec.grantable&&!['never','ask'].includes(mode);
   async function save(){if(!spec)return;await change(()=>api.put(endpoint+'/policies',{action,scope:{kind:spec.kind,target,
     ...(['browser','command'].includes(spec.kind)?{application}:{}),...(spec.kind==='browser'?{profile}:{})},mode,
-    ...(mode==='task'?{taskId}:{}),...(mode==='temporary'?{expiresAt:expires?new Date(expires).toISOString():''}:{})}));}
-  const inputClass='min-h-11 w-full rounded-md border border-input bg-background px-3';
+    ...(mode==='task'?{taskId}:{}),...(mode==='temporary'?{expiresAt:expires?new Date(expires).toISOString():''}:{}),
+    ...(needsPassword?{password:savePassword}:{})}));setSavePassword('');}
+  const inputClass='min-h-11 w-full rounded-md border border-border bg-background px-3';
   return <div className="page">
     <h1 className="page-title">PC control permissions</h1>
     {error?<ErrorNote>{error}</ErrorNote>:null}
@@ -46,22 +49,25 @@ export function AdminPcControl(){
         <h2 className="font-semibold">Choose one exact scope</h2>
         <p className="text-sm">Each browser executable, browser profile and origin needs its own permission. Folder choices apply to that exact folder; application choices apply to that exact executable. No wildcard or inherited grants.</p>
         <div><label className="block" htmlFor="pc-action">Action</label><select id="pc-action" className={inputClass} value={action} onChange={e=>{setAction(e.target.value);setTarget('');setApplication('');setProfile('');}}>{state.catalog.map(c=><option key={c.action} value={c.action}>{c.label}</option>)}</select></div>
-        {spec?<p>{spec.access}{spec.highRisk?' · Separate approval for each exact action is required in every mode.':''}</p>:null}
-        <label className="block">{spec?.kind==='browser'?'Exact website origin (for example, https://example.com)':spec?.kind==='application'?'Exact application .exe path':spec?.kind==='folder'||spec?.kind==='command'?'Exact local folder path':spec?.kind==='secret'?'Exact credential/item identifier':'Exact software or settings scope'}
+        {spec?<p>{spec.access}{spec.highRisk&&!spec.grantable?' · Separate approval for each exact action is required in every mode.':spec.kind==='command'?' · High risk. Allowing a shell here lets Josi run commands in this folder and every folder under it without asking; your password confirms it.':''}</p>:null}
+        <label className="block">{spec?.kind==='browser'?'Exact website origin (for example, https://example.com)':spec?.kind==='application'?'Exact application .exe path':spec?.kind==='command'?'Folder Josi may run commands in (and its subfolders)':spec?.kind==='folder'?'Exact local folder path':spec?.kind==='secret'?'Exact credential/item identifier':'Exact software or settings scope'}
           <input className={inputClass} value={target} onChange={e=>setTarget(e.target.value)} autoComplete="off"/></label>
-        {['browser','command'].includes(spec?.kind??'')?<label className="block">Exact {spec?.kind==='browser'?'browser':'command runner'} .exe path<input className={inputClass} value={application} onChange={e=>setApplication(e.target.value)} autoComplete="off"/></label>:null}
+        {spec?.kind==='browser'?<label className="block">Exact browser .exe path<input className={inputClass} value={application} onChange={e=>setApplication(e.target.value)} autoComplete="off"/></label>:null}
+        {spec?.kind==='command'?<label className="block">Shell<select className={inputClass} value={application} onChange={e=>setApplication(e.target.value)}><option value="">Choose the shell</option>
+          <option value="C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe">PowerShell</option><option value="C:\Windows\System32\cmd.exe">Command Prompt</option></select></label>:null}
+        {needsPassword?<label className="block">Confirm your account password<input className={inputClass} type="password" autoComplete="current-password" value={savePassword} onChange={e=>setSavePassword(e.target.value)}/></label>:null}
         {spec?.kind==='browser'?<label className="block">Exact browser profile<input className={inputClass} value={profile} onChange={e=>setProfile(e.target.value)} autoComplete="off"/></label>:null}
         <div><label className="block" htmlFor="pc-mode">Approval mode</label><select id="pc-mode" className={inputClass} value={mode} onChange={e=>setMode(e.target.value)}>{MODES.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></div>
         {mode==='task'?<div><label className="block" htmlFor="pc-task">Exact active Josi task</label><select id="pc-task" className={inputClass} value={taskId} onChange={e=>setTaskId(e.target.value)}><option value="">Choose your task</option>{state.tasks.map(t=><option key={t.id} value={t.id}>{t.name} · {new Date(t.created_at).toLocaleString()} · {t.id.slice(0,8)}</option>)}</select><p className="text-sm">Expires when this task ends, or after 24 hours, whichever comes first.</p></div>:null}
         {mode==='temporary'?<label className="block">Expires at (your local time, within 24 hours)<input className={inputClass} type="datetime-local" value={expires} onChange={e=>setExpires(e.target.value)}/></label>:null}
-        <Button disabled={busy||!target||(spec?.kind==='browser'&&(!application||!profile))||(spec?.kind==='command'&&!application)||(mode==='task'&&!taskId)||(mode==='temporary'&&!expires)} onClick={()=>void save()}>Save exact-scope permission</Button>
-        <p className="text-sm text-muted-foreground">Deleting, submissions/messages, financial actions, credential access, installs/uninstalls, security changes and elevation always ask separately. Commands and generic application control also ask because they can hide these effects. Existing workspace and connector permissions are unchanged.</p>
+        <Button disabled={busy||!target||(spec?.kind==='browser'&&(!application||!profile))||(spec?.kind==='command'&&!application)||(needsPassword&&!savePassword)||(mode==='task'&&!taskId)||(mode==='temporary'&&!expires)} onClick={()=>void save()}>Save exact-scope permission</Button>
+        <p className="text-sm text-muted-foreground">Deleting, submissions/messages, financial actions, credential access, installs/uninstalls, security changes and elevation always ask separately. Commands ask unless you allow a shell in a folder here. Existing workspace and connector permissions are unchanged.</p>
       </section>
       <section className="space-y-3"><h2 className="font-semibold">Saved scopes and temporary access</h2>
         {!state.policies.length?<p>No scopes granted. Unlisted scopes ask before each action while the master switch is on.</p>:null}
         {state.policies.map(p=>{const c=state.catalog.find(x=>x.action===p.action);return <article key={p.id} className="space-y-2 rounded-lg border p-4"><h3 className="font-medium">{c?.label}</h3><p><ScopeText scope={p.scope}/></p><p>{c?.access} · {MODES.find(x=>x[0]===p.mode)?.[1]}{!p.active?' · Expired or task ended':''}</p>
           {p.taskId?<p className="break-all">Exact task: {p.taskId}</p>:null}{p.expiresAt?<p>Expires: <time dateTime={p.expiresAt}>{new Date(p.expiresAt).toLocaleString()}</time></p>:null}
-          {c?.highRisk?<p>Each exact action still requires approval.</p>:null}<Button variant="secondary" disabled={busy} onClick={()=>void change(()=>api.del(endpoint+'/policies/'+p.id))}>Revoke</Button></article>;})}
+          {c?.highRisk&&!c.grantable?<p>Each exact action still requires approval.</p>:null}<Button variant="secondary" disabled={busy} onClick={()=>void change(()=>api.del(endpoint+'/policies/'+p.id))}>Revoke</Button></article>;})}
       </section>
       <section className="space-y-3"><h2 className="font-semibold">Actions awaiting approval</h2>{!state.requests.length?<p>No actions awaiting approval.</p>:null}
         {state.requests.map(q=><article key={q.id} className="space-y-2 rounded-lg border p-4"><h3 className="font-medium">{q.description}</h3><p>{q.access}{q.highRisk?' · High risk':''}</p>

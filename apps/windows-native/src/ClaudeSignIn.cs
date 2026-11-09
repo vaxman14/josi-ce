@@ -21,7 +21,8 @@ namespace Josi.Native {
 
     /// Candidate locations: an explicit override, the CLI next to a
     /// development server on this PC, then the CLI bundled with the app.
-    public static IEnumerable<string> Candidates() {
+    /// `baseDirectory` is the app's own folder unless a test names another.
+    public static IEnumerable<string> Candidates(string baseDirectory = null) {
       var explicitPath = Environment.GetEnvironmentVariable("JOSI_CLAUDE_EXE");
       if (!string.IsNullOrEmpty(explicitPath)) yield return explicitPath;
       var data = Environment.GetEnvironmentVariable("JOSI_SERVER_DATA");
@@ -29,13 +30,16 @@ namespace Josi.Native {
         var root = Path.GetDirectoryName(Path.GetFullPath(data).TrimEnd('\\'));
         if (root != null) yield return Path.Combine(root, @"cli\node_modules\@anthropic-ai\claude-code-win32-x64\claude.exe");
       }
-      yield return Path.Combine(AppContext.BaseDirectory, @"cli\claude.exe");
+      var app = baseDirectory ?? AppContext.BaseDirectory;
+      // Where the installer puts it: the cli archive unpacks to cli\claude\ beside Josi.exe.
+      yield return Path.Combine(app, @"cli\claude\claude.exe");
+      yield return Path.Combine(app, @"cli\claude.exe");
     }
 
     /// Returns the verified binary path, or null when none is present. A file
     /// that exists but is not Anthropic's signed pinned binary is an error.
-    public static string Locate() {
-      foreach (var candidate in Candidates()) {
+    public static string Locate(string baseDirectory = null) {
+      foreach (var candidate in Candidates(baseDirectory)) {
         FileInfo file;
         try { file = new FileInfo(candidate); } catch (ArgumentException) { continue; }
         if (!file.Exists) continue;

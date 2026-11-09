@@ -33,6 +33,14 @@ describe('portable database paths at the native filesystem boundary', () => {
       expect(() => resolveDataPath('/data/a', { ...env, JOSI_DATA_DIR: root }, 'darwin')).toThrow();
     }
   });
+  it('follows the suite\'s scratch root only under test, and only for /data', () => {
+    const test = { NODE_ENV: 'test', JOSI_TEST_DATA_DIR: '/tmp/josi-test-data' };
+    expect(resolveDataPath('/data/backups/incoming', test, 'darwin')).toBe('/tmp/josi-test-data/backups/incoming');
+    expect(resolveDataPath('/data', test, 'linux')).toBe('/tmp/josi-test-data');
+    expect(resolveDataPath('/database/a', test, 'linux')).toBe('/database/a');
+    expect(resolveDataPath('/data/a', { JOSI_TEST_DATA_DIR: '/tmp/josi-test-data' }, 'linux')).toBe('/data/a');
+    expect(resolveDataPath('/data/a', { NODE_ENV: 'production', JOSI_TEST_DATA_DIR: '/tmp/josi-test-data' }, 'linux')).toBe('/data/a');
+  });
   it('fails closed for missing roots, traversal, alternate streams and device names', () => {
     expect(() => resolveDataPath('/data/backups/a.zip', { JOSI_NATIVE_RUNTIME: '1' }, 'win32')).toThrow();
     for (const path of ['/data/../secret', '/data/a/./b', '/data/a\\b', '/data/a:stream', '/data/COM1.zip', '/data/a.']) {

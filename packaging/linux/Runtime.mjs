@@ -30,7 +30,7 @@ try {
     'controlPort', 'setupTokenSha256', 'scannerSocket'];
   if (Object.hasOwn(cfg, 'workspace')) keys.push('workspace');
   if (Object.keys(cfg).sort().join() !== keys.sort().join() || cfg.schemaVersion !== 1
-    || !/^\d+\.\d+\.\d+-[a-z0-9.]+$/.test(cfg.version) || !/^[a-f0-9]{64}$/.test(cfg.setupTokenSha256)) throw Error();
+    || !/^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$/.test(cfg.version) || !/^[a-f0-9]{64}$/.test(cfg.setupTokenSha256)) throw Error();
   const ports = ['databasePort', 'apiPort', 'publicPort', 'voicePort', 'controlPort'].map(key => cfg[key]);
   if (ports.some(port => !Number.isInteger(port) || port < 1024 || port > 65535) || new Set(ports).size !== 5) throw Error();
   if (typeof cfg.scannerSocket !== 'string' || (cfg.scannerSocket && !cfg.scannerSocket.startsWith('/'))) throw Error();

@@ -39,7 +39,7 @@ installed; the code moved unchanged except JSON (now System.Text.Json).
   muted `#9DABBE`. Dark Windows 11 title bar in the same navy.
 - Logo: the approved white-J-on-navy master (`josi-mark.png`, `icon-512.png`), also used
   for the `.exe` icon. Product line "Your assistant, on your own server." Publisher
-  SOCAL RECEPTIONIST LLC. The retired shepherd mark is not used.
+  SOCAL RECEPTIONIST LLC.
 - Pill buttons, rounded cards, rounded composer, status badges, segmented filters and the
   animated J "thinking" indicator (still when Windows animations are turned off).
 - Keyboard: Enter sends, Shift+Enter new line, Ctrl+Enter also sends (Windows equivalent
@@ -50,6 +50,7 @@ installed; the code moved unchanged except JSON (now System.Text.Json).
 | Area | Status |
 |---|---|
 | Welcome: this PC (local server) or another computer (HTTPS / localhost) | Done |
+| Paired servers: end-to-end encrypted over the relay, or directly on the LAN (`docs/RELAY_PROTOCOL.md`, `src/Tunnel*.cs`); pairing code or link, device key in Credential Manager | Done (not yet run on Windows) |
 | Local server: detect the 6 Josi CE services, Start/Stop/Restart via UAC, run installer for update/repair, open Installed Apps to uninstall | Done |
 | First-run setup handoff for a local server + in-app setup steps (owner, domain, model, SMTP, security, telemetry, review, Vault recovery key) | Done |
 | Sign in, authenticator (MFA) codes, invitation / password reset | Done |

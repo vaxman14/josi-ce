@@ -99,6 +99,7 @@ async function wizardTo(stopBefore: string) {
     ['llm', { provider: 'openai', model: 'gpt-4o-mini', apiKey: 'fake-key-0001', externalAcknowledged: true }],
     ['smtp', { skip: true }],
     ['security', {}],
+    ['pc_control', { skip: true }],
     ['telemetry', {}],
     ['review', {}],
   ];
@@ -283,6 +284,7 @@ describe('LB4.4 / LB6.5 — a required failure blocks completion', () => {
     expect(smtp.body.verification.status).toBe('failed');
 
     await call('/api/setup/steps/security', { method: 'POST', body: {} });
+    await call('/api/setup/steps/pc_control', { method: 'POST', body: { skip: true } });
     await call('/api/setup/steps/telemetry', { method: 'POST', body: {} });
     await call('/api/setup/steps/review', { method: 'POST', body: {} });
     await call('/api/setup/verify/llm', { method: 'POST', body: {} });
@@ -405,6 +407,7 @@ describe('LB6.4 — a step holding configuration can be corrected', () => {
       ['owner', { ...OWNER, email: 'attacker@ce.test', username: 'attacker' }],
       ['domain', { domain: 'evil.example.test', tlsMode: 'bundled_caddy' }],
       ['security', {}],
+      ['pc_control', { skip: true }],
       ['telemetry', { enabled: true }],
     ] as const) {
       const res = await call(`/api/setup/steps/${step}`, { method: 'POST', body });
@@ -439,14 +442,14 @@ describe('LB2 — the ChatGPT subscription path is offered in the wizard', () =>
 
     const chatgpt = res.body.options.find((o: any) => o.provider === 'openai_subscription');
     expect(chatgpt.available).toBe(true);
-    expect(chatgpt.reason).toMatch(/never sees, stores or forwards your login/i);
+    expect(chatgpt.reason).toContain('saved in the Vault');
 
     // Claude is offered on the same terms and through the same kind of path:
-    // the vendor's own CLI, the vendor's own sign-in, no credential in Josi.
+    // the vendor's own CLI, with its credential held in the Vault.
     const claude = res.body.options.find((o: any) => o.id === 'claude_subscription');
     expect(claude.available).toBe(true);
     expect(claude.provider).toBe('anthropic_subscription');
-    expect(claude.reason).toMatch(/never sees, stores or forwards your login/i);
+    expect(claude.reason).toContain('in the Vault');
     expect(claude.reason).toMatch(/Claude Code/);
 
     // Copilot is not offered at all any more — not even as an unavailable
@@ -475,7 +478,7 @@ describe('LB2 — the ChatGPT subscription path is offered in the wizard', () =>
       await wizardTo('llm');
       const res = await call('/api/setup/subscription');
       expect(res.body.cli.installed).toBe(false);
-      expect(res.body.cli.detail).toMatch(/not present|could not be run/i);
+      expect(res.body.cli.detail).toMatch(/Codex CLI is unavailable/i);
     } finally {
       process.env.PATH = originalPath;
     }
@@ -534,9 +537,11 @@ describe('LB2 — the ChatGPT subscription path is offered in the wizard', () =>
     const fs = await import('node:fs');
     const source = fs.readFileSync(new URL('../src/setup/setupRoutes.ts', import.meta.url), 'utf8');
     const mounted = source.indexOf("hasCapability('subscription_auth')");
-    const routes = source.indexOf("'/subscription/login'");
+    const routes = source.indexOf("r.use('/subscription', codexSubscriptionRouter(");
+    const claudeRoutes = source.indexOf("r.use('/subscription/claude', claudeSubscriptionRouter(");
     expect(mounted, 'the routes must be inside a capability check').toBeGreaterThan(0);
     expect(routes).toBeGreaterThan(mounted);
+    expect(claudeRoutes).toBeGreaterThan(mounted);
     // And the provider list the step validates against is the shared one whose
     // hosted behaviour is already proven in the subscription suite.
     expect(source).toContain('savableProviders()');

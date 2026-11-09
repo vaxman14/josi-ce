@@ -19,6 +19,9 @@ export type ProviderKind =
   // V2.4. Vendors whose contract differs enough to need their own adapter —
   // a different auth scheme, request body, or tool-calling representation.
   | 'gemini' | 'cohere' | 'bedrock' | 'azure_ai' | 'vertex_ai' | 'ernie' | 'hunyuan'
+  // The Connect + AI plan: OpenAI's models through the Hey Josi gateway, which
+  // meters them against the account's allowance. External, like any hosted vendor.
+  | 'hey_josi'
   // Phase 13.3. Not "OpenAI with a different credential" — a different
   // TRANSPORT: no HTTP request is made by CE on this path at all, the
   // operator's own first-party Codex CLI is run as a subprocess. It is a

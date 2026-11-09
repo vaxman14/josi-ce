@@ -1,0 +1,64 @@
+;;
+;; Domain:     heyjosi.com.
+;; Exported:   2026-11-07 03:30:32
+;;
+;; This file is intended for use for informational and archival
+;; purposes ONLY and MUST be edited before use on a production
+;; DNS server.  In particular, you must:
+;;   -- update the SOA record with the correct authoritative name server
+;;   -- update the SOA record with the contact e-mail address information
+;;   -- update the NS record(s) with the authoritative name servers for this domain.
+;;
+;; For further information, please consult the BIND documentation
+;; located on the following website:
+;;
+;; http://www.isc.org/
+;;
+;; And RFC 1035:
+;;
+;; http://www.ietf.org/rfc/rfc1035.txt
+;;
+;; Please note that we do NOT offer technical support for any use
+;; of this zone data, the BIND name server, or any other third-party
+;; DNS software.
+;;
+;; Use at your own risk.
+;; SOA Record
+heyjosi.com	3600	IN	SOA	holly.ns.cloudflare.com. dns.cloudflare.com. 2054568883 10000 2400 604800 3600
+
+;; NS Records
+heyjosi.com.	86400	IN	NS	holly.ns.cloudflare.com.
+heyjosi.com.	86400	IN	NS	odin.ns.cloudflare.com.
+
+;; A Records
+accounts.heyjosi.com.	1	IN	A	165.227.188.169 ; cf_tags=cf-proxied:true
+
+;; CNAME Records
+api.heyjosi.com.	1	IN	CNAME	97109afe-1425-4d07-bdc1-8d175aea081f.cfargotunnel.com. ; cf_tags=cf-proxied:true
+app.heyjosi.com.	1	IN	CNAME	43be8e75-6016-482e-aa45-4786a49b3116.cfargotunnel.com. ; cf_tags=cf-proxied:true
+ce.heyjosi.com.	1	IN	CNAME	30e27520-8c1d-4108-95b5-1b859a2a0de1.cfargotunnel.com. ; cf_tags=cf-proxied:true
+control.heyjosi.com.	1	IN	CNAME	43be8e75-6016-482e-aa45-4786a49b3116.cfargotunnel.com. ; cf_tags=cf-proxied:true
+engine.heyjosi.com.	1	IN	CNAME	43be8e75-6016-482e-aa45-4786a49b3116.cfargotunnel.com. ; cf_tags=cf-proxied:true
+enroll.heyjosi.com.	1	IN	CNAME	97109afe-1425-4d07-bdc1-8d175aea081f.cfargotunnel.com. ; Josi enrollment broker cf_tags=cf-proxied:true
+get.heyjosi.com.	1	IN	CNAME	josi-get.netlify.app. ; cf_tags=cf-proxied:true
+help.heyjosi.com.	1	IN	CNAME	josi-ce-docs.netlify.app. ; cf_tags=cf-proxied:true
+heyjosi.com.	1	IN	CNAME	heyjosi.netlify.app. ; cf_tags=cf-proxied:true
+openclaw.heyjosi.com.	1	IN	CNAME	20633d23-09d8-4bf8-ba63-0edaf9b92644.cfargotunnel.com. ; cf_tags=cf-proxied:true
+www.heyjosi.com.	1	IN	CNAME	20633d23-09d8-4bf8-ba63-0edaf9b92644.cfargotunnel.com. ; cf_tags=cf-proxied:true
+
+;; MX Records
+heyjosi.com.	1	IN	MX	35 route3.mx.cloudflare.net.
+heyjosi.com.	1	IN	MX	5 route2.mx.cloudflare.net.
+heyjosi.com.	1	IN	MX	62 route1.mx.cloudflare.net.
+send.heyjosi.com.	3600	IN	MX	10 feedback-smtp.us-east-1.amazonses.com.
+
+;; TXT Records
+cf2024-1._domainkey.heyjosi.com.	1	IN	TXT	"v=DKIM1; h=sha256; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiweykoi+o48IOGuP7GR3X0MOExCUDY/BCRHoWBnh3rChl7WhdyCxW3jgq1daEjPPqoi7sJvdg5hEQVsgVRQP4DcnQDVjGMbASQtrY4WmB1VebF+RPJB2ECPsEDTpeiI5ZyUAwJaVX7r6bznU67g7LvFq35yIo4sdlmtZGV+i0H4cpYH9+3JJ78k" "m4KXwaf9xUJCWF6nxeD+qG6Fyruw1Qlbds2r85U9dkNDVAS3gioCvELryh1TxKGiVTkg4wqHTyHfWsp7KD3WQHYJn0RyfJJu6YEmL77zonn7p2SRMvTMP3ZEXibnC9gz3nnhR6wcYL8Q7zXypKTMD58bTixDSJwIDAQAB"
+_cf-custom-hostname.app.heyjosi.com.	1	IN	TXT	"58d0349a-46b8-419c-ad7c-31cbfcc597bd"
+_dmarc.heyjosi.com.	1	IN	TXT	"v=DMARC1; p=none;"
+heyjosi.com.	1	IN	TXT	"v=spf1 include:amazonses.com include:_spf.mx.cloudflare.net ~all"
+heyjosi.com.	3600	IN	TXT	"google-site-verification=spxaeQ_JuGCMnl50PaiKa2eSsgrbcHpcXFV3YNxDx-4"
+heyjosi.com.	3600	IN	TXT	"google-site-verification=AYfNuLj29_u0AeMklXmwHbSFa7XrIV0GrDpt1p89lng"
+_openai-site-verification.app.heyjosi.com.	1	IN	TXT	"openai-site-verification=rzfOYlY_I_0Pp3ngFf1mPD_187BBMB9PLPKiNmB5BhI"
+resend._domainkey.heyjosi.com.	3600	IN	TXT	"p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDtYj1Cx048NgREdsbD0BV8/9Pj/ibksNZ0Rd5NBN0yAKLFXmt2xGN0iAp78L5RKlStSDOHYJh7EPTGehGHM9J9VKfvxM8wfB8WNoLUv3zQiUPxqNc8Frnr/Nl7ONiqzzxF+yRb30LiTouoJ+QofWiJrXbPikJRPiygaGGtVe9OCQIDAQAB"
+send.heyjosi.com.	3600	IN	TXT	"v=spf1 include:amazonses.com ~all"

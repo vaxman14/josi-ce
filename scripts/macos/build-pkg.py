@@ -132,6 +132,7 @@ def prepare_native(out,workspace):
         if destination.exists():shutil.rmtree(destination)
         shutil.copytree(p,destination)
     for p in REPO.glob('apps/*/dist'):
+        if p.parent.name=='hosted':continue
         destination=runtime/'app'/p.relative_to(REPO)
         if destination.exists():shutil.rmtree(destination)
         shutil.copytree(p,destination)

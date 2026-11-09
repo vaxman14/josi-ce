@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
+import { testDb, testVault, type TestDb } from '../../../packages/core/test/helpers.js';
+import { MasterKey } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 import type { DoctorHelper } from '../src/http/doctorRoutes.js';
@@ -17,7 +18,8 @@ let helperCalls: Array<{ path: string; body?: unknown }> = [];
 let modelCalls: string[] = [];
 let nativeMode = false;
 const keyPath = join(mkdtempSync(join(tmpdir(), 'josi-doctor-')), 'master.key');
-writeFileSync(keyPath, Buffer.alloc(32, 29).toString('base64'));
+const KEY_BYTES = Buffer.alloc(32, 29);
+writeFileSync(keyPath, KEY_BYTES.toString('base64'));
 
 const llmFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
   const body = String(init?.body ?? ''); modelCalls.push(body);
@@ -98,6 +100,7 @@ beforeAll(async () => {
   db = await testDb(); await ensureWorkspace(db);
   await createUser(db, { email: 'doctor-admin@test.invalid', username: 'doctoradmin', role: 'super_admin', password: 'doctor-admin-password' });
   await createUser(db, { email: 'doctor-member@test.invalid', username: 'doctormember', role: 'member', password: 'doctor-member-password' });
+  await testVault(db, new MasterKey(KEY_BYTES));
   const app = createApp(db, {
     cookieSecure: false, appUrl: 'http://localhost:3000', masterKeyCheck: { path: keyPath }, doctorHelper: helper,
     llmFetch, llmResolve: async () => ['203.0.113.10'],

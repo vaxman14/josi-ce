@@ -99,7 +99,7 @@ namespace Josi.Native {
       var list = Ui.Stack(6);
       var shown = entries.Where(e => e["name"].Text.IndexOf(filter.Text, StringComparison.OrdinalIgnoreCase) >= 0)
         .OrderBy(e => e["kind"].Text == "folder" ? 0 : 1).ThenBy(e => e["name"].Text, StringComparer.CurrentCultureIgnoreCase).ToList();
-      if (listError.Length > 0) list.Children.Add(Ui.T("Josi could not list " + browsing["display_path"].Text + (path.Length > 0 ? "/" + path : "") + ": " + listError, 13.5, null, Ui.Orange));
+      if (listError.Length > 0) list.Children.Add(Ui.T("Josi could not list " + browsing["display_path"].Text + (path.Length > 0 ? "/" + path : "") + ": " + listError, 13.5, null, Ui.Error));
       else if (shown.Count == 0) list.Children.Add(Ui.Secondary(entries.Count == 0 ? "This folder is empty." : "Nothing matches."));
       var entryNumber = 0;
       foreach (var e in shown) {
@@ -173,7 +173,7 @@ namespace Josi.Native {
           Automation.Group(prefix + ".status", Wires.Words(m["status"].Text) + " · " + syncState, ModelText.Pill(Wires.Words(m["status"].Text), active))));
         row.Children.Add(Ui.Caption(FolderSheet.ProviderName(m["provider"].Text) + (m["recursive"].Flag ? " · with subfolders" : " · this folder only")
           + (m["indexing_enabled"].Flag ? " · searchable" : " · read on request, not searchable")));
-        if (m["paused_reason"].Text.Length > 0) row.Children.Add(Ui.T("Paused: " + Wires.Words(m["paused_reason"].Text), 13, null, Ui.Orange));
+        if (m["paused_reason"].Text.Length > 0) row.Children.Add(Ui.T("Paused: " + Wires.Words(m["paused_reason"].Text), 13, null, Ui.Accent));
         Wire status;
         if (mappingStatus.TryGetValue(id, out status) && status["total"].Integer > 0) {
           row.Children.Add(Ui.Caption(status["byState"]["indexed"].Integer + " of " + status["total"].Integer + " file(s) indexed and searchable."));

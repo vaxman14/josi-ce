@@ -210,7 +210,7 @@ namespace Josi.Native {
       public readonly TextBlock Hint = Ui.Caption("");
       bool loading;
       public Draft() {
-        Hint.Foreground = Ui.Orange; Hint.TextWrapping = TextWrapping.Wrap; Hint.Visibility = Visibility.Collapsed;
+        Hint.Foreground = Ui.Accent; Hint.TextWrapping = TextWrapping.Wrap; Hint.Visibility = Visibility.Collapsed;
         Port.TextChanged += delegate {
           if (loading) return;
           var wanted = Port.Text.Trim() == "465" ? "tls" : Port.Text.Trim() == "587" ? "starttls" : null;
@@ -528,7 +528,7 @@ namespace Josi.Native {
       }, true), 10);
       var configured = Telegram ? config["tokenSet"].Flag : config["configured"].Flag;
       if (config["probeOk"].IsBool && !config["probeOk"].Flag)
-        Ui.Add(stack, Ui.T(Telegram ? "The last bot verification failed. Check the token or server connection." : "The last provider check failed. Review the credentials and server connection.", 14, null, Ui.Orange), 10);
+        Ui.Add(stack, Ui.T(Telegram ? "The last bot verification failed. Check the token or server connection." : "The last provider check failed. Review the credentials and server connection.", 14, null, Ui.Error), 10);
       if (configured) {
         var toggle = Ui.Pill(config["enabled"].Flag ? "Turn " + (Telegram ? "Telegram " : "") + "Off" : "Turn " + (Telegram ? "Telegram " : "") + "On",
           () => AdminChange(Telegram ? "/enabled" : "enabled", "POST", Wires.O("enabled", !config["enabled"].Flag), Label + " availability updated."));

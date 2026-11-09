@@ -6,18 +6,23 @@ if (!('Josi.NativeSetup.FileAttributes' -as [type])) {
     Add-Type -Path (Join-Path $PSScriptRoot 'NativeFileAttributes.cs')
 }
 
-function Assert-PlainNativePath([string]$Path) {
+# $Checked, when given, remembers folders already found to be plain during one
+# pass over thousands of files, so each folder is checked once instead of once
+# per file. Callers pass it only for folders setup itself created and that only
+# SYSTEM and administrators can change.
+function Assert-PlainNativePath([string]$Path, [hashtable]$Checked) {
     if ($Path -notmatch '^[A-Za-z]:[\\/]' -or $Path.Contains([char]0)) { throw 'An absolute local path is required' }
     $full = [IO.Path]::GetFullPath($Path)
     $current = $full
     while ($current) {
-        if (Test-Path -LiteralPath $current) {
-            $item = Get-Item -LiteralPath $current -Force
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -and
-                ![Josi.NativeSetup.FileAttributes]::IsNonRedirecting($current)) { throw 'Installer storage must not contain links' }
-        }
+        if ($Checked -and $current -ne $full -and $Checked.ContainsKey($current)) { break }
+        $attributes = $null
+        try { $attributes = [IO.File]::GetAttributes($current) } catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { }
+        if ($null -ne $attributes -and ($attributes -band [IO.FileAttributes]::ReparsePoint) -and
+            ![Josi.NativeSetup.FileAttributes]::IsNonRedirecting($current)) { throw 'Installer storage must not contain links' }
+        if ($Checked -and $current -ne $full -and $null -ne $attributes) { $Checked[$current] = $true }
         $parent = [IO.Path]::GetDirectoryName($current)
-        if ($parent -eq $current) { break }
+        if ($parent -eq $current -or !$parent) { break }
         $current = $parent
     }
     return $full

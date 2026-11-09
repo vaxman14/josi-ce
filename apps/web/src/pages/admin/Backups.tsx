@@ -215,7 +215,7 @@ export function AdminBackups() {
                     goes with it and the server decides. */}
                 {b.state === 'complete' ? (
                   <a
-                    className="inline-flex min-h-11 items-center rounded-md border border-input px-3 text-sm underline"
+                    className="inline-flex min-h-11 items-center rounded-md border border-border px-3 text-sm underline"
                     href={`/api/ops/admin/backups/${b.id}/download`}
                   >
                     Download
@@ -361,7 +361,7 @@ function BackupDestination() {
       <CardTitle>Where backups are kept</CardTitle>
       {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
       {recoveryKey ? (
-        <div className="mt-2 rounded-md border border-amber-500/40 p-3">
+        <div className="mt-2 rounded-md border border-warning/40 p-3">
           <p className="text-sm font-medium">Save the backup recovery key now</p>
           <p className="mt-1 text-xs text-muted-foreground">This is the only visible copy. Keep it somewhere other than the backup destination.</p>
           <code className="mt-2 block break-all text-sm">••••••••••••{recoveryKey.slice(-4)}</code>
@@ -410,7 +410,7 @@ function BackupDestination() {
             <ErrorNote>{destination.lastCheckError}</ErrorNote>
           ) : null}
           {result ? (
-            <p className={`text-sm ${result.ok ? 'text-emerald-600 dark:text-emerald-400' : ''}`}>
+            <p className={`text-sm ${result.ok ? 'text-success' : ''}`}>
               {result.detail}
             </p>
           ) : null}
@@ -457,7 +457,7 @@ function BackupDestination() {
               {(view?.catalog ?? []).map((c) => {
                 const selected = kind === c.kind;
                 return (
-                  <label key={c.kind} className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm ${selected ? 'border-primary bg-primary/15 text-primary' : 'border-input bg-background'}`}>
+                  <label key={c.kind} className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-md border px-3 text-sm ${selected ? 'border-primary bg-primary/15 text-primary' : 'border-border bg-background'}`}>
                     <input type="radio" name="destination-kind" value={c.kind} checked={selected} onChange={() => setKind(c.kind)} />
                     <span>{c.label}</span>
                     {selected ? <span className="ml-auto" aria-label="Selected">✓</span> : null}
@@ -518,7 +518,7 @@ function BackupDestination() {
           {kind === 'nas' ? (
             <div>
               <Button type="button" variant="secondary" disabled={testing || !values.shareHost || !values.shareName} onClick={() => void browseNas()}>{testing ? 'Connecting…' : 'Connect and browse'}</Button>
-              {folders.length ? <select className="mt-2 min-h-11 w-full rounded-md border border-input bg-background px-3" value={values.folder ?? ''} onChange={(e) => setField('folder', e.target.value)}><option value="">Share root</option>{folders.map((folder) => <option key={folder} value={folder}>{folder}</option>)}</select> : null}
+              {folders.length ? <select className="mt-2 min-h-11 w-full rounded-md border border-border bg-background px-3" value={values.folder ?? ''} onChange={(e) => setField('folder', e.target.value)}><option value="">Share root</option>{folders.map((folder) => <option key={folder} value={folder}>{folder}</option>)}</select> : null}
             </div>
           ) : null}
 

@@ -184,6 +184,7 @@ def build(args):
         'NSMicrophoneUsageDescription': 'Josi uses your microphone only when you start dictation or voice chat. Audio is processed by Voice Box on your Josi server.',
         'NSHighResolutionCapable': True, 'NSPrincipalClass': 'NSApplication',
         'NSAppTransportSecurity': {'NSAllowsLocalNetworking': True},
+        'NSLocalNetworkUsageDescription': 'Josi connects straight to your server when both are on the same network.',
         'NSAccessibilityUsageDescription': 'Josi controls only the apps you select and approve for this desktop session.',
         'NSScreenCaptureUsageDescription': 'Josi captures permitted app windows during an approved desktop task.',
         'JosiNativeClientProtocol': 1, 'JosiProtectedHostProtocol': 1,
@@ -204,7 +205,7 @@ def build(args):
     baseline_version = json.loads((runtime / 'app/package.json').read_text())['version']
     for group in ('packages', 'apps'):
         for package in (REPO / group).iterdir():
-            if not (package / 'package.json').is_file() or package.name == 'desktop':
+            if not (package / 'package.json').is_file() or package.name in ('desktop', 'hosted'):
                 continue
             target = runtime / 'app' / group / package.name; target.mkdir(parents=True, exist_ok=True)
             (target / 'package.json').write_bytes((package / 'package.json').read_bytes())
@@ -216,6 +217,10 @@ def build(args):
                 link.unlink()
             if not link.exists():
                 link.symlink_to(os.path.relpath(target, link.parent), target_is_directory=True)
+    # The hosted service never runs on a server. A runtime staged earlier may still carry it.
+    if (runtime / 'app/apps/hosted').exists():
+        shutil.rmtree(runtime / 'app/apps/hosted')
+    (runtime / 'app/node_modules/@josi-ce/hosted').unlink(missing_ok=True)
     replace(REPO / 'packages/db/migrations', runtime / 'app/packages/db/migrations')
     (runtime / 'app/packages/db/migrate.mjs').write_bytes((REPO / 'packages/db/migrate.mjs').read_bytes())
     native = runtime / 'app/native'; native.mkdir(exist_ok=True)

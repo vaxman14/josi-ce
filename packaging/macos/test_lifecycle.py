@@ -11,6 +11,10 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 BASE=Path('/Users/roman/Documents/Josi Mac Native/JosiDrive/BuildTemp/josi-ce-native-macos-20261009/tmp/port/tests')
 
 class Tests(unittest.TestCase):
+    def test_key_folder_is_private_and_survives_a_second_install(self):
+        self.obj.data.mkdir(parents=True)
+        self.obj.key_layout();self.obj.key_layout()
+        self.assertEqual((self.obj.data/'keys').stat().st_mode&0o777,0o700)
     def test_subscription_cache_is_retained_without_following_links(self):
         self.obj.account=lambda role:(os.getuid(),os.getgid())
         (self.root/'transactions').mkdir()

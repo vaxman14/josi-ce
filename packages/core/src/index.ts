@@ -15,6 +15,7 @@ export * from './masterKey.js';
 export * from './readiness.js';
 export * from './sealing.js';
 export * from './vault.js';
+export * from './myWorld.js';
 export * from './cardinalRules.js';
 export * from './automationPermissions.js';
 export { AUTOMATION_ENFORCEMENT_VERSION, automationPolicyChangeBinding,
@@ -50,6 +51,7 @@ export { NativeNetworkTransportError, type NativeNetworkPayload, type NativeNetw
 export { createNativeInspectionRuntime } from './nativeAutomationRuntime.js';
 export * from './subscriptionCredentials.js';
 export { type WorkspaceStorageAuthority, type WorkspaceStorageSummary } from './workspaceStorage.js';
+export * from './canonicalJson.js';
 export * from './workContinuation.js';
 export * from './conversations.js';
 export * from './approvals.js';
@@ -60,6 +62,7 @@ export * from './queue.js';
 export * from './reminders.js';
 export * from './metrics.js';
 export * from './mobile.js';
+export * from './fcm.js';
 export {
   LIMITS, consume, peek, pruneRateLimits, type Limit, type LimitVerdict,
 } from './ratelimit.js';
@@ -82,3 +85,5 @@ export * from './automationBrowserTargets.js';
 export * from './automationBlockers.js';
 
 export { readLinuxSecret, readProtectedLinuxFile } from './linuxSecrets.js';
+
+export * from './computerControl.js';

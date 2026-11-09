@@ -14,6 +14,10 @@ namespace Josi.Native {
   /// the activity log.
   public sealed class PcControlView : SectionView {
     static readonly List<KeyValuePair<string, string>> Modes = Ui.Options("never", "Never allow", "ask", "Ask every time", "task", "Allow for this task", "temporary", "Allow temporarily", "always", "Always allow for this exact scope");
+    /// The shells Josi can run commands in, by their exact path (the server knows the same two).
+    static readonly List<KeyValuePair<string, string>> Shells = Ui.Options(
+      System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"), "PowerShell",
+      System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"), "Command Prompt");
     Wire state = Wire.Null;
     string action = "", mode = "ask";
     readonly TextBox target = Ui.Input("Exact scope"), application = Ui.Input("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"), profile = Ui.Input("Default"), expires = Ui.Input("Local time, for example 2026-10-22 17:00");
@@ -29,10 +33,12 @@ namespace Josi.Native {
     }
     readonly Action refresh;
     protected override void OnLeave() { timer.Stop(); BrowserBridge.Current.Changed -= refresh; foreach (var p in passwords.Values) p.Clear(); }
+    Wire readiness = Wire.Null;
     protected override async Task Load() {
       var api = Api; var stamp = Stamp; var s = await api.Request("/admin/pc-control");
+      Wire r; try { r = await api.Request("/admin/pc-control/readiness"); } catch (JosiException) { r = Wire.Null; }
       if (!Current(stamp)) return;
-      state = s;
+      state = s; readiness = r;
       var catalog = s["catalog"].List;
       actionPick.ItemsSource = catalog.Select(c => c["label"].Text).ToList();
       if (action.Length == 0 && catalog.Count > 0) action = catalog[0]["action"].Text;
@@ -42,9 +48,10 @@ namespace Josi.Native {
     string Scope(Wire s) { return (s["application"].Text.Length > 0 ? s["application"].Text + " · " : "") + (s["profile"].Text.Length > 0 ? "Profile " + s["profile"].Text + " · " : "") + s["target"].Text; }
     string LabelOf(string a) { return state["catalog"].List.Where(c => c["action"].Text == a).Select(c => c["label"].Text).FirstOrDefault() ?? a; }
     protected override UIElement Build() {
-      var page = Page(Ui.HeadingWith("PC Control", null, Ui.Pill("Refresh", StartLoad)));
+      var page = Page(Ui.HeadingWith("PC Control", null, Ui.Row(8,Ui.Pill("Show Control Bar",()=>PcControlOverlay.Current?.ShowControls()),Ui.Pill("Terminals",()=>PcTerminalView.Show(owner)),Ui.Pill("Refresh", StartLoad))));
       if (state.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Loading PC permissions…" : "PC permissions have not loaded."), 0); return page; }
       var enabled = state["enabled"].Flag; var full = state["fullControl"].Flag;
+      Ui.Add(page, ReadinessCard(), 0);
       var master = Automation.Id(Ui.Toggle("Allow Josi to control this PC", enabled), "josi.pc-control.enabled");
       master.Click += delegate { var on = master.IsChecked == true; Perform(async (api, stamp) => await api.Request("/admin/pc-control/enabled", "PUT", Wires.O("enabled", on))); };
       Ui.Add(page, Ui.CardBox(null, Ui.Secondary(state["availability"].Text), master,
@@ -65,15 +72,18 @@ namespace Josi.Native {
       }
       var form = new List<UIElement> { Ui.Caption("Each browser executable, profile and origin needs its own permission. Folder choices apply to that exact folder; application choices to that exact executable. No wildcard or inherited grants."),
         Ui.Field("Action", actionPick) };
-      if (!spec.IsNull) form.Add(Ui.Caption(spec["access"].Text + (spec["highRisk"].Flag ? " · Each exact action needs separate approval in every mode." : "")));
-      form.Add(Ui.Field(kind == "browser" ? "Exact website origin (for example https://example.com)" : kind == "application" ? "Exact application .exe path" : kind == "folder" || kind == "command" ? "Exact local folder path" : kind == "secret" ? "Exact credential or item identifier" : "Exact software or settings scope", target));
-      if (kind == "browser" || kind == "command") form.Add(Ui.Field("Exact " + (kind == "browser" ? "browser" : "command runner") + " .exe path", application));
+      if (!spec.IsNull) form.Add(Ui.Caption(spec["access"].Text + (spec["highRisk"].Flag && !spec["grantable"].Flag ? " · Each exact action needs separate approval in every mode."
+        : kind == "command" ? " · High risk. This chooses a starting folder, not a sandbox. Commands can access other files and start programs with your Windows account's authority. Your password confirms the grant." : "")));
+      form.Add(Ui.Field(kind == "browser" ? "Exact website origin (for example https://example.com)" : kind == "application" ? "Exact application .exe path" : kind == "command" ? "Folder Josi may run commands in (and its subfolders)" : kind == "folder" ? "Exact local folder path" : kind == "secret" ? "Exact credential or item identifier" : "Exact software or settings scope", target));
+      if (kind == "command" && application.Text.Trim().Length == 0) application.Text = Shells[0].Value;
+      if (kind == "browser") form.Add(Ui.Field("Exact browser .exe path", application));
+      if (kind == "command") form.Add(Ui.Field("Shell", new ContentControl { Focusable = false, Content = Ui.Segments(Shells, Shells.Any(s => s.Value.Equals(application.Text.Trim(), StringComparison.OrdinalIgnoreCase)) ? application.Text.Trim() : Shells[0].Value, v => { application.Text = v; Render(); }) }));
       if (kind == "browser") form.Add(Ui.Field("Exact browser profile", profile));
       form.Add(Ui.Field("Approval mode", new ContentControl { Focusable = false, Content = Ui.Segments(Modes, mode, v => { mode = v; Render(); }) }));
       if (mode == "task") { form.Add(Ui.Field("Exact active Josi task", taskPick)); form.Add(Ui.Caption("Expires when the task ends, or after 24 hours, whichever comes first.")); }
       if (mode == "temporary") form.Add(Ui.Field("Expires at (your local time, within 24 hours)", expires));
       form.Add(Automation.Id(Ui.Pill("Save Exact-Scope Permission", Save, true), "josi.pc-control.save-scope"));
-      form.Add(Ui.Caption("Deleting, submissions and messages, financial actions, credential access, installs, security changes and elevation always ask separately."));
+      form.Add(Ui.Caption("Ask, Never, task, timed and saved permissions are available through chat. An asterisk selects all targets for this action. Never rules override broader allowances. Broad host shells cannot enforce app, folder or website exclusions; use mediated tools for restricted work. Windows still owns elevation prompts."));
       Ui.Add(page, Ui.CardBox("Choose one exact scope", form.ToArray()), 0);
       var policies = Ui.Stack(10);
       if (state["policies"].List.Count == 0) policies.Children.Add(Ui.Caption("No scopes granted. Unlisted scopes ask before each action while control is on."));
@@ -96,12 +106,27 @@ namespace Josi.Native {
         foreach (var r in q["requirements"].List) item.Children.Add(Ui.Caption(LabelOf(r["action"].Text) + ": " + Scope(r["scope"])));
         item.Children.Add(Ui.Caption("Expires " + Wires.Date(q["expiresAt"].Text)));
         if (high) item.Children.Add(Ui.Field("Confirm your account password", box));
-        item.Children.Add(Ui.Wrap(Automation.Id(Ui.Pill("Approve This Exact Action Once", () => {
+        // A command request can also become a standing grant for its shell in
+        // its folder tree, so the next command there does not ask.
+        var command = q["requirements"].List.FirstOrDefault(r => r["action"].Text == "command.run" && r["scope"]["kind"].Text == "command");
+        var buttons = Ui.Wrap(Automation.Id(Ui.Pill("Approve This Exact Action Once", () => {
             if (high && box.Password.Length == 0) { model.Error = "Enter your password to approve a high-risk action."; model.Notify(); return; }
             var password = box.Password; box.Clear();
             Perform(async (api, stamp) => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", true, "password", password)));
-          }, true), requestId + ".approve"),
-          Automation.Id(Ui.Pill("Deny", () => Perform(async (api, stamp) => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", false)))), requestId + ".deny")));
+          }, true), requestId + ".approve"));
+        if (command != null) {
+          var shellName = Shells.FirstOrDefault(s => s.Key.Equals(command["scope"]["application"].Text, StringComparison.OrdinalIgnoreCase)).Value ?? "this shell";
+          buttons.Children.Add(Automation.Id(Ui.Pill("Approve and Always Allow " + shellName + " Here", () => {
+            if (box.Password.Length == 0) { model.Error = "Enter your password to allow commands here from now on."; model.Notify(); return; }
+            var password = box.Password; box.Clear();
+            var scope = command["scope"];
+            Perform(async (api, stamp) => await api.Request("/admin/pc-control/policies", "PUT",
+              Wires.O("action", "command.run", "scope", Wires.O("kind", "command", "target", scope["target"].Text, "application", scope["application"].Text),
+                "mode", "always", "password", password, "approveRequestId", id)));
+          }), requestId + ".allow-always"));
+        }
+        buttons.Children.Add(Automation.Id(Ui.Pill("Deny", () => Perform(async (api, stamp) => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", false)))), requestId + ".deny"));
+        item.Children.Add(buttons);
         pending.Children.Add(Automation.Group(requestId, q["description"].Text, item));
       }
       Ui.Add(page, Ui.CardBox("Actions awaiting approval", pending), 0);
@@ -112,6 +137,39 @@ namespace Josi.Native {
       Ui.Add(page, new Disclosure("Activity log", () => activity), 0);
       Ui.Add(page, Note(), 0);
       return page;
+    }
+    /// Is Josi able to work on this PC? One line per link of the chain, from
+    /// the model's tool calling to this PC announcing itself, each green or
+    /// red with the exact fix, plus Approve This PC when that is the missing
+    /// link. The owner reads this instead of guessing.
+    UIElement ReadinessCard() {
+      var items = new List<UIElement>();
+      var authority = Api != null ? Api.PcAuthority : null;
+      var executor = DesktopExecutor.Current;
+      if (executor.Paused || executor.PendingStop) items.Add(Ui.Row(8, Ui.Icon(Glyph.Warning, 13, Ui.Error), Ui.T(executor.PendingStop ? "Stopped on this PC: nothing runs until you resume." : "Paused on this PC: nothing runs until you resume.", 13),
+        Automation.Id(Ui.Pill("Resume", () => { executor.Resume(); StartLoad(); }, true), "josi.pc-control.readiness.resume")));
+      if (readiness.IsNull) items.Add(Ui.Caption("Readiness could not be loaded from the server."));
+      else {
+        items.Add(Ui.T(readiness["summary"].Text, 14, FontWeights.Medium, readiness["ready"].Flag ? Ui.Green : Ui.Accent));
+        var facts = readiness["facts"];
+        foreach (var key in new[] { "model", "toolServer", "pcRegistered", "pcPaired", "controlEnabled", "pcPresence", "grants" }) {
+          var fact = facts[key]; if (fact.IsNull) continue;
+          var ok = fact["ok"];
+          items.Add(Ui.Row(8, Ui.Icon(ok.IsNull ? Glyph.Circle : ok.Flag ? Glyph.Check : Glyph.Warning, 13, ok.IsNull ? Ui.Muted : ok.Flag ? Ui.Green : Ui.Error), Ui.T(fact["detail"].Text, 13)));
+        }
+      }
+      if (authority != null && (authority.NeedsApproval || (!readiness.IsNull && readiness["facts"]["pcPaired"]["ok"].IsNull == false && !readiness["facts"]["pcPaired"]["ok"].Flag))) {
+        items.Add(Ui.Caption(authority.KeyChanged
+          ? "The server knows a different key for this PC. Revoke its old identity, then approve it again."
+          : "Approving binds this PC's key to your account. Your password, once. It grants no permissions by itself."));
+        var buttons = Ui.Wrap(Automation.Id(Ui.Pill("Approve This PC", () => Perform(async (api, stamp) => { await api.PcAuthority.Approve(api, owner); }), true), "josi.pc-control.approve-pc"));
+        if (authority.KeyChanged) buttons.Children.Add(Automation.Id(Ui.Pill("Revoke Old Identity", () => {
+          if (Dialogs.Confirm(owner, "Revoke this PC's old identity?", "Stops control on this PC and forgets its previous key. Then approve the PC again.", "Revoke"))
+            Perform(async (api, stamp) => await api.Request("/admin/pc-control/identity", "DELETE", null));
+        }), "josi.pc-control.revoke-identity"));
+        items.Add(buttons);
+      }
+      return Ui.CardBox("Is Josi able to work on this PC?", items.ToArray());
     }
     /// One switch instead of a permission per site: everyday actions in allowed
     /// browsers, folders and applications stop asking. The server lists what
@@ -144,7 +202,7 @@ namespace Josi.Native {
       if (asked != null) items.Add(Ui.Stack(6, Ui.T(asked.Browser + " asked to connect to Josi", 14, FontWeights.Medium),
         Ui.Caption(asked.Application + " · attaching " + asked.Url),
         Ui.Wrap(Ui.Pill("Allow This Browser", () => bridge.Allow(), true), Ui.Pill("Ignore", () => bridge.Ignore())),
-        Ui.Caption("After allowing it, click the Josi extension in the browser and choose Attach this tab again.")));
+        Ui.Caption("After allowing it, the browser links to Josi by itself. Then say \"use this tab\" in chat, or click the Josi icon and choose Attach this tab.")));
       if (bridge.Attached) {
         var origin = bridge.AttachedOrigin;
         items.Add(Ui.Stack(6, Ui.T(bridge.AttachedBrowser + " tab attached: " + (bridge.AttachedTitle.Length > 0 ? bridge.AttachedTitle : origin), 14, FontWeights.Medium),
@@ -153,7 +211,11 @@ namespace Josi.Native {
               Wires.O("action", "browser.view", "scope", Wires.O("kind", "browser", "target", origin, "application", bridge.AttachedApplication, "profile", bridge.AttachedProfile), "mode", "always")))) : null,
             Ui.Pill("Detach Tab", () => bridge.Disconnect()))));
         if (!enabled) items.Add(Ui.Caption("Turn on \"Allow Josi to control this PC\" above, or Josi cannot use the attached tab."));
-      } else if (asked == null) items.Add(Ui.Caption("To let Josi use a browser tab: open the site in Chrome, Brave or Edge with the Josi extension installed, click the Josi icon and choose Attach this tab. Josi stays limited to that tab."));
+      } else if (bridge.Linked) {
+        items.Add(Ui.Stack(6, Ui.T(bridge.AttachedBrowser + " is linked to Josi, with no tab attached", 14, FontWeights.Medium),
+          Ui.Caption("Say \"use this tab\" in chat and Josi attaches the tab you are looking at (you approve it once per site), or click the Josi icon in the browser and choose Attach this tab."),
+          Ui.Wrap(Ui.Pill("Unlink Browser", () => bridge.Disconnect()))));
+      } else if (asked == null) items.Add(Ui.Caption("To let Josi use a browser tab: open Chrome, Brave, Edge or Firefox with the Josi extension installed while Josi is open; it links by itself. Then say \"use this tab\" in chat. Josi stays limited to the tab you attach."));
       var allowed = bridge.Allowed();
       if (allowed.Count > 0) {
         var list = Ui.Stack(6, Ui.Caption("Allowed browsers"));
@@ -176,6 +238,15 @@ namespace Josi.Native {
       if (kind == "browser") scope["profile"] = profile.Text.Trim();
       if (target.Text.Trim().Length == 0 || ((kind == "browser" || kind == "command") && application.Text.Trim().Length == 0) || (kind == "browser" && profile.Text.Trim().Length == 0)) { model.Error = "Fill in every part of the exact scope."; model.Notify(); return; }
       var body = Wires.O("action", action, "scope", scope, "mode", mode);
+      // A standing grant for a high-risk action (commands) is confirmed with the password, like full control.
+      if (spec["highRisk"].Flag && mode != "never" && mode != "ask") {
+        var password = Dialogs.AskPassword(owner, kind == "command" ? "Let Josi run commands here without asking?" : "Allow this without asking?",
+          kind == "command" ? "Josi will run commands, scripts, builds and tests in " + (string)scope["target"] + " and every folder under it, in " + (Shells.FirstOrDefault(s => s.Key.Equals((string)scope["application"], StringComparison.OrdinalIgnoreCase)).Value ?? "this shell")
+            + ", as you, whenever a conversation or task calls for it. This is a starting folder, not a sandbox: commands can access other files and start programs. Stop ends active work. Confirm your account password to allow this."
+            : "Confirm your account password to let Josi do this without asking each time.", "Allow");
+        if (password == null) return;
+        body["password"] = password;
+      }
       if (mode == "task") { var tasks = state["tasks"].List; if (taskPick.SelectedIndex < 0) { model.Error = "Choose the task."; model.Notify(); return; } body["taskId"] = tasks[taskPick.SelectedIndex].Id; }
       if (mode == "temporary") {
         DateTime at; if (!DateTime.TryParse(expires.Text, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out at)) { model.Error = "Enter when the access expires."; model.Notify(); return; }

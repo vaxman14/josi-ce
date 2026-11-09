@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import type { AutomationIdentity, Continuation, GoalProgress } from '@josi-ce/protocol';
 import { json, type Db } from './db.js';
 import { addMessage } from './conversations.js';
@@ -300,7 +301,7 @@ export async function reviseWorkPlan(db: Db, args: { ownerUserId: string; goalId
         throw new WorkGoalError('A retired step does not satisfy a dependency. Review and explicitly remove that dependency or add the needed replacement work.', 409);
       }
       if (previous && (previous.taskId || previous.evidence || previous.state === 'verified' || previous.state === 'skipped' || locked.has(previous.id))
-        && (step.title !== previous.title || JSON.stringify([...dependsOn].sort()) !== JSON.stringify([...workDependencies(row.steps, previous)].sort()))) {
+        && (step.title !== previous.title || !isDeepStrictEqual([...dependsOn].sort(), [...workDependencies(row.steps, previous)].sort()))) {
         throw new WorkGoalError('Keep the meaning and dependencies of a step that already has an action or receipt.', 409);
       }
       // A repeat keeps its count of done items when it stays the same loop.
@@ -427,7 +428,7 @@ export async function changeWorkOutcome(db: Db, args: { ownerUserId: string; goa
   if (!criteria.length || typeof args.continueWork !== 'boolean') throw new WorkGoalError('Record completion criteria and choose whether to continue.');
   return transaction(db, async tx => {
     const row = await owned(tx, args.ownerUserId, args.goalId, true); await current(tx, row, args.revision);
-    if (row.outcome === outcome && JSON.stringify(row.criteria) === JSON.stringify(criteria)) {
+    if (row.outcome === outcome && isDeepStrictEqual(row.criteria, criteria)) {
       throw new WorkGoalError('The outcome and criteria are unchanged. Use Add instructions to steer the next action.');
     }
     const [thread] = await tx.query(`select id from threads where id=$1 and owner_user_id=$2 and status='open'`, [row.thread_id, args.ownerUserId]);

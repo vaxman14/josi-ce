@@ -18,6 +18,9 @@ COPY package.json package-lock.json ./
 # here becomes "cannot find module @josi-ce/x" during the build — which is
 # exactly how Phase 4 broke the image while `tsc -b` passed locally against an
 # already-linked tree.
+COPY packages/protocol/package.json packages/protocol/
+COPY packages/automation/package.json packages/automation/
+COPY packages/tunnel/package.json packages/tunnel/
 COPY packages/core/package.json packages/core/
 COPY packages/auth/package.json packages/auth/
 COPY packages/llm/package.json packages/llm/
@@ -31,6 +34,8 @@ COPY packages/channels/package.json packages/channels/
 COPY apps/api/package.json apps/api/
 COPY apps/worker/package.json apps/worker/
 COPY apps/web/package.json apps/web/
+COPY apps/desktop/package.json apps/desktop/
+COPY apps/hosted/package.json apps/hosted/
 RUN npm ci --ignore-scripts
 
 COPY tsconfig.base.json tsconfig.json ./
@@ -108,8 +113,8 @@ WORKDIR /app
 # daemon as root:root 0755, the application runs as `node`, and every backup
 # fails with a permission error on a real installation — which is exactly what
 # the first runtime run found while every unit test passed.
-RUN mkdir -p /data/backups /data/diagnostics /data/versions /data/codex /data/claude /data/chat-attachments \
- && chmod 0700 /data/chat-attachments \
+RUN mkdir -p /data/backups /data/diagnostics /data/versions /data/codex /data/claude /data/chat-attachments /data/keys \
+ && chmod 0700 /data/chat-attachments /data/keys \
  && chown -R node:node /data
 
 # ------------------------------------------------- the ChatGPT subscription path

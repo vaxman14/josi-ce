@@ -5,6 +5,9 @@
       "path": "packages/protocol"
     },
     {
+      "path": "packages/tunnel"
+    },
+    {
       "path": "packages/automation"
     },
     {
@@ -42,6 +45,9 @@
     },
     {
       "path": "apps/worker"
+    },
+    {
+      "path": "apps/hosted"
     }
   ]
 }

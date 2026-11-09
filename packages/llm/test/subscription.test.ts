@@ -209,15 +209,36 @@ describe('no code path in the repository reads a credential store (L3.3)', () =>
     return out;
   }
 
+  // The one exception. Josi stores its OWN relay keys in the OS store, which is
+  // what those stores are for. The rule is about reading anybody else's, so the
+  // exception is held to that below.
+  const OWN_KEY_STORE = 'packages/tunnel/src/keyStore.ts';
+
   it('finds nothing, anywhere', () => {
     const findings: string[] = [];
     for (const file of sources(ROOT)) {
+      if (file.replace(/\\/g, '/').endsWith(OWN_KEY_STORE)) continue;
       const text = readFileSync(file, 'utf8');
       for (const [pattern, what] of FORBIDDEN) {
         if (pattern.test(text)) findings.push(`${file.slice(ROOT.length + 1)}: ${what}`);
       }
     }
     expect(findings, findings.join('\n')).toEqual([]);
+  });
+
+  it('lets Josi\'s key store touch only its own entries', () => {
+    const text = readFileSync(join(ROOT, OWN_KEY_STORE), 'utf8');
+    expect(text).toContain("const SERVICE = 'josi-ce';");
+    // Every lookup is scoped to that service. No search across the store, and no
+    // way to name another application's entry.
+    expect(text.match(/'find-generic-password', '-a', name, '-s', SERVICE/g)).toHaveLength(1);
+    expect(text).toContain("['service', SERVICE, 'account', name]");
+    expect(text).toContain('`${SERVICE}/${name}`');
+    expect(text).toMatch(/const SAFE_NAME = \/\^\[a-z0-9-\]/);
+    expect(text).not.toMatch(/dump-keychain|secret-tool', \['search'|CredEnumerate/);
+    for (const [pattern, what] of FORBIDDEN.filter(([, name]) => !/macOS keychain|Linux keyring/.test(name))) {
+      expect(pattern.test(text), what).toBe(false);
+    }
   });
 
   it('and the guard itself would notice', () => {
@@ -333,7 +354,7 @@ describe('failures say what to do, and never quote the CLI', () => {
   it('names the sign-in step when the CLI is not logged in', async () => {
     const { runner } = fakeRunner({ code: 1, stderr: 'error: not logged in, run `codex login`' });
     await expect(codexCliProvider({ model: 'm', runner }).chat({ messages: [] }))
-      .rejects.toThrow(/not signed in/);
+      .rejects.toThrow(/Sign in through Josi’s model settings/);
   });
 
   it('names the shared quota when the plan is exhausted', async () => {

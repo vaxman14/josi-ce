@@ -68,20 +68,20 @@ try {
   Write-Host ("welcome has no remote option: " + !(Has $main 'Connect' $C::Button 2))
   Click $main 'Open Josi'
   (Find $main 'Username or email' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('roman')
-  (Find $main 'Password' $C::Edit).SetFocus(); [System.Windows.Forms.SendKeys]::SendWait('correct horse battery{ENTER}')
-  Write-Host ("signed in: " + (Has $main 'Sign out' $C::Button))
+  (Find $main 'Password' $C::Edit).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue('correct horse battery'); Click $main 'Sign In'
+  Write-Host ("signed in: " + (Has $main 'Menu' $C::Button))
   Close
   $main = Launch
-  $remembered = Has $main 'Sign out' $C::Button 15
+  $remembered = Has $main 'Menu' $C::Button 15
   Write-Host ("reopened signed in without a password: " + $remembered)
   Capture $main 'g01-reopened-signed-in'
 
   # 2. Sign out forgets it.
-  Click $main 'Sign out'
+  Click $main 'Menu'; Start-Sleep -Milliseconds 600; Click $main 'Sign out'
   Start-Sleep -Seconds 2
   Close
   $main = Launch
-  Write-Host ("after sign-out, reopens at welcome: " + ((Has $main 'Open Josi' $C::Button) -and !(Has $main 'Sign out' $C::Button 3)))
+  Write-Host ("after sign-out, reopens at welcome: " + ((Has $main 'Open Josi' $C::Button) -and !(Has $main 'Menu' $C::Button 3)))
 
   # 3. Sign in with Google.
   Click $main 'Open Josi'
@@ -91,16 +91,16 @@ try {
   Launch @('josi://auth/callback?code=mock-google-code-0123456789abcdefghijklmnopq&state=wrong-state-0123456789abcdefghijklmnop') | Out-Null
   Start-Sleep -Seconds 2
   $refused = HasText $main 'That Google sign-in was not started here. Start it again.' 5
-  Write-Host ("wrong state refused: " + $refused + ", still on sign-in: " + !(Has $main 'Sign out' $C::Button 2))
+  Write-Host ("wrong state refused: " + $refused + ", still on sign-in: " + !(Has $main 'Menu' $C::Button 2))
   # A stray link leaves the real sign-in waiting.
   Write-Host ("still waiting for Google: " + (Has $main 'Cancel' $C::Button 3))
   Launch @('josi://auth/callback?code=mock-google-code-0123456789abcdefghijklmnopq&state=mock-google-state-0123456789abcdefghijklmnop') | Out-Null
-  Write-Host ("signed in with Google: " + (Has $main 'Sign out' $C::Button 15))
+  Write-Host ("signed in with Google: " + (Has $main 'Menu' $C::Button 15))
   Capture $main 'g03-google-signed-in'
   Close
   $main = Launch
-  Write-Host ("Google sign-in remembered: " + (Has $main 'Sign out' $C::Button 15))
-  Click $main 'Sign out'
+  Write-Host ("Google sign-in remembered: " + (Has $main 'Menu' $C::Button 15))
+  Click $main 'Menu'; Start-Sleep -Milliseconds 600; Click $main 'Sign out'
   Start-Sleep -Seconds 2
   Write-Host 'Sign-in drive completed'
 } finally {

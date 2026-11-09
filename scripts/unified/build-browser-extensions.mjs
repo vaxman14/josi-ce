@@ -16,14 +16,17 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const output = resolve(process.argv[2] || join(repo, 'build/unified-browser-extensions'));
 const identity = JSON.parse(await readFile(join(repo, 'apps/browser-extension/development-identity.json'), 'utf8'));
-const VERSION = '0.8.0';
+const VERSION = '0.9.0';
 const FAMILIES = ['chrome', 'brave', 'edge', 'firefox', 'safari'];
 const CHROMIUM = ['chrome', 'brave', 'edge'];
 /** Stores that take a zip of the folder. Brave uses the Chrome Web Store. */
 const STORES = ['chrome', 'edge', 'firefox'];
 await mkdir(output); // Preserve any existing candidate; caller chooses a new folder.
 await mkdir(join(output, 'store'));
-const catalog = { schemaVersion: 1, distribution: 'unpacked-development', version: VERSION, extensions: [], store: [] };
+// Store-assigned Chromium IDs, once published; the Josi app's native host
+// lists the same ones (BrowserHost.StoreExtensionIds) in its allowed origins.
+const storeIds = Array.isArray(identity.chromiumStoreIds) ? identity.chromiumStoreIds.filter(id => /^[a-p]{32}$/.test(id)) : [];
+const catalog = { schemaVersion: 1, distribution: 'unpacked-development', version: VERSION, chromiumStoreIds: storeIds, extensions: [], store: [] };
 
 function manifestFor(family, { store }) {
   return {
@@ -31,9 +34,9 @@ function manifestFor(family, { store }) {
     // assign the ID themselves and refuse a manifest that carries a key.
     ...(CHROMIUM.includes(family) && !store ? { key: identity.chromiumPublicKey } : {}),
     manifest_version: 3, name: 'Josi Browser Control', version: VERSION,
-    description: 'Control an explicitly attached tab in your existing browser with Josi permissions.',
+    description: 'Let Josi on this computer use a tab you attach, only with your Josi permissions. Never reads passwords or payment details.',
     icons: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png', 128: 'icons/icon-128.png' },
-    permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage', 'alarms'],
+    permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage', 'alarms', 'downloads'],
     optional_host_permissions: ['https://*/*', 'http://*/*'],
     action: { default_popup: 'popup.html', default_title: 'Attach this tab to Josi',
       default_icon: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png' } },

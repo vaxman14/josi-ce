@@ -38,7 +38,9 @@ describe('a Windows server and an SMB share', () => {
     expect(() => c.mountPath!({ host: 'nas.local', share: 'share', folder: '../etc' })).toThrow(/invalid/);
   });
 
-  it('confirms a folder it can write to, keeps the receipt across a fresh controller, and lets it go', async () => {
+  // The controller builds paths with win32.join, which turns the stand-in
+  // folder's POSIX path into one only Windows can open.
+  it.skipIf(process.platform !== 'win32')('confirms a folder it can write to, keeps the receipt across a fresh controller, and lets it go', async () => {
     const c = controller();
     const status = await c.configure({ protocol: 'smb', host: 'nas.local', share: 'share', folder: 'josi', configurationRevision: 'rev-1' });
     expect(status).toEqual({ mountedPath: join(base, 'share', 'josi'), configurationRevision: 'rev-1' });

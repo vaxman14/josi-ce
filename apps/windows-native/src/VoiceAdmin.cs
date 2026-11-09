@@ -39,7 +39,7 @@ namespace Josi.Native {
       if (status.IsNull) { Ui.Add(page, Ui.Secondary(loading ? "Checking Voice Box…" : "Voice Box status has not loaded."), 0); return page; }
       var managed = status["managedByInstaller"].Flag; var working = model.Busy || status["phase"].Text == "working";
       Ui.Add(page, Ui.Secondary(working ? "Applying changes and checking speech models…" : status["healthy"].Flag ? "Speech models are ready." : status["apiReady"].Flag ? "Speech models are starting." : status["phase"].Text == "absent" ? (managed ? "Voice Box is turned off." : "Voice Box is not installed.") : "Voice Box is not ready."), 0);
-      if (status["error"].Text.Length > 0) Ui.Add(page, Ui.T(status["error"].Text, 13.5, null, Ui.Orange), 0);
+      if (status["error"].Text.Length > 0) Ui.Add(page, Ui.T(status["error"].Text, 13.5, null, Ui.Error), 0);
       if (!status["verified"].Flag) {
         var items = new List<UIElement>();
         foreach (var r in status["requirements"].List) items.Add(Ui.Caption("• " + r.Text));

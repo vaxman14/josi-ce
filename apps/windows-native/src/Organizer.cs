@@ -72,7 +72,7 @@ namespace Josi.Native {
       eventCount = 0;
       var page = Page(Ui.HeadingWith("Calendar", "One view of the calendars you choose from all your connected accounts.",
         Automation.Id(Ui.Pill("Refresh Calendars", () => { refreshSources = true; StartLoad(); }), "josi.calendar.refresh")));
-      foreach (var w in warnings.Distinct()) Ui.Add(page, Ui.T(w, 13.5, null, Ui.Orange), 0);
+      foreach (var w in warnings.Distinct()) Ui.Add(page, Ui.T(w, 13.5, null, Ui.Accent), 0);
       var title = view == "month" ? anchor.ToString("MMMM yyyy") : view == "day" ? anchor.ToString("D") : Days()[0].ToString("MMM d") + " – " + Days().Last().ToString("MMM d, yyyy");
       Ui.Detach(zonePick);
       // Fixed ids (AUTOMATION.md): josi.calendar.previous/today/next, josi.calendar.title (Name = the
@@ -119,7 +119,7 @@ namespace Josi.Native {
       return page;
     }
     static UIElement Swatch(string color) {
-      Brush brush = Ui.Orange;
+      Brush brush = Ui.Accent;
       try { if (color.Length > 0) brush = (Brush)new BrushConverter().ConvertFromString(color); } catch (Exception) { }
       return new Border { Width = 12, Height = 12, CornerRadius = new CornerRadius(6), Background = brush, VerticalAlignment = VerticalAlignment.Center };
     }
@@ -136,7 +136,7 @@ namespace Josi.Native {
       var t = e["title"].Text.Length > 0 ? e["title"].Text : "Untitled event";
       var content = compact ? Ui.Stack(1, Ui.T(t, 12.5, FontWeights.Medium), Ui.Caption(Time(e)))
         : Ui.Stack(2, Ui.T(t, 14, FontWeights.Medium), Ui.Caption(Time(e) + " · " + e["sourceName"].Text + (e["location"].Text.Length > 0 ? " · " + e["location"].Text : "")));
-      Brush accent = Ui.Orange;
+      Brush accent = Ui.Accent;
       try { if (e["sourceColor"].Text.Length > 0) accent = (Brush)new BrushConverter().ConvertFromString(e["sourceColor"].Text); } catch (Exception) { }
       var button = new Button { Style = (Style)Ui.Resources["Plain"], HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(8, 5, 8, 5), Margin = new Thickness(0, 0, 0, 4),
         BorderBrush = accent, BorderThickness = new Thickness(4, 0, 0, 0), Background = Ui.Raised, Content = content };
@@ -179,7 +179,7 @@ namespace Josi.Native {
       foreach (var _ in days) grid.ColumnDefinitions.Add(new ColumnDefinition { MinWidth = 130 });
       for (var i = 0; i < days.Count; i++) {
         var day = days[i];
-        var col = Ui.Stack(4, Ui.T(day.ToString("ddd d"), 13.5, FontWeights.SemiBold, day == DateTime.Today ? Ui.Orange : Ui.Text));
+        var col = Ui.Stack(4, Ui.T(day.ToString("ddd d"), 13.5, FontWeights.SemiBold, day == DateTime.Today ? Ui.Accent : Ui.Text));
         var rows = On(day).ToList();
         if (rows.Count == 0) col.Children.Add(Ui.Caption("No events"));
         foreach (var e in rows) col.Children.Add(Event(e, days.Count > 1));
@@ -307,7 +307,7 @@ namespace Josi.Native {
         Ui.Add(page, Ui.CardBox(null, Ui.Spread(Ui.T(c["name"].Text.Length > 0 ? c["name"].Text : "Unnamed", 14, FontWeights.Medium),
             source.Length > 0 && source != "josi" ? Ui.Caption(Wires.Capitalize(source) + (c["source_account"].Text.Length > 0 ? " · " + c["source_account"].Text : "")) : null),
           c["email"].Text.Length > 0 ? Ui.Copyable(c["email"].Text, 13.5, Ui.Muted) : null, c["phone"].Text.Length > 0 ? Ui.Copyable(c["phone"].Text, 13.5, Ui.Muted) : null,
-          c["conflict_state"].Text == "both_changed" ? Ui.T("Changed both here and at the provider. Josi kept both versions for you to choose.", 12.5, null, Ui.Orange) : null), 0);
+          c["conflict_state"].Text == "both_changed" ? Ui.T("Changed both here and at the provider. Josi kept both versions for you to choose.", 12.5, null, Ui.Accent) : null), 0);
       }
       Ui.Add(page, Note(), 0);
       return page;

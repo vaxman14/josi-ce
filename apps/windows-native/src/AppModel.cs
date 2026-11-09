@@ -55,8 +55,10 @@ namespace Josi.Native {
 
     public string Section {
       get { return section; }
-      set { if (section == value) return; section = value; var handler = SectionChanged; if (handler != null) handler(); FollowWork(); }
+      set { if (!Flags.Shows(value)) value = "chat"; if (section == value) return; section = value; var handler = SectionChanged; if (handler != null) handler(); FollowWork(); }
     }
+    /// The mascot's state, shared by every screen that shows it.
+    public readonly GhostController Ghost = new GhostController();
     public string SignedInName { get { var name = User["displayName"].Text; return name.Length == 0 ? User["username"].Text : name; } }
     public bool IsAdministrator { get { return User["role"].Text == "super_admin"; } }
     public bool RecoveryPending { get { return !VaultRecovery.IsNull || !Recovery.IsNull || !MfaRecovery.IsNull; } }
@@ -102,9 +104,49 @@ namespace Josi.Native {
       Notify();
     }
 
-    public async Task Connect(string address, bool local = false) {
+    public Task Connect(string address, bool local = false) { return Open(new JosiApi(address), local); }
+
+    /// Pairs this PC with a server from a code or pairing link, then opens it.
+    public async Task Pair(string input) {
       if (!MfaRecovery.IsNull) throw new JosiException("Save your sign-in recovery codes before changing servers.");
-      var next = new JosiApi(address);
+      TunnelConnection connection;
+      try { connection = await TunnelConnection.Pair(await TunnelInvite.Resolve(input), Environment.MachineName, TunnelStore.Current); }
+      catch (TunnelException e) { throw new JosiException(e.Message); }
+      await OpenTunnel(connection);
+    }
+    /// Opens a server this PC is already paired with.
+    public Task ConnectPaired(TunnelPairing pairing) { return OpenTunnel(new TunnelConnection(pairing, TunnelStore.Current)); }
+    Task OpenTunnel(TunnelConnection connection) {
+      var next = new JosiApi(connection.Pairing.Origin, new TunnelHandler(connection));
+      connection.Ended += reason => { if (window != null) window.Dispatcher.BeginInvoke(new Action(() => PairingEnded(next, reason))); };
+      return Open(next, false);
+    }
+    /// The server ended this pairing. Its key and record are already gone here;
+    /// a sign-in that can no longer reach anything goes with them.
+    void PairingEnded(JosiApi api, string reason) {
+      SessionStore.Forget(api.OriginText);
+      if (Api != api) return;
+      StopWorkStream();
+      Api = null; api.Dispose(); ClearAccount();
+      Screen = Screen.Connect; Error = reason; Activity = "";
+      Notify();
+    }
+    /// Forgets a paired server on this PC. It stays listed on the server until
+    /// it's removed there.
+    public void ForgetPairing(TunnelPairing pairing) {
+      TunnelStore.Current.Delete(pairing);
+      SessionStore.Forget(pairing.Origin);
+      Notify();
+    }
+    public async Task RotateTunnelKey() {
+      var tunnel = Api == null ? null : Api.Tunnel;
+      if (tunnel == null) return;
+      try { await tunnel.RotateDeviceKey(); }
+      catch (TunnelException e) { throw new JosiException(e.Message); }
+    }
+
+    async Task Open(JosiApi next, bool local) {
+      if (!MfaRecovery.IsNull) { next.Dispose(); throw new JosiException("Save your sign-in recovery codes before changing servers."); }
       StopWorkStream();
       if (Api != null) Api.Dispose();
       Api = next;
@@ -194,7 +236,7 @@ namespace Josi.Native {
       var api = Api; if (api == null) return;
       var result = await api.Request("/auth/mfa/verify-login", "POST", Wires.O("challenge", MfaChallenge, "code", code));
       if (Api != api) return;
-      await FinishNativeLogin(api, signingInAs, result);
+      await FinishNativeLogin(api, signingInAs.Length > 0 ? signingInAs : GoogleIdentifier(result), result);
     }
 
     /// Opens Google's page in the browser. Google returns to josi://auth/callback
@@ -232,8 +274,14 @@ namespace Josi.Native {
       if (!Regex.IsMatch(code, "^[A-Za-z0-9_-]{20,512}$")) throw new JosiException("Google sign-in did not finish. Try again.");
       var result = await api.Request("/auth/google/native/exchange", "POST", Wires.O("code", code));
       if (Api != api) return;
+      // Google is the first factor only. An account with an authenticator gets
+      // the same challenge as a password sign-in, and VerifyMfa finishes it.
+      if (result["mfaRequired"].Flag) { signingInAs = ""; MfaChallenge = result["challenge"].Text; Notify(); return; }
+      await FinishNativeLogin(api, GoogleIdentifier(result), result);
+    }
+    static string GoogleIdentifier(Wire result) {
       var user = result["user"];
-      await FinishNativeLogin(api, user["email"].Text.Length > 0 ? user["email"].Text : user["username"].Text, result);
+      return user["email"].Text.Length > 0 ? user["email"].Text : user["username"].Text;
     }
     static string GoogleProblem(string error) {
       switch (error) {
@@ -326,17 +374,53 @@ namespace Josi.Native {
       else Notifications.Show("Josi proposes a settings change", proposal["title"].Text + ": approve it under Approvals.");
     }
     /// Approve or deny; approving a change this app applies performs it now.
-    public async Task<string> DecideSettingsChange(Wire proposal, bool approve) {
+    public async Task<string> DecideSettingsChange(Wire proposal, bool approve, string password = null) {
       var api = Api; if (api == null) return "";
-      var result = await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/decide", "POST", Wires.O("approve", approve));
+      var result = await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/decide", "POST",
+        password == null ? Wires.O("approve", approve) : Wires.O("approve", approve, "password", password));
       if (!approve) return "Declined. Nothing changed.";
       if (result["apply"].IsNull) return "Approved. It is applied by " + (proposal["scope"].Text == "administrator" ? "the administrator's" : proposal["proposer"].Text + "'s") + " Josi.";
-      return await ApplySettingsChange(proposal, result["apply"]);
+      return await ApplySettingsChange(proposal, result["apply"], password);
+    }
+    /// Performs a credential card: claims the proposal, then the route with
+    /// the typed values folded into the fixed body, then reports the outcome.
+    /// Throws JosiException with the route's own words so the card can show
+    /// them and stay open; a cancelled card is never reported as failed.
+    public async Task<string> SaveCredentialCard(Wire proposal, IDictionary<string, object> values) {
+      var api = Api; if (api == null) throw new JosiException("Not signed in.");
+      var decided = await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/decide", "POST", Wires.O("approve", true));
+      var apply = decided["apply"];
+      if (apply.IsNull) throw new JosiException("This card can only be filled in by the person it was opened for.");
+      var fixedBody = apply["body"].Raw as IDictionary<string, object> ?? new Dictionary<string, object>();
+      var body = new Dictionary<string, object>();
+      object shape; fixedBody.TryGetValue("__shape", out shape);
+      if ((shape as string) == "smtp") {
+        int port; int.TryParse(values.ContainsKey("port") ? values["port"] as string : "", out port);
+        Func<string, string> s = key => values.ContainsKey(key) ? values[key] as string ?? "" : "";
+        var from = s("fromAddress"); var fromName = s("fromName");
+        object expected; fixedBody.TryGetValue("expected", out expected);
+        body["expected"] = expected;
+        body["system"] = Wires.O("copyFromSystem", false, "host", s("host"), "port", port, "security", s("security").ToLowerInvariant(), "username", s("username"), "password", s("password"), "clearPassword", false, "fromName", fromName, "fromAddress", from);
+        body["communications"] = Wires.O("copyFromSystem", true, "host", "", "port", 0, "security", "", "username", "", "password", "", "clearPassword", false, "fromName", fromName, "fromAddress", from);
+      } else {
+        foreach (var pair in fixedBody) body[pair.Key] = pair.Value;
+        foreach (var pair in values) body[pair.Key] = pair.Value;
+      }
+      string error = null;
+      try { await api.Request(apply["path"].Text, apply["method"].Text, body); }
+      catch (JosiException e) { error = e.Message; }
+      finally { body.Clear(); values.Clear(); }
+      try { await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/applied", "POST", error == null ? Wires.O("ok", true) : Wires.O("ok", false, "error", error)); }
+      catch (JosiException) { }
+      if (error != null) throw new JosiException(error);
+      Notify();
+      return proposal["card"]["done"].Text;
     }
     /// Performs the stored request with this app's own session, so the
     /// setting's own route decides. A route that needs the account password
-    /// gets it from the person, once, through the usual dialog.
-    public async Task<string> ApplySettingsChange(Wire proposal, Wire apply) {
+    /// gets the one from the approval popup, or asks through the usual dialog.
+    /// A route that wants a session step-up instead gets that from the same password.
+    public async Task<string> ApplySettingsChange(Wire proposal, Wire apply, string approved = null) {
       var api = Api; if (api == null) return "";
       var path = apply["path"].Text; var method = apply["method"].Text;
       var body = apply["body"].IsNull ? Wires.O() : apply["body"].Raw;
@@ -344,7 +428,7 @@ namespace Josi.Native {
       try { await api.Request(path, method, method == "DELETE" ? null : body); }
       catch (JosiException e) {
         if (e.Status == 401 && e.Message.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0 && window != null) {
-          var password = Dialogs.AskPassword(window, "Confirm to apply: " + proposal["title"].Text, proposal["summary"].Text + "\n\nThis setting asks for your account password.", "Apply");
+          var password = approved ?? Dialogs.AskPassword(window, "Confirm to apply: " + proposal["title"].Text, proposal["summary"].Text + "\n\nThis setting asks for your account password.", "Apply");
           if (password == null) error = "Not applied: the password prompt was cancelled.";
           else {
             try {
@@ -352,7 +436,13 @@ namespace Josi.Native {
               var map = body as IDictionary<string, object>;
               if (map != null) foreach (var pair in map) withPassword[pair.Key] = pair.Value;
               await api.Request(path, method, withPassword);
-            } catch (JosiException again) { error = again.Message; }
+            } catch (JosiException again) {
+              if (again.Status != 401) error = again.Message;
+              else try {
+                await api.Request("/assistant/step-up", "POST", Wires.O("password", password));
+                await api.Request(path, method, method == "DELETE" ? null : body);
+              } catch (JosiException last) { error = last.Message; }
+            }
           }
         } else error = e.Message;
       }
@@ -454,7 +544,9 @@ namespace Josi.Native {
     async Task Poll() {
       FollowWork();
       if (!refreshing && !Busy) { try { await Watch(); } catch (Exception) { } }
-      if (Screen != Screen.Workspace || Busy || refreshing || !Active) return;
+      // Away from the window nothing needs refreshing, except a reply still on its way.
+      var replying = Turns.Any(t => t["status"].Text == "queued" || t["status"].Text == "running");
+      if (Screen != Screen.Workspace || Busy || refreshing || (!Active && !replying)) return;
       refreshing = true;
       try {
         var stale = !lastProgressSignal.HasValue || (DateTime.UtcNow - lastProgressSignal.Value).TotalSeconds >= 20;
@@ -625,7 +717,10 @@ namespace Josi.Native {
           if (Api == api && SelectedThread == thread) { try { await LoadThread(thread); } catch (Exception) { } NotifyWorkspace(); }
           // Demo: a settings change Josi prepared in this reply shows its popup
           // on the next poll instead of up to 30 seconds later.
-          if (Josi.Native.Automation.Demo) lastNotificationCheck = DateTime.MinValue;
+          // Not only in demo: a card Josi opened in this reply shows now, not
+          // up to 30 seconds later on the next poll.
+          lastNotificationCheck = DateTime.UtcNow;
+          try { await watcher.Check(this); } catch (Exception) { }
         }
       }
     }

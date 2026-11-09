@@ -16,6 +16,7 @@ import {
   ProviderForm, type ProviderCatalogEntry, type SubscriptionInfo,
 } from '@/components/ProviderForm';
 import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
+import { JosiMark } from '@/components/brand/JosiMark';
 import { LegalLinks } from '@/components/LegalLinks';
 
 /** The outcome of a real attempt to use something that was configured. */
@@ -61,11 +62,11 @@ const ITEM_STEP: Record<string, string> = {
 };
 
 const STATUS_TONE: Record<ReviewStatus, string> = {
-  configured_and_tested: 'text-emerald-600 dark:text-emerald-400',
-  configured_but_failed: 'text-red-600 dark:text-red-400',
+  configured_and_tested: 'text-success',
+  configured_but_failed: 'text-destructive',
   skipped: 'text-muted-foreground',
   unavailable: 'text-muted-foreground',
-  required: 'text-amber-600 dark:text-amber-400',
+  required: 'text-warning',
 };
 
 interface StepDescriptor {
@@ -180,8 +181,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl p-5 text-[1.02rem] sm:p-8">
       <div className="mb-6 flex flex-col items-center text-center">
-        <img src="/brand/josi-wordmark.png" alt="Josi" width={200} height={93}
-             className="mb-2 h-auto w-40 max-w-full" />
+        <JosiMark variant="bare" size={64} alt="Josi" className="mb-3" />
         <p className="text-sm text-muted-foreground">Setting up this installation</p>
       </div>
 
@@ -360,7 +360,7 @@ function StepForm({
           <div>
             <label className="mb-1 block text-sm" htmlFor="tlsMode">HTTPS</label>
             <select id="tlsMode" name="tlsMode" defaultValue="bundled_caddy"
-                    className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm">
+                    className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm">
               <option value="bundled_caddy">Bundled Caddy (HTTPS for a public domain, HTTP on LAN)</option>
               <option value="external_proxy">I run my own reverse proxy</option>
             </select>
@@ -395,7 +395,7 @@ function StepForm({
           <div>
             <label className="mb-1 block text-sm" htmlFor="security">Security</label>
             <select id="security" name="security" defaultValue={smtpInitial?.security ?? 'starttls'}
-                    className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm">
+                    className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm">
               <option value="starttls">STARTTLS</option>
               <option value="tls">TLS</option>
               <option value="none">None</option>
@@ -457,6 +457,26 @@ function StepForm({
             consent to their own folders.
           </p>
           <Button type="submit" disabled={busy}>Continue</Button>
+        </form>
+      );
+
+    case 'pc_control':
+      // Pairing needs the PC's own key, which only the Josi app on that PC
+      // holds; the browser can only skip. The app offers Approve This PC here
+      // and later under PC Control.
+      return (
+        <form onSubmit={(e) => handle(e, () => ({ skip: true }))} className="space-y-3">
+          <p className="text-sm">
+            Josi can work on the computer where its app is open: run commands, open programs, read and write
+            files and use windows, each within the permissions you give it, with a visible control bar and a Stop
+            button. Pairing a PC is done from the Josi app on that PC (it holds the PC's key), so from this
+            browser the step can only be skipped.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Nothing is granted by pairing alone. Later, in the Josi app, PC Control shows whether this PC is paired
+            and ready, and you can turn control on and allow shells, folders and programs there or by asking Josi.
+          </p>
+          <Button type="submit" disabled={busy}>Skip for now</Button>
         </form>
       );
 
@@ -592,7 +612,7 @@ function ReviewPanel({
       <p className="mb-3 text-sm text-muted-foreground">{review.headline}</p>
       <ul className="space-y-3">
         {review.items.map((item) => (
-          <li key={item.key} className="border-t border-input pt-3 first:border-0 first:pt-0">
+          <li key={item.key} className="border-t border-border pt-3 first:border-0 first:pt-0">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <span className="text-sm font-medium">{item.label}</span>
               <span className={`text-xs font-medium ${STATUS_TONE[item.status]}`}>
@@ -610,7 +630,7 @@ function ReviewPanel({
               <ul className="mt-2 space-y-1 text-xs" aria-label="Model capability test results">
                 {review.summary.llm.probeSteps.map((step) => (
                   <li key={step.id} className="flex gap-2">
-                    <span className={step.passed ? 'text-emerald-500' : 'text-amber-500'} aria-hidden>
+                    <span className={step.passed ? 'text-success' : 'text-warning'} aria-hidden>
                       {step.passed ? '✓' : '—'}
                     </span>
                     <span><strong>{step.label}:</strong> {step.detail}</span>

@@ -1,0 +1,44 @@
+name = "josi-relay"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# What was live on 2026-11-06. Deploy with: npx wrangler deploy -c wrangler.parked.toml
+routes = [
+  { pattern = "relay.heyjosi.com", custom_domain = true },
+]
+
+[vars]
+PUBLIC_DOMAIN = "heyjosi.com"
+# Comma-separated base64url Ed25519 public keys that sign relay grants. Empty:
+# nothing can register, unless OPEN_RELAY is "1".
+ACCOUNTS_KEYS = "GzJtT6ZYyF5aol8duK9qDvW8e7kEJ2V3jQ3F5okPQtU"
+# "1" lets anyone who can reach this relay register, with no account. For a
+# relay you run for yourself, never for the public one.
+OPEN_RELAY = "0"
+
+# Invocation logs stay off: requests and addresses aren't stored, only the
+# connection events src/index.js writes itself.
+[observability.logs]
+enabled = true
+invocation_logs = false
+head_sampling_rate = 1
+
+[[durable_objects.bindings]]
+name = "SITES"
+class_name = "Site"
+
+[[durable_objects.bindings]]
+name = "LIMITS"
+class_name = "Limit"
+
+[[durable_objects.bindings]]
+name = "INVITES"
+class_name = "Invite"
+
+[[durable_objects.bindings]]
+name = "NAMES"
+class_name = "Name"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Site", "Limit", "Invite", "Name"]

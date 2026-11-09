@@ -1,0 +1,14 @@
+{
+  "name": "josi-relay",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "description": "Ciphertext-only relay for Josi CE (Cloudflare Worker + Durable Objects)",
+  "scripts": {
+    "build": "node build-assets.mjs",
+    "dev": "wrangler dev --local --port 8787",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": { "wrangler": "^4.153.0" }
+}

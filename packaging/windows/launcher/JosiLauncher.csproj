@@ -2,6 +2,7 @@
   <PropertyGroup>
     <TargetFramework>net462</TargetFramework><OutputType>WinExe</OutputType>
     <AssemblyName>JosiLauncher</AssemblyName><PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier><AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <AutomaticallyUseReferenceAssemblyPackages>false</AutomaticallyUseReferenceAssemblyPackages>
     <Deterministic>true</Deterministic><RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <Version>0.1.78.6</Version><Description>Josi Windows browser onboarding launcher</Description>

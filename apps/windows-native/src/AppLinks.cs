@@ -13,6 +13,8 @@ namespace Josi.Native {
   /// running one over a pipe only this Windows account can open, then exits.
   static class AppLinks {
     public const string GoogleReturn = "josi://auth/callback";
+    /// Sent by a newer copy that is starting; the running copy quits.
+    public const string QuitLink = "josi://quit";
     const int MaxLink = 4096, MaxMessage = 32768;
     /// Files from File Explorer's Send to menu travel as "share:" + paths.
     public const string SharePrefix = "share:";
@@ -25,6 +27,9 @@ namespace Josi.Native {
       return Environment.GetEnvironmentVariable("JOSI_TEST_NO_BROWSER") == "1" ? ".Test." + Guid.NewGuid().ToString("N") : "";
     }
     public static bool Testing { get { return Instance.Length > 0; } }
+    // Demo acceptance keeps files beside its fixture, never in the owner's profile.
+    public static string StateDirectory => Automation.Demo ? Path.Combine(Automation.DemoRoot, "state", "native")
+      : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi");
     static string PipeName { get { return "Josi.Native.Windows.Links" + Instance + "." + WindowsIdentity.GetCurrent().User.Value; } }
 
     public static bool IsMessage(string value) {
