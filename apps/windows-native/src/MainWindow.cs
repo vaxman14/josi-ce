@@ -34,6 +34,13 @@ namespace Josi.Native {
         if (files.Count > 0) link = AppLinks.SharePrefix + string.Join("\n", files);
       }
       // Automated UI tests run beside a person's open copy without touching it.
+      // After an update the installer opens the new Josi while the old one may
+      // still sit in the tray. The old copy is asked to quit and the new one
+      // takes over, instead of the old copy answering for another few days.
+      if (!Automation.Demo && !AppLinks.Testing && Activation.OlderCopyRunning()) {
+        AppLinks.Forward(AppLinks.QuitLink);
+        for (var waited = 0; waited < 50 && Activation.OlderCopyRunning(); waited++) Thread.Sleep(100);
+      }
       using (var single = new Mutex(true, @"Local\Josi.Native.Windows" + AppLinks.Instance, out created)) {
         if (!created) {
           if (link != null) AppLinks.Forward(link);
@@ -86,6 +93,17 @@ namespace Josi.Native {
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string className, string title);
+    /// Another Josi of this user running from a different folder (an older
+    /// version after an update, usually hidden in the tray).
+    public static bool OlderCopyRunning() {
+      var mine = Environment.ProcessPath ?? "";
+      try {
+        return System.Diagnostics.Process.GetProcessesByName("Josi").Any(p => {
+          try { return p.Id != Environment.ProcessId && !string.Equals(p.MainModule?.FileName, mine, StringComparison.OrdinalIgnoreCase); }
+          catch (Exception) { return false; }
+        });
+      } catch (Exception) { return false; }
+    }
     public static void ActivateExisting() {
       var existing = FindWindow(null, "Josi");
       if (existing != IntPtr.Zero) { ShowWindow(existing, 9); SetForegroundWindow(existing); }
@@ -387,6 +405,8 @@ namespace Josi.Native {
 
     /// A josi:// link from the browser: Google sign-in returning.
     public void ReceiveLink(string link) {
+      // A newer Josi is starting and takes over; this copy leaves quietly.
+      if (link == AppLinks.QuitLink) { Quit(); return; }
       // Scene commands for the demo copy (AUTOMATION.md); ignored outside demo mode.
       if (Automation.IsDemoLink(link)) { if (Automation.Demo) HandleDemoLink(link); return; }
       if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;

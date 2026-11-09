@@ -13,6 +13,8 @@ namespace Josi.Native {
   /// running one over a pipe only this Windows account can open, then exits.
   static class AppLinks {
     public const string GoogleReturn = "josi://auth/callback";
+    /// Sent by a newer copy that is starting; the running copy quits.
+    public const string QuitLink = "josi://quit";
     const int MaxLink = 4096, MaxMessage = 32768;
     /// Files from File Explorer's Send to menu travel as "share:" + paths.
     public const string SharePrefix = "share:";
