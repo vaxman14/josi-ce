@@ -11,14 +11,17 @@ struct SettingsChangeSheet: View {
     @State private var working = false
     private var administrator: Bool { proposal["scope"].text == "administrator" }
     private var sensitive: Bool { proposal["sensitive"].flag }
+    /// A member asking the owner to allow a developer service.
+    private var request: Bool { proposal["area"].text == "member_connector_request" }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) { JosiMarkTile(size: 28); Text("Josi proposes a settings change").font(JosiFont.title3) }
+            HStack(spacing: 10) { JosiMarkTile(size: 28); Text(request ? "\(proposal["proposer"].text) asks to connect a service" : "Josi proposes a settings change").font(JosiFont.title3) }
             Text(proposal["title"].text).font(JosiFont.headline)
             Text(proposal["summary"].text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-            Text((administrator ? "An administrator setting for this installation." : "Your own setting.")
+            Text(request ? "Approving lets them connect it with their own token. You can take it back any time by asking Josi."
+                 : ((administrator ? "An administrator setting for this installation." : "Your own setting.")
                  + (sensitive ? " This is a sensitive change; the administrator is told by email when a member makes one." : "")
-                 + " Nothing changes until you approve. You can also find it under Approvals.")
+                 + " Nothing changes until you approve. You can also find it under Approvals."))
                 .font(JosiFont.caption).foregroundStyle(JosiTheme.muted).fixedSize(horizontal: false, vertical: true)
             if sensitive {
                 Text("Confirm your account password").font(JosiFont.callout)
@@ -57,8 +60,8 @@ struct SettingsChangeList: View {
     var reload: () async -> Void
     var body: some View {
         if !changes.isEmpty {
-            NativeLeanTitle(text: "Settings changes Josi prepared")
-            NativeLeanNote(text: "Asked for in conversation. Nothing changes until it is approved here or in the popup.")
+            NativeLeanTitle(text: "Settings changes, cards and requests")
+            NativeLeanNote(text: "Asked for in conversation. Nothing changes until it is approved or filled in here or in the popup.")
             ForEach(changes, id: \.identifier) { change in
                 JosiCard {
                     Text(change["title"].text).font(JosiFont.headline)
@@ -69,7 +72,8 @@ struct SettingsChangeList: View {
                     }
                     HStack {
                         if change["canApprove"].flag {
-                            Button("Review…") { model.settingsProposal = change }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
+                            Button(change["area"].text == "credential_card" ? "Fill In…" : "Review…") { model.settingsProposal = change }
+                                .buttonStyle(JosiGoldButtonStyle(fullWidth: false))
                         }
                         if change["canDeny"].flag {
                             Button("Decline") { model.run { try await model.decideSettingsChange(change, approve: false); await reload() } }

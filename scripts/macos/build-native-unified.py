@@ -217,6 +217,28 @@ def build(args):
                 link.unlink()
             if not link.exists():
                 link.symlink_to(os.path.relpath(target, link.parent), target_is_directory=True)
+    # The staged runtime predates some libraries the server now imports. Copy each
+    # production dependency it lacks, with its own dependencies, from the repo's
+    # installed node_modules, so the server never fails to boot on a missing import.
+    modules = runtime / 'app/node_modules'
+    wanted = []
+    for manifest in [REPO / 'package.json', *sorted((REPO / 'packages').glob('*/package.json')), *sorted((REPO / 'apps').glob('*/package.json'))]:
+        if manifest.parent.name in ('desktop', 'hosted'):
+            continue
+        wanted += [name for name in json.loads(manifest.read_text()).get('dependencies', {}) if not name.startswith('@josi-ce/')]
+    added = []
+    while wanted:
+        name = wanted.pop()
+        if (modules / name).exists():
+            continue
+        source = REPO / 'node_modules' / name
+        if not (source / 'package.json').is_file():
+            raise SystemExit(f'The server needs {name}, which is not installed in the repo. Run npm ci first.')
+        tree(source, modules / name)
+        added.append(name)
+        wanted += list(json.loads((source / 'package.json').read_text()).get('dependencies', {}))
+    if added:
+        print('Added to the runtime: ' + ', '.join(sorted(added)), flush=True)
     # The hosted service never runs on a server. A runtime staged earlier may still carry it.
     if (runtime / 'app/apps/hosted').exists():
         shutil.rmtree(runtime / 'app/apps/hosted')

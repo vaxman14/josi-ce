@@ -438,7 +438,8 @@ import SwiftUI
     private func checkSettingsChanges(_ api: JosiAPI) async {
         guard let list = try? await api.request("/settings-changes"), self.api === api else { return }
         for item in list["proposals"].list {
-            if item["state"].text == "approved", item["apply"] != .null {
+            // A card's route needs the values typed into it; nothing to apply without them.
+            if item["state"].text == "approved", item["apply"] != .null, item["area"].text != "credential_card" {
                 if applyingChanges.insert(item.identifier).inserted { try? await applySettingsChange(item, item["apply"]) }
             } else if item["state"].text == "proposed", item["canApprove"].flag, settingsProposal == .null,
                       offeredChanges.insert(item.identifier).inserted {
@@ -455,6 +456,42 @@ import SwiftUI
         guard approve, result["apply"] != .null else { return }
         applyingChanges.insert(proposal.identifier)
         try await applySettingsChange(proposal, result["apply"], password: password)
+    }
+    /// Performs a credential card: claims the proposal, then the route with the typed
+    /// values folded into the fixed body, then reports the outcome. Throws with the
+    /// route's own words so the card can show them and stay open.
+    func saveCredentialCard(_ proposal: Wire, values: [String: Wire]) async throws {
+        guard let api else { throw JosiError(message: "Not signed in.") }
+        let id = try api.uuid(proposal.identifier)
+        let decided = try await api.request("/settings-changes/\(id)/decide", method: "POST", body: ["approve": .bool(true)])
+        let apply = decided["apply"]
+        guard apply != .null else { throw JosiError(message: "This card can only be filled in by the person it was opened for.") }
+        applyingChanges.insert(proposal.identifier)
+        var fixed: [String: Wire] = [:]
+        if case .object(let given) = apply["body"] { fixed = given }
+        var body: [String: Wire]
+        if fixed["__shape"]?.text == "smtp" {
+            let s = { (key: String) in values[key]?.text ?? "" }
+            let from = s("fromAddress"), fromName = s("fromName")
+            body = [
+                "expected": fixed["expected"] ?? .null,
+                "system": ["copyFromSystem": .bool(false), "host": .string(s("host")), "port": .number(Double(Int(s("port")) ?? 0)),
+                           "security": .string(s("security").lowercased()), "username": .string(s("username")), "password": .string(s("password")),
+                           "clearPassword": .bool(false), "fromName": .string(fromName), "fromAddress": .string(from)],
+                "communications": ["copyFromSystem": .bool(true), "host": "", "port": .number(0), "security": "", "username": "", "password": "",
+                                   "clearPassword": .bool(false), "fromName": .string(fromName), "fromAddress": .string(from)],
+            ]
+        } else {
+            body = fixed.merging(values) { _, typed in typed }
+        }
+        var failure: String?
+        do { _ = try await api.request(apply["path"].text, method: apply["method"].text, body: .object(body)) }
+        catch { failure = error.localizedDescription }
+        body = [:]
+        var report: [String: Wire] = ["ok": .bool(failure == nil)]
+        if let failure { report["error"] = .string(failure) }
+        _ = try? await api.request("/settings-changes/\(id)/applied", method: "POST", body: .object(report))
+        if let failure { throw JosiError(message: failure) }
     }
     /// Performs the stored request with this app's own session, so the setting's own
     /// route decides. A route that needs the account password gets the one from the

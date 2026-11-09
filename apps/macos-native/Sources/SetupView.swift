@@ -23,6 +23,7 @@ struct SetupView: View {
         "llm": ("Pick Josi’s brain", "The AI model she thinks with. Your subscription or your own key both work."),
         "smtp": ("Email, if you want it", "Lets Josi send invitations and password resets. You can skip this for now."),
         "security": ("Your folders", "Choose whether people here may give Josi access to folders."),
+        "pc_control": ("Josi on this Mac", "Working directly on your computer comes to the Mac app later."),
         "telemetry": ("Help improve Josi", "Completely optional, and it never includes your conversations."),
         "review": ("Almost there", "One last look at what you chose."),
         "": ("All set", "Josi is ready when you are."),
@@ -188,6 +189,12 @@ struct SetupView: View {
             Toggle("Allow people to choose folders for Josi to read", isOn: $enabled)
             Text("Each person still needs to approve their own folders.").foregroundStyle(JosiTheme.lilac)
             next(["folderMappingEnabled": .bool(enabled)])
+        case "pc_control":
+            // The Windows app pairs the PC here. The Mac app has no PC Control yet,
+            // so this step is skipped and nothing is paired or switched on.
+            Text("On Windows, Josi can run commands, open programs and work with files on the computer she runs on. The Mac app doesn’t do that yet. Nothing is switched on here.")
+                .foregroundStyle(JosiTheme.lilac)
+            next(["skip": .bool(true)])
         case "telemetry":
             Toggle("Send anonymous usage counts", isOn: $enabled)
             Text("Optional. Does not include conversations, credentials or business content.").foregroundStyle(JosiTheme.lilac)

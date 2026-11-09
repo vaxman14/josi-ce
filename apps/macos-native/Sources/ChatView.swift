@@ -225,6 +225,8 @@ struct ChatView: View {
                 Button(action: attach) { Image(systemName: "plus").font(.system(size: 15, weight: .semibold)).frame(width: 38, height: 38) }
                     .buttonStyle(.plain).foregroundStyle(JosiTheme.lilac).help("Attach a file or photo").accessibilityLabel("Attach a file or photo")
                     .disabled(model.busy || model.pendingMessage || model.draftAttachments.count >= 10 || voice.mode != nil)
+                Button { model.section = "my-world" } label: { Image(systemName: "globe.americas").font(.system(size: 15)).frame(width: 38, height: 38) }
+                    .buttonStyle(.plain).foregroundStyle(JosiTheme.lilac).help("My World").accessibilityLabel("My World")
                 Rectangle().fill(JosiTheme.border).frame(width: 1, height: 24).padding(.bottom, 7)
                 ZStack(alignment: .topLeading) {
                     if model.draft.isEmpty { Text("Message Josi…").foregroundStyle(JosiTheme.muted).padding(.top, 9).padding(.leading, 8).allowsHitTesting(false) }

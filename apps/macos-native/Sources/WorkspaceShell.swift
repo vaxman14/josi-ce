@@ -7,7 +7,7 @@ struct WorkspaceView: View {
     private var serverLabel: String { model.address.contains("localhost") ? "Local server" : model.address }
     private typealias Item = (title: String, icon: String, section: String)
     private var workspace: [Item] {
-        [("Chat", "bubble.left.and.bubble.right", "chat"), ("Tasks", "checklist", "tasks"), ("Approvals", "checkmark.shield", "approvals"),
+        [("My World", "globe.americas", "my-world"), ("Chat", "bubble.left.and.bubble.right", "chat"), ("Tasks", "checklist", "tasks"), ("Approvals", "checkmark.shield", "approvals"),
          ("Email", "envelope", "email"), ("Calendar", "calendar", "calendar"), ("Contacts", "person.crop.circle", "contacts"),
          ("Vault", "lock.shield", "vault"), ("Connections", "link", "connections"), ("Settings", "gearshape", "settings")]
     }
@@ -21,7 +21,7 @@ struct WorkspaceView: View {
         if model.section == "chat" { return model.threads.first { $0.identifier == model.selectedThread }?["title"].text.nonempty ?? "Chat" }
         return (workspace + admin).first { $0.section == model.section }?.title ?? "Josi"
     }
-    private var chat: Bool { !["tasks", "approvals", "email", "calendar", "contacts", "vault", "connections", "settings", "overview", "people", "backups", "models", "network", "automation", "channels"].contains(model.section) }
+    private var chat: Bool { !["my-world", "tasks", "approvals", "email", "calendar", "contacts", "vault", "connections", "settings", "overview", "people", "backups", "models", "network", "automation", "channels"].contains(model.section) }
     private var status: String {
         switch model.ghost.state {
         case .listening: "listening…"
@@ -37,6 +37,7 @@ struct WorkspaceView: View {
                 Group {
                     switch model.section {
                     case "tasks": TaskManagerView()
+                    case "my-world": NativeMyWorldView()
                     case "approvals": NativeApprovalsView()
                     case "email": NativeEmailView()
                     case "calendar": NativeCalendarView()
@@ -66,7 +67,11 @@ struct WorkspaceView: View {
             }
         }
         .sheet(isPresented: Binding(get: { model.settingsProposal != .null }, set: { if !$0 { model.settingsProposal = .null } })) {
-            SettingsChangeSheet(proposal: model.settingsProposal).environmentObject(model).preferredColorScheme(.dark)
+            if model.settingsProposal["area"].text == "credential_card" {
+                CredentialCardSheet(proposal: model.settingsProposal).environmentObject(model).preferredColorScheme(.dark)
+            } else {
+                SettingsChangeSheet(proposal: model.settingsProposal).environmentObject(model).preferredColorScheme(.dark)
+            }
         }
     }
     private var topBar: some View {
