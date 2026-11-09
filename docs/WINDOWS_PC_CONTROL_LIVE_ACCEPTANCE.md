@@ -75,9 +75,21 @@ during this run are in `e5951c8` and ship in `1.2.5-preview.6`.
 
 Expected on the next update (from preview.11): unpack about 15 s instead of 50, file check a few seconds instead of 23, copy unchanged (30 s), database and services unchanged (80 s): roughly 2 minutes, of which the services are most. The setup-timing log in `Program Files\Josi CE Server\installer` tells.
 
+## After preview.11 (dev build against the installed server)
+
+| Change | Verified |
+|---|---|
+| A takeover ends only the running action; no bar afterwards, nothing saved (`10c80f2`) | Bar sampled every second through a two-step request: visible during the steps, gone within a second of the reply. |
+| Bar holds six seconds between steps (`9b34e03`) | Same sample: no flicker between "open Notepad" and the folder step. |
+| Model picker in the chat bar (`9b34e03`) | Picked Sonnet from the picker; the server saved it and ran its check; the owner confirmed "it's on sonnet". |
+| Instant switching (`llm_probe_memory`, `9b34e03`) | Server side only; takes effect after the next install. Model-route tests: 51 pass. |
+
 ## Owner feedback carried forward
 
 - Fewer steps, always: the setup step now pairs and enables in one go; the
   chat card does the same for existing installs.
-- Haiku is weak at following tool results in a long thread; Sonnet is the
-  better model for PC work. The readiness card names the model in use.
+- Haiku is weak at following tool results in a long thread; the owner moved
+  to Sonnet from the new picker. The readiness card names the model in use.
+- The bar must never sit on screen while nothing happens; paused, stopped and
+  taken-over states live in PC Control and the tray, not across the window.
+- Switching models must not make the owner wait for a check they already paid for.
