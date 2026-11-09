@@ -263,6 +263,9 @@ namespace Josi.Native {
       if (!string.IsNullOrEmpty(placeholder)) { Placeholder(box, placeholder); Automation.Derive(box, "input", placeholder); }
       return box;
     }
+    /// A box that reads as a box on the dark sheet background: taller, lighter
+    /// edge. The theme's raised fill alone was invisible against a sheet.
+    public static T Visible<T>(T box) where T : Control { box.MinHeight = 40; box.BorderBrush = Muted; box.Background = Card; return box; }
     public static PasswordBox Secret(string placeholder = null) {
       var box = new PasswordBox();
       if (!string.IsNullOrEmpty(placeholder)) { System.Windows.Automation.AutomationProperties.SetName(box, placeholder); Automation.Derive(box, "secret", placeholder); }

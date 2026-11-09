@@ -14,7 +14,7 @@ namespace Josi.Native {
     Wire world = Wire.Null;
     string kindFilter = "all", addKind = "vehicle";
     bool adding;
-    readonly PasswordBox password = Ui.Secret("Your Josi password");
+    readonly PasswordBox password = Ui.Visible(Ui.Secret("Your Josi password"));
     readonly Dictionary<string, TextBox> addFields = new Dictionary<string, TextBox>();
     TextBox addLabel; TextBox noteBox;
     public MyWorldView(AppModel model, Window owner) : base(model, owner) { }
@@ -56,16 +56,16 @@ namespace Josi.Native {
       var kindPick = Ui.Choice(Ui.Options(pairs.ToArray()), addKind);
       kindPick.SelectionChanged += delegate { var chosen = Ui.Selected(kindPick); if (chosen.Length > 0 && chosen != addKind) { addKind = chosen; addFields.Clear(); addLabel = null; Render(); } };
       var spec = Spec(addKind);
-      if (addLabel == null) addLabel = Ui.Input("Name, for example \"2026 Ford Explorer\" or \"Dana\"");
+      if (addLabel == null) addLabel = Ui.Visible(Ui.Input("Name, for example \"2026 Ford Explorer\" or \"Dana\""));
       var rows = new List<UIElement> { Ui.Field("What kind of thing", kindPick), Ui.Field("Name", Detach(addLabel)) };
       foreach (var f in spec["fields"].List.Where(f => !f["secret"].Flag)) {
         var key = f["key"].Text;
-        if (!addFields.ContainsKey(key)) addFields[key] = Ui.Input(f["hint"].Text.Length > 0 ? f["hint"].Text : null);
+        if (!addFields.ContainsKey(key)) addFields[key] = Ui.Visible(Ui.Input(f["hint"].Text.Length > 0 ? f["hint"].Text : null));
         rows.Add(Ui.Field(f["label"].Text, Detach(addFields[key])));
       }
       foreach (var d in spec["dates"].List) {
         var key = "date:" + d["key"].Text;
-        if (!addFields.ContainsKey(key)) addFields[key] = Ui.Input("YYYY-MM-DD");
+        if (!addFields.ContainsKey(key)) addFields[key] = Ui.Visible(Ui.Input("YYYY-MM-DD"));
         rows.Add(Ui.Field(d["label"].Text, Detach(addFields[key])));
       }
       var secretNames = spec["fields"].List.Where(f => f["secret"].Flag).Select(f => f["label"].Text).ToList();
@@ -141,7 +141,7 @@ namespace Josi.Native {
         var id = line.Id; var text = line["content"].Text;
         rows.Add(Ui.Spread(Ui.Copyable(text, 13.5), Ui.Danger("Forget", () => Perform(async (api, stamp) => { await api.Request("/my-world/memory/" + api.Uuid(id), "DELETE", null); }))));
       }
-      if (noteBox == null) noteBox = Ui.Input("Something Josi should know, in a sentence");
+      if (noteBox == null) noteBox = Ui.Visible(Ui.Input("Something Josi should know, in a sentence"));
       rows.Add(Ui.Row(8, Detach(noteBox), Ui.Pill("Add", () => {
         var text = noteBox.Text.Trim(); if (text.Length < 3) return;
         Perform(async (api, stamp) => { await api.Request("/my-world/memory", "POST", Wires.O("content", text)); noteBox.Text = ""; });

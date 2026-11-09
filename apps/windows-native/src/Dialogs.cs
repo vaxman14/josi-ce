@@ -136,6 +136,7 @@ namespace Josi.Native {
         if (type == "secret") control = Ui.Secret(label);
         else if (type == "confirm") control = Ui.Toggle(field["label"].Text);
         else control = Ui.Input(field["placeholder"].Text.Length > 0 ? field["placeholder"].Text : null);
+        if (type != "confirm") Ui.Visible(control);
         Automation.Id(control, "josi.credential-card.field." + field["key"].Text);
         inputs.Add(Tuple.Create(field, control));
         body.Children.Add(type == "confirm" ? (FrameworkElement)control : Ui.Field(label, control));
@@ -184,7 +185,7 @@ namespace Josi.Native {
     public static string AskSecret(Window owner, string title, string detail, string label, string action) {
       var sheet = new Sheet(owner, "Josi", 520, "secret");
       string result = null;
-      var box = Automation.Id(Ui.Secret(label), "josi.secret.input");
+      var box = Automation.Id(Ui.Visible(Ui.Secret(label)), "josi.secret.input");
       var go = Automation.Id(Ui.Pill(action, () => { if (box.Password.Length == 0) return; result = box.Password; box.Clear(); sheet.Close(); }, true), "josi.secret.ok");
       go.IsDefault = true;
       var cancel = Automation.Id(Ui.Pill("Cancel", () => { box.Clear(); sheet.Close(); }), "josi.secret.cancel");
@@ -210,7 +211,7 @@ namespace Josi.Native {
     public static string AskPassword(Window owner, string title, string detail, string action) {
       var sheet = new Sheet(owner, "Josi", 520, "password");
       string result = null;
-      var box = Automation.Id(Ui.Secret("Your account password"), "josi.password.input");
+      var box = Automation.Id(Ui.Visible(Ui.Secret("Your account password")), "josi.password.input");
       var go = Automation.Id(Ui.Pill(action, () => { if (box.Password.Length == 0) return; result = box.Password; box.Clear(); sheet.Close(); }, true), "josi.password.ok");
       go.IsDefault = true;
       var cancel = Automation.Id(Ui.Pill("Cancel", () => { box.Clear(); sheet.Close(); }), "josi.password.cancel");

@@ -717,7 +717,10 @@ namespace Josi.Native {
           if (Api == api && SelectedThread == thread) { try { await LoadThread(thread); } catch (Exception) { } NotifyWorkspace(); }
           // Demo: a settings change Josi prepared in this reply shows its popup
           // on the next poll instead of up to 30 seconds later.
-          if (Josi.Native.Automation.Demo) lastNotificationCheck = DateTime.MinValue;
+          // Not only in demo: a card Josi opened in this reply shows now, not
+          // up to 30 seconds later on the next poll.
+          lastNotificationCheck = DateTime.UtcNow;
+          try { await watcher.Check(this); } catch (Exception) { }
         }
       }
     }
