@@ -79,7 +79,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
   // A credential card: the body holds the card's fields and fixed values, never
   // a secret; the app fills the typed values in and performs the route itself.
   const isCredentialCard = (row: Row) => row.area === 'credential_card';
-  const cardOf = (row: Row): unknown => { const body = change(row).body as { card?: unknown } | null; return body && typeof body === 'object' ? body.card ?? null : null; };
+  const cardOf = (row: Row): unknown => (change(row) as { card?: unknown }).card ?? null;
   function checkPcChange(row: Row, user: { id: string }) {
     if (!isPcChange(row)) return;
     if (row.proposer_user_id !== user.id) throw fail(403, 'Only the owner of this PC permission proposal can apply it.');

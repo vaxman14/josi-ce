@@ -150,3 +150,23 @@ describe('the catalogue', () => {
     expect(dead.filter((entry) => !entry.startsWith('parental_controls '))).toEqual([]);
   });
 });
+
+describe('credential cards', () => {
+  it('hands the app the card (fields, fixed values) and never a secret, and lets the proposer apply it', async () => {
+    const { executeCredentialCardTool } = await import('../../../packages/agent/src/credentialCardTools.js');
+    const opened = await executeCredentialCardTool(db, ownerId, 'request_credential_card', { kind: 'oauth_client', provider: 'google' }, null) as { ok: boolean; cardId: string };
+    expect(opened.ok).toBe(true);
+    const list = await call(ownerToken, 'GET', '/settings-changes');
+    const row = list.body.proposals.find((p: { id: string }) => p.id === opened.cardId);
+    expect(row.area).toBe('credential_card');
+    expect(row.canApprove).toBe(true);
+    expect(row.card.fields.map((f: { key: string; type: string }) => [f.key, f.type])).toEqual([['clientId', 'text'], ['clientSecret', 'secret']]);
+    expect(row.card.title).toBe('Google application');
+    const decided = await call(ownerToken, 'POST', `/settings-changes/${opened.cardId}/decide`, { approve: true });
+    expect(decided.status).toBe(200);
+    expect(decided.body.apply).toMatchObject({ method: 'PUT', path: '/admin/connectors/clients/google' });
+    expect(String(decided.body.apply.body.redirectUri)).toMatch(/\/api\/connections\/google\/callback$/);
+    expect(JSON.stringify(decided.body)).not.toMatch(/clientSecret":"/);
+  });
+});
+

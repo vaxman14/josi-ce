@@ -266,6 +266,31 @@ namespace Josi.Native {
     /// A box that reads as a box on the dark sheet background: taller, lighter
     /// edge. The theme's raised fill alone was invisible against a sheet.
     public static T Visible<T>(T box) where T : Control { box.MinHeight = 40; box.BorderBrush = Muted; box.Background = Card; return box; }
+    /// A secret the person types or pastes: stars by default, Paste from the
+    /// clipboard, Show to check it. Reading the value is explicit (`Value`).
+    public sealed class SecretEntry : Grid {
+      public readonly PasswordBox Hidden; public readonly TextBox Shown; readonly Button toggle; bool showing;
+      public SecretEntry(string label) {
+        Hidden = Visible(Secret(label)); Shown = Visible(Input(label)); Shown.Visibility = Visibility.Collapsed;
+        ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var paste = Pill("Paste", () => { string text = null; try { text = Clipboard.ContainsText() ? Clipboard.GetText() : null; } catch (Exception) { } if (string.IsNullOrWhiteSpace(text)) return; text = text.Trim(); if (showing) Shown.Text = text; else Hidden.Password = text; Focus(); });
+        Automation.Derive(paste, "paste", label + " paste");
+        toggle = Pill("Show", () => Toggle()); Automation.Derive(toggle, "show", label + " show");
+        paste.Margin = new Thickness(8, 0, 0, 0); toggle.Margin = new Thickness(8, 0, 0, 0);
+        SetColumn(Hidden, 0); SetColumn(Shown, 0); SetColumn(paste, 1); SetColumn(toggle, 2);
+        Children.Add(Hidden); Children.Add(Shown); Children.Add(paste); Children.Add(toggle);
+      }
+      void Toggle() {
+        if (showing) { Hidden.Password = Shown.Text; Shown.Text = ""; Shown.Visibility = Visibility.Collapsed; Hidden.Visibility = Visibility.Visible; toggle.Content = "Show"; }
+        else { Shown.Text = Hidden.Password; Hidden.Clear(); Hidden.Visibility = Visibility.Collapsed; Shown.Visibility = Visibility.Visible; toggle.Content = "Hide"; }
+        showing = !showing; Focus();
+      }
+      public string Value { get { return showing ? Shown.Text : Hidden.Password; } }
+      public void Clear() { Hidden.Clear(); Shown.Text = ""; }
+      public new void Focus() { if (showing) { Shown.Focus(); Shown.CaretIndex = Shown.Text.Length; } else Hidden.Focus(); }
+    }
+    public static SecretEntry SecretField(string label) { return new SecretEntry(label); }
     public static PasswordBox Secret(string placeholder = null) {
       var box = new PasswordBox();
       if (!string.IsNullOrEmpty(placeholder)) { System.Windows.Automation.AutomationProperties.SetName(box, placeholder); Automation.Derive(box, "secret", placeholder); }

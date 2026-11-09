@@ -128,26 +128,26 @@ namespace Josi.Native {
       var outcome = "later";
       var problem = Automation.Id(Ui.T("", 13, null, Ui.Error), "josi.credential-card.error");
       problem.Visibility = Visibility.Collapsed;
-      var inputs = new List<Tuple<Wire, Control>>();
+      var inputs = new List<Tuple<Wire, FrameworkElement>>();
       var body = Ui.Stack(12);
       foreach (var field in card["fields"].List) {
         var type = field["type"].Text; var label = field["label"].Text + (field["required"].Flag ? "" : " (optional)");
-        Control control;
-        if (type == "secret") control = Ui.Secret(label);
+        FrameworkElement control;
+        if (type == "secret") { var entry = Ui.SecretField(label); Automation.Id(entry.Hidden, "josi.credential-card.field." + field["key"].Text); control = entry; }
         else if (type == "confirm") control = Ui.Toggle(field["label"].Text);
-        else control = Ui.Input(field["placeholder"].Text.Length > 0 ? field["placeholder"].Text : null);
-        if (type != "confirm") Ui.Visible(control);
-        Automation.Id(control, "josi.credential-card.field." + field["key"].Text);
+        else control = Ui.Visible(Ui.Input(field["placeholder"].Text.Length > 0 ? field["placeholder"].Text : null));
+        if (type != "secret") Automation.Id(control, "josi.credential-card.field." + field["key"].Text);
         inputs.Add(Tuple.Create(field, control));
-        body.Children.Add(type == "confirm" ? (FrameworkElement)control : Ui.Field(label, control));
+        body.Children.Add(type == "confirm" ? control : type == "secret" ? Ui.Stack(5, Ui.T(label, 13.5), control) : Ui.Field(label, (Control)control));
       }
+      if (inputs.Count == 0) body.Children.Add(Ui.T("This card has nothing to fill in. Ask Josi to open it again.", 13, null, Ui.Error));
       Button save = null;
       save = Automation.Id(Ui.Pill("Save", async () => {
         var values = new Dictionary<string, object>();
         foreach (var pair in inputs) {
           var field = pair.Item1; var key = field["key"].Text;
-          var secret = pair.Item2 as PasswordBox; var toggle = pair.Item2 as CheckBox; var text = pair.Item2 as TextBox;
-          if (secret != null) { if (secret.Password.Length == 0 && field["required"].Flag) { problem.Text = field["label"].Text + " is required."; problem.Visibility = Visibility.Visible; secret.Focus(); return; } values[key] = secret.Password; }
+          var secret = pair.Item2 as Ui.SecretEntry; var toggle = pair.Item2 as CheckBox; var text = pair.Item2 as TextBox;
+          if (secret != null) { var value = secret.Value.Trim(); if (value.Length == 0 && field["required"].Flag) { problem.Text = field["label"].Text + " is required."; problem.Visibility = Visibility.Visible; secret.Focus(); return; } values[key] = value; }
           else if (toggle != null) { if (toggle.IsChecked != true && field["required"].Flag) { problem.Text = "Please confirm: " + field["label"].Text; problem.Visibility = Visibility.Visible; return; } values[key] = toggle.IsChecked == true; }
           else if (text != null) { var typed = text.Text.Trim(); if (typed.Length == 0 && field["required"].Flag) { problem.Text = field["label"].Text + " is required."; problem.Visibility = Visibility.Visible; text.Focus(); return; } values[key] = typed; }
         }
@@ -155,12 +155,12 @@ namespace Josi.Native {
         try {
           var note = await model.SaveCredentialCard(proposal, values);
           outcome = "saved";
-          foreach (var pair in inputs) { var secret = pair.Item2 as PasswordBox; if (secret != null) secret.Clear(); }
+          foreach (var pair in inputs) { var secret = pair.Item2 as Ui.SecretEntry; if (secret != null) secret.Clear(); }
           sheet.Close();
           if (note.Length > 0) Notifications.Show("Saved", note);
         } catch (JosiException e) {
           problem.Text = e.Message; problem.Visibility = Visibility.Visible; save.IsEnabled = true;
-          foreach (var pair in inputs) { var secret = pair.Item2 as PasswordBox; if (secret != null) secret.Clear(); }
+          foreach (var pair in inputs) { var secret = pair.Item2 as Ui.SecretEntry; if (secret != null) secret.Clear(); }
         }
       }, true), "josi.credential-card.save");
       save.IsDefault = true;
@@ -177,7 +177,7 @@ namespace Josi.Native {
         body, helpRow, problem,
         Ui.Caption("What you paste goes to this Josi's Vault only. Josi never sees it, and it never appears in the conversation."),
         Ui.Spread(decline, Ui.Row(8, cancel, save))));
-      sheet.Loaded += delegate { var first = inputs.Select(p => p.Item2).FirstOrDefault(); if (first != null) first.Focus(); };
+      sheet.Loaded += delegate { sheet.Activate(); var first = inputs.Select(p => p.Item2).FirstOrDefault(); var entry = first as Ui.SecretEntry; if (entry != null) entry.Focus(); else if (first != null) first.Focus(); };
       sheet.ShowDialog();
     }
     /// One secret value, typed by the person for their own World. Returns null
@@ -185,14 +185,14 @@ namespace Josi.Native {
     public static string AskSecret(Window owner, string title, string detail, string label, string action) {
       var sheet = new Sheet(owner, "Josi", 520, "secret");
       string result = null;
-      var box = Automation.Id(Ui.Visible(Ui.Secret(label)), "josi.secret.input");
-      var go = Automation.Id(Ui.Pill(action, () => { if (box.Password.Length == 0) return; result = box.Password; box.Clear(); sheet.Close(); }, true), "josi.secret.ok");
+      var box = Ui.SecretField(label); Automation.Id(box.Hidden, "josi.secret.input");
+      var go = Automation.Id(Ui.Pill(action, () => { var value = box.Value.Trim(); if (value.Length == 0) return; result = value; box.Clear(); sheet.Close(); }, true), "josi.secret.ok");
       go.IsDefault = true;
       var cancel = Automation.Id(Ui.Pill("Cancel", () => { box.Clear(); sheet.Close(); }), "josi.secret.cancel");
       cancel.IsCancel = true;
       sheet.Closed += delegate { Automation.PopupResult = result == null ? "secret:cancelled" : "secret:ok"; };
-      sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), detail == null ? null : Ui.Secondary(detail), Ui.Field(label, box), Ui.Spread(null, Ui.Row(8, cancel, go))));
-      sheet.Loaded += delegate { box.Focus(); };
+      sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), detail == null ? null : Ui.Secondary(detail), Ui.Stack(5, Ui.T(label, 13.5), box), Ui.Spread(null, Ui.Row(8, cancel, go))));
+      sheet.Loaded += delegate { sheet.Activate(); box.Focus(); };
       sheet.ShowDialog();
       return result;
     }
