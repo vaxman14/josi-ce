@@ -52,6 +52,7 @@ const MAC_COMPUTER_TOOLS = new Set(['computer_operation']);
 // click or type; every later, server-scheduled segment was refused with "no
 // automatic-work adapter" even though the owner had granted the control.
 const PC_CONTROL_TOOLS = new Set(['browser_open_page', 'browser_click', 'browser_fill', 'browser_view_photo', 'browser_check_request',
+  'browser_attach_tab', 'browser_select_option', 'browser_drag', 'browser_scroll', 'browser_download', 'browser_upload_file',
   'desktop_launch', 'desktop_click', 'desktop_click_point', 'desktop_type', 'desktop_keys', 'desktop_close_window', 'desktop_check_request']);
 
 /** Rechecked before each model hop and every tool, including subscription MCP.

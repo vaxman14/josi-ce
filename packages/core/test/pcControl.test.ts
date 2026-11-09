@@ -295,3 +295,27 @@ describe('Windows exact PC scope authorization',()=>{
     await expect(control.propose(owner,plan(read,{payload:'x'.repeat(65537)}))).rejects.toThrow();
   });
 });
+
+describe('PC browser presence',()=>{
+  const base={family:'chrome',application:'C:\\Browsers\\Chrome.exe',profile:'Default',origin:null,title:null};
+  it('keeps a linked browser with no tab, its active tab and bounded tabs (origins only)',async()=>{
+    await control.setPresence(owner,{...base,family:'firefox',activeTabId:3,activeOrigin:'https://shop.example.test/item/9?x=1',activeTitle:'Lamp\u0007',
+      tabs:[{tabId:3,origin:'https://shop.example.test/item/9',title:'Lamp',active:true},{tabId:4,origin:'http://localhost:8080/a',title:null,active:false}]});
+    expect(await control.presence(owner)).toEqual({...base,family:'firefox',activeTabId:3,activeOrigin:'https://shop.example.test',activeTitle:'Lamp ',
+      tabs:[{tabId:3,origin:'https://shop.example.test',title:'Lamp',active:true},{tabId:4,origin:'http://localhost:8080',title:null,active:false}]});
+  });
+  it('rejects more than 30 tabs, non-web tabs and unknown browsers',async()=>{
+    const tab=(i:number)=>({tabId:i,origin:'https://a.example.test',title:'t',active:false});
+    await expect(control.setPresence(owner,{...base,tabs:Array.from({length:31},(_,i)=>tab(i))})).rejects.toThrow(/Too many/);
+    await expect(control.setPresence(owner,{...base,tabs:[{...tab(1),origin:'chrome://settings'}]})).rejects.toThrow(/tab/);
+    await expect(control.setPresence(owner,{...base,tabs:[{...tab(1),origin:'file:///C:/x.txt'}]})).rejects.toThrow(/tab/);
+    await expect(control.setPresence(owner,{...base,activeOrigin:'javascript:alert(1)'})).rejects.toThrow(/site/);
+    await expect(control.setPresence(owner,{...base,family:'opera'})).rejects.toThrow(/Unsupported/);
+    await control.setPresence(owner,{...base,tabs:Array.from({length:30},(_,i)=>tab(i))});
+    expect((await control.presence(owner))!.tabs).toHaveLength(30);
+  });
+  it('drops tab details for the desktop-only presence',async()=>{
+    await control.setPresence(owner,{...base,family:'desktop',tabs:[{tabId:1,origin:'https://a.example.test',title:'t',active:true}]});
+    expect(await control.presence(owner)).toEqual({...base,family:'desktop'});
+  });
+});

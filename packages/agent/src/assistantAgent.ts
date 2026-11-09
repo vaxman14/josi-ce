@@ -42,7 +42,7 @@ import {
 } from '@josi-ce/persona';
 import { isMutatingTool, runDurableEffect } from './durableEffects.js';
 import { automationToolAvailability } from './automationTools.js';
-import { pcBrowserToolAvailability, PC_BROWSER_PROMPT, PC_BROWSER_ABSENT_PROMPT, takeToolImages } from './pcBrowserTools.js';
+import { pcBrowserToolAvailability, pcBrowserPrompt, PC_BROWSER_ABSENT_PROMPT, takeToolImages } from './pcBrowserTools.js';
 import { SETTINGS_CHANGE_PROMPT } from './settingsChangeTools.js';
 import { SETUP_STATUS_PROMPT } from './setupStatusTools.js';
 import { CREDENTIAL_CARD_PROMPT } from './credentialCardTools.js';
@@ -283,7 +283,8 @@ function toolActivity(name: string): string {
     check_email_availability: 'Checking your mail account', search_contacts: 'Looking through your contacts', draft_email: 'Drafting the email',
     draft_calendar_event: 'Drafting the event', search_documents: 'Searching your files', workspace_list: 'Looking in the folder', workspace_read: 'Reading the file',
     browser_open_page: 'Opening the page', browser_read_page: 'Reading the page', browser_click: 'Clicking in the browser', browser_fill: 'Typing in the browser',
-    browser_view_photo: 'Looking at the photo', desktop_list_windows: 'Looking at the open windows', desktop_read_window: 'Reading the window',
+    browser_view_photo: 'Looking at the photo', browser_attach_tab: 'Attaching the tab', browser_list_tabs: 'Looking at your tabs',
+    browser_select_option: 'Choosing an option', browser_drag: 'Dragging in the browser', browser_scroll: 'Scrolling the page', browser_download: 'Downloading', browser_upload_file: 'Uploading the file', desktop_list_windows: 'Looking at the open windows', desktop_read_window: 'Reading the window',
     desktop_screenshot: 'Taking a screenshot', desktop_click: 'Clicking', desktop_click_point: 'Clicking', desktop_type: 'Typing', desktop_keys: 'Pressing keys',
     desktop_launch: 'Opening the program', desktop_close_window: 'Closing the window', pc_environment: 'Looking at this PC', pc_find_app: 'Looking for the program',
     pc_run_command: 'Running a command on this PC', pc_get_permissions: 'Checking PC permissions', pc_list_folder: 'Looking in the folder', pc_read_file: 'Reading the file', pc_write_file: 'Writing the file',
@@ -536,7 +537,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     imagesAttached,
     temporalContext: temporal.prompt,
   }) + (recalled ? `\n\nFrom this person's own history:\n${recalled}` : '')
-    + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : pcDesktopTools.some(t=>t.def.name!=='pc_get_permissions') ? `\n\n${PC_BROWSER_ABSENT_PROMPT}` : '')
+    + (pcBrowserTools.length ? `\n\n${pcBrowserPrompt(pcBrowserTools)}` : pcDesktopTools.some(t=>t.def.name!=='pc_get_permissions') ? `\n\n${PC_BROWSER_ABSENT_PROMPT}` : '')
     + (computerTools.length ? `\n\n${COMPUTER_PROMPT}` : '')
     + (pcDesktopTools.length ? `\n\n${PC_DESKTOP_PROMPT}` : '')
     + (capabilities.toolCalling ? `\n\n${SETUP_STATUS_PROMPT}\n\n${CREDENTIAL_CARD_PROMPT}\n\n${CONNECTOR_REQUEST_PROMPT}\n\n${MY_WORLD_PROMPT}\n\n${SETTINGS_CHANGE_PROMPT}`

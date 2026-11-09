@@ -496,17 +496,38 @@ export async function livePcId(db:Db,owner:string):Promise<string|null>{
 }
 /** What the Windows app reports about the browser attached through its
  * native messaging host. Page content never travels here. */
-export type PcBrowserPresence={family:string;application:string;profile:string;origin:string|null;title:string|null};
+export type PcBrowserTab={tabId:number;origin:string;title:string|null;active:boolean};
+/** `origin`/`title`: the attached tab, or null when the browser is linked
+ * with no tab attached. `active*` and `tabs` name the browser's open web tabs
+ * (origins only, never paths or page content) so chat can attach one. */
+export type PcBrowserPresence={family:string;application:string;profile:string;origin:string|null;title:string|null;
+  activeTabId?:number|null;activeOrigin?:string|null;activeTitle?:string|null;tabs?:PcBrowserTab[]};
+export const PC_BROWSER_FAMILIES:readonly string[]=['chrome','brave','edge','firefox'];
+const PRESENCE_TABS=30;
+function webOrigin(value:unknown,message:string):string{
+  try{const url=new URL(text(value,2048));if(!['http:','https:'].includes(url.protocol)||url.username||url.password)fail('');return url.origin;}
+  catch{return fail(message);}
+}
+const cleanTitle=(value:unknown)=>value===null||value===undefined||value===''?null:String(value).replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,300);
+const tabId=(value:unknown)=>Number.isSafeInteger(value)&&(value as number)>=0?value as number:fail('Invalid browser tab.');
 function normalizePresence(p:PcBrowserPresence):PcBrowserPresence {
   if(!p||typeof p!=='object')fail('Invalid browser connection.');
-  // 'desktop': the Josi app is open on this PC with no browser tab attached;
+  // 'desktop': the Josi app is open on this PC with no browser linked;
   // desktop tools are available, browser tools are not.
-  const family=['chrome','brave','edge','desktop'].includes(p.family)?p.family:fail('Unsupported browser.');
-  let origin:string|null=null;
-  if(p.origin!==null&&p.origin!==undefined){
-    try{const url=new URL(text(p.origin,2048));if(!['http:','https:'].includes(url.protocol)||url.username||url.password)fail('');origin=url.origin;}
-    catch{fail('Invalid attached site.');}
+  const family=[...PC_BROWSER_FAMILIES,'desktop'].includes(p.family)?p.family:fail('Unsupported browser.');
+  const origin=p.origin===null||p.origin===undefined?null:webOrigin(p.origin,'Invalid attached site.');
+  const value:PcBrowserPresence={family,application:localPath(p.application),profile:text(p.profile,120),origin,title:cleanTitle(p.title)};
+  if(family==='desktop')return value;
+  if(p.activeOrigin!==null&&p.activeOrigin!==undefined){
+    value.activeOrigin=webOrigin(p.activeOrigin,'Invalid active site.');value.activeTitle=cleanTitle(p.activeTitle);
+    value.activeTabId=p.activeTabId===null||p.activeTabId===undefined?null:tabId(p.activeTabId);
   }
-  const title=p.title===null||p.title===undefined||p.title===''?null:String(p.title).replace(/[\u0000-\u001f\u007f]/g,' ').slice(0,300);
-  return {family,application:localPath(p.application),profile:text(p.profile,120),origin,title};
+  if(p.tabs!==undefined&&p.tabs!==null){
+    if(!Array.isArray(p.tabs)||p.tabs.length>PRESENCE_TABS)fail('Too many browser tabs.');
+    value.tabs=p.tabs.map(t=>{
+      if(!t||typeof t!=='object')fail('Invalid browser tab.');
+      return {tabId:tabId(t.tabId),origin:webOrigin(t.origin,'Invalid browser tab.'),title:cleanTitle(t.title),active:t.active===true};
+    });
+  }
+  return value;
 }

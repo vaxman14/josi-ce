@@ -13,7 +13,7 @@ import { CUSTOM_API_TOOLS } from './customApiTools.js';
 import { DATA_TOOLS } from './dataTools.js';
 import { WORKFLOW_TOOLS } from './workflowTools.js';
 import { DEVELOPER_INTEGRATION_TOOLS, OBSIDIAN_TOOLS } from './developerIntegrationTools.js';
-import { PC_BROWSER_TOOLS } from './pcBrowserTools.js';
+import { PC_BROWSER_LINK_TOOLS, PC_BROWSER_TOOLS } from './pcBrowserTools.js';
 import { SETTINGS_CHANGE_TOOLS } from './settingsChangeTools.js';
 import { SETUP_STATUS_TOOLS } from './setupStatusTools.js';
 import { CREDENTIAL_CARD_TOOLS } from './credentialCardTools.js';
@@ -242,6 +242,7 @@ export const ALL_TOOLS: ToolSpec[] = [
   ...WORKFLOW_TOOLS,
   ...DEVELOPER_INTEGRATION_TOOLS,
   ...OBSIDIAN_TOOLS,
+  ...PC_BROWSER_LINK_TOOLS,
   ...PC_BROWSER_TOOLS,
   ...PC_DESKTOP_TOOLS,
   ...COMPUTER_TOOLS,

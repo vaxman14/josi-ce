@@ -46,6 +46,15 @@ describe('chat-managed PC permission foundation',()=>{
     expect((await send({connected:true})).status).toBe(403);
     expect((await send(body)).status).toBe(200);expect((await send(body)).status).toBe(403);
   });
+  it('round-trips a linked browser with no tab attached, its active tab and its tabs (step H)',async()=>{
+    const browser={family:'chrome',application:'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',profile:'Default',origin:null,title:null,
+      activeTabId:12,activeOrigin:'https://shop.example.test',activeTitle:'Garage sale',
+      tabs:[{tabId:12,origin:'https://shop.example.test',title:'Garage sale',active:true},{tabId:13,origin:'https://news.example.test',title:'News',active:false}]};
+    expect((await call('/admin/pc-control/executor/presence','PUT',{connected:true,browser},token,'win-target')).status).toBe(200);
+    const state=await call('/admin/pc-control','GET',undefined,token,'win-target');
+    expect(state.body.browser).toEqual(browser);
+    expect(state.body.availability).toMatch(/chrome browser is linked with no tab attached/);
+  });
   it('applies the exact full-access chat card once with password approval, retaining the separate administrator denial',async()=>{
     await control.setEnabled(owner,true);
     const proposal=await propose({access:'full',administrator:false,mode:'always'},{pcId:'win-target'},'pc_control_preset');

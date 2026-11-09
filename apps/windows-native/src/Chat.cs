@@ -586,6 +586,24 @@ namespace Josi.Native {
           PcInbox.Decided(id); DesktopExecutor.Current.Resume();
           model.Run(async () => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", high ? Wires.O("approve", true, "password", password) : Wires.O("approve", true)));
         }, true), "josi.chat.pc.request." + number + ".once"));
+        // Step H: one ask per site. Saves "always" for exactly this action, site,
+        // browser and profile; risky ones (clicks, uploads) take the password.
+        var site = requirements.Count == 1 && requirements[0]["scope"]["kind"].Text == "browser" ? requirements[0] : null;
+        if (site != null) {
+          var siteScope = site["scope"]; var siteAction = site["action"].Text;
+          buttons.Children.Add(Automation.Id(Ui.Pill("Always allow on this site", () => {
+            var password = high ? Dialogs.AskPassword(Window.GetWindow(this), "Always allow this on " + siteScope["target"].Text + "?",
+              q["description"].Text + ". Josi will do this on " + siteScope["target"].Text + " in this browser profile without asking. PC Control lists it; you can turn it off there.", "Allow") : "";
+            if (password == null) return;
+            PcInbox.Decided(id); DesktopExecutor.Current.Resume();
+            model.Run(async () => {
+              var policy = Wires.O("action", siteAction, "scope", Wires.O("kind", "browser", "target", siteScope["target"].Text, "application", siteScope["application"].Text, "profile", siteScope["profile"].Text), "mode", "always");
+              if (high) policy["password"] = password;
+              await api.Request("/admin/pc-control/policies", "PUT", policy);
+              try { await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", high ? Wires.O("approve", true, "password", password) : Wires.O("approve", true)); } catch (JosiException) { }
+            });
+          }), "josi.chat.pc.request." + number + ".site"));
+        }
         if (command != null) {
           var scope = command["scope"];
           buttons.Children.Add(Automation.Id(Ui.Pill("Always allow this shell here", () => {

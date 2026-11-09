@@ -43,8 +43,13 @@ namespace Josi.Native {
 
     // --------------------------------------------------------------- state
     /// What Josi is doing on the desktop right now, for the control banner.
-    public bool Busy { get; private set; }
-    public string Activity { get; private set; } = "";
+    public bool Busy { get { return busy || externalCount > 0; } }
+    public string Activity { get { return busy ? activity : externalCount > 0 ? external : ""; } }
+    bool busy; string activity = "", external = ""; int externalCount;
+    /// Work Josi does elsewhere on this PC (a command in the attached browser
+    /// tab) shows in the same control bar, with the same Pause and Stop.
+    public void BeginExternal(string what) { lock (gate) { externalCount++; external = what ?? ""; } Raise(); }
+    public void EndExternal() { lock (gate) { if (externalCount > 0) externalCount--; if (externalCount == 0) external = ""; } Raise(); }
     public bool Paused { get { lock (gate) return paused; } }
     public bool TakenOver { get { lock (gate) return takenOver; } }
     public bool ScreenControl { get { lock (gate) return runningOnScreen && !paused && !takenOver; } }
@@ -173,7 +178,7 @@ namespace Josi.Native {
       if (Paused || (screen && Blocked)) return refuse(Paused ? "paused" : "human_control");
       var cancel = new CancellationTokenSource();
       lock (gate) { running = cancel; runningOnScreen = screen; }
-      Busy = true; Activity = Describe(kind, scope, payload);
+      busy = true; activity = Describe(kind, scope, payload);
       var hooked = false;
       try {
         if (ui == null || ui.HasShutdownStarted) return refuse("control_surface_unavailable");
@@ -192,7 +197,7 @@ namespace Josi.Native {
         // The action is over, and with it any takeover: you simply have your PC.
         lock (gate) if (running == cancel) { running = null; runningOnScreen = false; takenOver = false; }
         cancel.Dispose();
-        Busy = false; Activity = ""; Raise();
+        busy = false; activity = ""; Raise();
         // Keep the hooks a moment longer: the next request usually follows at once.
         if (hooked) _ = Task.Delay(45000).ContinueWith(_ => { if (Interlocked.Decrement(ref engaged) == 0) Disengage(); });
       }

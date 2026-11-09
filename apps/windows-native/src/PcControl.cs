@@ -202,7 +202,7 @@ namespace Josi.Native {
       if (asked != null) items.Add(Ui.Stack(6, Ui.T(asked.Browser + " asked to connect to Josi", 14, FontWeights.Medium),
         Ui.Caption(asked.Application + " · attaching " + asked.Url),
         Ui.Wrap(Ui.Pill("Allow This Browser", () => bridge.Allow(), true), Ui.Pill("Ignore", () => bridge.Ignore())),
-        Ui.Caption("After allowing it, click the Josi extension in the browser and choose Attach this tab again.")));
+        Ui.Caption("After allowing it, the browser links to Josi by itself. Then say \"use this tab\" in chat, or click the Josi icon and choose Attach this tab.")));
       if (bridge.Attached) {
         var origin = bridge.AttachedOrigin;
         items.Add(Ui.Stack(6, Ui.T(bridge.AttachedBrowser + " tab attached: " + (bridge.AttachedTitle.Length > 0 ? bridge.AttachedTitle : origin), 14, FontWeights.Medium),
@@ -211,7 +211,11 @@ namespace Josi.Native {
               Wires.O("action", "browser.view", "scope", Wires.O("kind", "browser", "target", origin, "application", bridge.AttachedApplication, "profile", bridge.AttachedProfile), "mode", "always")))) : null,
             Ui.Pill("Detach Tab", () => bridge.Disconnect()))));
         if (!enabled) items.Add(Ui.Caption("Turn on \"Allow Josi to control this PC\" above, or Josi cannot use the attached tab."));
-      } else if (asked == null) items.Add(Ui.Caption("To let Josi use a browser tab: open the site in Chrome, Brave or Edge with the Josi extension installed, click the Josi icon and choose Attach this tab. Josi stays limited to that tab."));
+      } else if (bridge.Linked) {
+        items.Add(Ui.Stack(6, Ui.T(bridge.AttachedBrowser + " is linked to Josi, with no tab attached", 14, FontWeights.Medium),
+          Ui.Caption("Say \"use this tab\" in chat and Josi attaches the tab you are looking at (you approve it once per site), or click the Josi icon in the browser and choose Attach this tab."),
+          Ui.Wrap(Ui.Pill("Unlink Browser", () => bridge.Disconnect()))));
+      } else if (asked == null) items.Add(Ui.Caption("To let Josi use a browser tab: open Chrome, Brave, Edge or Firefox with the Josi extension installed while Josi is open; it links by itself. Then say \"use this tab\" in chat. Josi stays limited to the tab you attach."));
       var allowed = bridge.Allowed();
       if (allowed.Count > 0) {
         var list = Ui.Stack(6, Ui.Caption("Allowed browsers"));
