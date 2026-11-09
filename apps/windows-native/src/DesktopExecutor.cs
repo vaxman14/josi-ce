@@ -75,6 +75,10 @@ namespace Josi.Native {
       }
     }
     public void Pause() { lock (gate) { paused = true; observations.Clear(); } CancelCurrent("paused"); PcTerminals.StopAll(); Raise(); SavePause(); }
+    /// Ends the current work because the app is leaving (quit, or a newer copy
+    /// taking over) without remembering a pause: the next copy starts ready.
+    /// Only a pause the person chose, a lock or a Stop survives a restart.
+    public void PauseForExit() { lock (gate) { paused = true; observations.Clear(); } CancelCurrent("paused"); PcTerminals.StopAll(); }
     public void Resume() {
       if (PendingStop) { Raise(); return; }
       lock (gate) { paused = false; takenOver = false; }

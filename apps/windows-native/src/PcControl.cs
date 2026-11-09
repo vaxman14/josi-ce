@@ -145,6 +145,9 @@ namespace Josi.Native {
     UIElement ReadinessCard() {
       var items = new List<UIElement>();
       var authority = Api != null ? Api.PcAuthority : null;
+      var executor = DesktopExecutor.Current;
+      if (executor.Paused || executor.PendingStop) items.Add(Ui.Row(8, Ui.Icon(Glyph.Warning, 13, Ui.Error), Ui.T(executor.PendingStop ? "Stopped on this PC: nothing runs until you resume." : "Paused on this PC: nothing runs until you resume.", 13),
+        Automation.Id(Ui.Pill("Resume", () => { executor.Resume(); StartLoad(); }, true), "josi.pc-control.readiness.resume")));
       if (readiness.IsNull) items.Add(Ui.Caption("Readiness could not be loaded from the server."));
       else {
         items.Add(Ui.T(readiness["summary"].Text, 14, FontWeights.Medium, readiness["ready"].Flag ? Ui.Green : Ui.Accent));

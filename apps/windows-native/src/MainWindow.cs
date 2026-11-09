@@ -474,8 +474,11 @@ namespace Josi.Native {
         e.Cancel = true; return;
       }
       // Closing the window never stops a server on this PC; it keeps serving
-      // other devices until stopped from Server.
-      DesktopExecutor.Current.Pause();
+      // other devices until stopped from Server. Current desktop work ends, but
+      // no pause is remembered: a saved pause here left the next copy of the
+      // app silently unable to run anything (every PC request waited until
+      // the model gave up).
+      DesktopExecutor.Current.PauseForExit();
       DesktopExecutor.Current.Changed -= RenderControlBar;
       controlOverlay?.Dispose();
       if (workspace != null) workspace.Detach();

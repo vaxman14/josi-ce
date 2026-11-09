@@ -231,6 +231,10 @@ namespace Josi.Native {
             continue;
           }
           PcInbox.Set(PcInbox.Requests, false);
+          // Paused here means paused for the server too: no presence, so a PC
+          // tool answers "Josi is not open or is paused" at once instead of
+          // leaving approved work waiting until the model gives up.
+          if (DesktopExecutor.Current.Paused) { lastPresence = null; continue; }
           Dictionary<string, object> presence; bool live;
           lock (gate) {
             live = Live();

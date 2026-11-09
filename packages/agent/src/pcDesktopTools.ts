@@ -177,7 +177,7 @@ export async function executePcDesktopTool(db: Db, owner: string, key: MasterKey
     const control = await service(db, key, owner, input.pc_id);
     if (name === 'desktop_check_request') return await settle(control, owner, String(input.request_id), 20_000, 'desktop_check_request');
     if (!await control.presence(owner)) return { ok: false, code: 'josi_not_open',
-      message: 'The Josi app is not open on this PC, so nothing can be done on its desktop. Ask the owner to open Josi.' };
+      message: 'The Josi app on this PC is not open, or it is paused, so nothing can run there right now. Ask the owner to open Josi on that PC (and choose Resume if it says paused), then try again. PC control itself is not off.' };
     let action: PcAction, scope: PcScope = DESKTOP, description: string, payload: Record<string, unknown>, wait = 90_000;
     if (name === 'pc_terminal_open') {
       const cwd=cleanPath(input.working_folder),root=input.scope_folder===undefined?cwd:cleanPath(input.scope_folder);
