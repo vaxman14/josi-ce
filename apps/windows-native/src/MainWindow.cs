@@ -52,7 +52,8 @@ namespace Josi.Native {
         Notifications.Register();
         SendTo.Register();
         if (Flags.LocalWorkspace) BrowserHost.Register();
-        var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
+        // Closing the window hides it in the tray; the app ends from Quit (OnClosing shuts down).
+        var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         Ui.Load();
         app.Resources.MergedDictionaries.Add(Ui.Resources);
         app.DispatcherUnhandledException += (s, e) => {
@@ -103,8 +104,13 @@ namespace Josi.Native {
     readonly TextBlock statusLine = new TextBlock { FontSize = 1, Height = 1, Foreground = Brushes.Transparent, IsHitTestVisible = false, Focusable = false };
     Screen? shown;
     WorkspaceView workspace;
+    Tray tray; bool quitting;
     // Demo mode: a scripted PC Control banner (--pc-banner) and "stopped" after Stop Josi.
     string demoPc; bool pcStopped;
+    /// Brings the window back from the tray.
+    public void Reopen() { Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; Activate(); }
+    /// Really closes: the tray's Quit, or a closing with Shift held.
+    public void Quit() { quitting = true; Close(); }
 
     /// Who is in control of this desktop: Josi working (with Pause and Stop),
     /// paused, or you after touching the mouse or keyboard (until Resume). Hidden when nothing is happening.
@@ -117,7 +123,10 @@ namespace Josi.Native {
       if (scripted != null) takenOver = scripted == "takeover";
       if (executor.Busy && !executor.Paused && !executor.PendingStop) pcStopped = false;
       var stopped = pcStopped || executor.PendingStop;
-      var show = working || paused || takenOver || controlOverlay?.IsShowing == true;
+      // Only while something is happening on the screen: a paused or stopped
+      // Josi takes no room. Resume lives in PC Control, the chat cards and the tray.
+      var show = working || takenOver || controlOverlay?.IsShowing == true;
+      tray?.Update(paused, working);
       Automation.Pc = stopped ? "stopped" : !show ? "off" : paused ? "paused" : takenOver ? "takeover" : working ? "working" : "ready";
       if (controlOverlay != null) controlOverlay.Stopped = stopped;
       controlOverlay?.Update(show, working, paused, takenOver, scripted != null || executor.ScreenControl, executor.Busy ? executor.Activity : PcTerminals.Count > 0 ? PcTerminals.Count + " terminal session(s) running" : executor.Activity);
@@ -194,6 +203,7 @@ namespace Josi.Native {
         () => { pcStopped = false; if (Automation.Demo && demoPc != null) { demoPc = "working"; RenderControlBar(); } else DesktopExecutor.Current.Resume(); },
         StopPcControl, () => { Show(); WindowState = WindowState.Normal; Activate(); Model.Section = "chat"; workspace?.Go("chat"); });
       Automation.Changed += () => { statusLine.Text = Automation.Summary; System.Windows.Automation.AutomationProperties.SetName(statusLine, Automation.Summary); };
+      if (!Automation.Demo && !AppLinks.Testing) tray = new Tray(Reopen, () => { pcStopped = false; DesktopExecutor.Current.Resume(); }, Quit);
 
       Model.Attach(this);
       Model.Changed += Render;
@@ -419,6 +429,12 @@ namespace Josi.Native {
     }
 
     protected override void OnClosing(CancelEventArgs e) {
+      // The X puts Josi in the tray: PC control, terminals and notifications
+      // keep working, and other devices keep being answered. Quit is in the
+      // tray menu (or Shift while closing). Demo and test copies close for real.
+      if (!quitting && tray != null && !Automation.Demo && !AppLinks.Testing && (Keyboard.Modifiers & ModifierKeys.Shift) == 0) {
+        e.Cancel = true; Hide(); tray.SayHidden(); return;
+      }
       if (Model.RecoveryPending) {
         Dialogs.Message(this, "Save your recovery information before closing.", "Finish the recovery step in Josi so you keep access to your account and Vault.");
         e.Cancel = true; return;
@@ -434,7 +450,9 @@ namespace Josi.Native {
       controlOverlay?.Dispose();
       if (workspace != null) workspace.Detach();
       if (Model.Api != null) Model.Api.Dispose();
+      tray?.Dispose(); tray = null;
       base.OnClosing(e);
+      System.Windows.Application.Current?.Shutdown();
     }
 
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);

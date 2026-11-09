@@ -451,9 +451,9 @@ namespace Josi.Native {
           break;
         case "pc_control":
           list.Add(Ui.T("Josi can work on this PC the way an assistant at the keyboard would: run commands and scripts, open programs, read and write files and use windows. Every action goes through PC Control: you choose which shells, folders and programs are allowed, once or until revoked, and a control bar with Stop is always visible while it works."));
-          pcEnable = pcEnable ?? Automation.Id(Ui.Toggle("Turn PC control on now", true), "josi.setup.pc-enable");
+          pcEnable = pcEnable ?? Automation.Id(Ui.Toggle("Let Josi use this PC now: programs, files and windows. Commands ask once per folder.", true), "josi.setup.pc-enable");
           list.Add(Detach(pcEnable));
-          list.Add(Ui.Secondary("Approving pairs this PC to your account with the key it just made; your new password confirms it. Nothing is allowed yet: that comes in PC Control or by asking Josi in chat."));
+          list.Add(Ui.Secondary("Approving pairs this PC to your account with the key it just made; your new password confirms it. Deleting, purchases, credentials, installs, security changes and administrator prompts always ask. Change any of this later in PC Control or by asking Josi."));
           list.Add(Ui.Row(10,
             Automation.Id(Ui.Pill("Approve This PC and Continue", () => {
               var ownerId = model.SetupState["ownerId"].Text; var api = model.Api;

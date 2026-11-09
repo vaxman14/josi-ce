@@ -77,7 +77,19 @@ export function pcControlRoutes(ctx:Ctx):Router {
     await ctx.db.query('delete from pc_executor_identity where owner_user_id=$1 and pc_id=$2',[req.user!.id,pc]);
     return res.json({ok:true});
   }));
-  r.put('/enabled',handle(async(req,res)=>{await control(req).setEnabled(req.user!.id,req.body?.enabled,revision(req));return res.json({ok:true});}));
+  r.put('/enabled',handle(async(req,res)=>{
+    // `everyday` (from a chat card the owner approved with their password)
+    // also turns on the everyday allowances; it takes the password here too,
+    // like PUT /full-control, so a plain toggle cannot widen access silently.
+    const everyday=req.body?.enabled===true&&req.body?.everyday===true;
+    if(everyday){
+      const [u]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
+      if(!await verifyPassword(u?.password_hash??null,typeof req.body?.password==='string'?req.body.password:''))throw new PcControlError(401,'Confirm your account password to let Josi work on this PC without asking each time.');
+    }
+    await control(req).setEnabled(req.user!.id,req.body?.enabled,revision(req));
+    if(everyday)await control(req).setFullControl(req.user!.id,true);
+    return res.json({ok:true,fullControl:everyday||undefined});
+  }));
   r.post('/stop',handle(async(req,res)=>{
     // Stop works even when the sealed store cannot be opened: the plain rows are enough to revoke.
     const pcId=targetPc(req);

@@ -99,6 +99,26 @@ function Ready($Context){
     }while([DateTime]::UtcNow -lt $deadline)
     throw 'Josi did not pass readiness; use retained transaction diagnostics before recovery'
 }
+function Link-InstalledComponent($Component,$Known,[string]$PriorProgram,[string]$Destination){
+    # Rebuild one component in the staging folder from the installed version:
+    # its inventory, then every listed file as a hard link (same volume) or a
+    # copy. Each file is still hashed against the inventory afterwards, so a
+    # changed or missing installed file fails the check or this fallback.
+    $files=@($Known.files)
+    if($files.Count -eq 0){throw 'No recorded files'}
+    $null=[IO.Directory]::CreateDirectory((Join-Path $Destination 'inventories'))
+    [IO.File]::WriteAllText((Join-Path $Destination ('inventories\'+$Component.id+'.json')),($files | ConvertTo-Json -Depth 4))
+    $checked=@{}
+    foreach($entry in $files){
+        $from=Assert-PlainNativePath (Join-Path $PriorProgram $entry.path) $checked
+        if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($from) -or [IO.FileInfo]::new($from).Length -ne $entry.size){throw 'Installed file differs'}
+        $to=Assert-PlainNativePath (Join-Path $Destination $entry.path) $checked
+        if(!$to.StartsWith($Destination+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Component path refused'}
+        $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($to))
+        try{$null=New-Item -ItemType HardLink -Path $to -Value $from -ErrorAction Stop}
+        catch{[IO.File]::Copy($from,$to,$false)}
+    }
+}
 function Extract-VerifiedArchive($Component,[string]$Archive,[string]$Destination){
     if(!(Test-NativePayload $Component $Archive)){throw 'Archive hash or length changed'}
     Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -172,17 +192,42 @@ try{
         foreach($rule in $acl.Access){$sid=$rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($rule.AccessControlType -ne 'Allow' -or $sid -cnotin @('S-1-5-18','S-1-5-32-544')){throw 'Installer cache grants unexpected access'}}
     }
     $source=Assert-PlainNativePath (Join-Path $cache ('expanded-'+[Guid]::NewGuid().ToString('N')));$null=[IO.Directory]::CreateDirectory($source)
+    # An update reuses the components that did not change since the installed
+    # version (same archive hash): their files are linked from the installed
+    # version folder instead of unpacked, then checked file by file like
+    # everything else. Python, Node, PostgreSQL and the tools rarely change, so
+    # an update becomes a fraction of a fresh install.
+    $reusable=@{};$priorProgram=$null
+    if($prior -and $Operation -ceq 'upgrade'){
+        $priorProgram=Join-Path $product ('versions'+$prior.version)
+        $recorded=Join-Path $product ('installer'+$prior.version+'\installed-components.json')
+        if((Test-Path -LiteralPath $recorded) -and (Test-Path -LiteralPath $priorProgram)){
+            foreach($item in @(Get-Content -LiteralPath $recorded -Raw | ConvertFrom-Json)){$reusable[$item.id]=$item}
+        }
+    }
     $unpacked=0;$count=@($manifest.components).Count
     foreach($component in $manifest.components){
-        Stop-IfCancelled;$unpacked++;Step (5+[int](50*$unpacked/$count)) ('Unpacking '+(Name-Of $component.id)+' ('+$unpacked+' of '+$count+')')
+        Stop-IfCancelled;$unpacked++
+        $known=$reusable[$component.id]
+        if($known -and $known.sha256 -ceq $component.sha256 -and $known.size -eq $component.size){
+            Step (5+[int](50*$unpacked/$count)) ('Keeping '+(Name-Of $component.id)+' from version '+$prior.version+' ('+$unpacked+' of '+$count+')')
+            try{Link-InstalledComponent $component $known $priorProgram $source;continue}
+            catch{
+                # Anything odd about the installed copy: fall back to the archive.
+                $partial=Join-Path $source $component.id;if(Test-Path -LiteralPath $partial){[IO.Directory]::Delete($partial,$true)}
+                $list=Join-Path $source ('inventories'+$component.id+'.json');if(Test-Path -LiteralPath $list){[IO.File]::Delete($list)}
+            }
+        }
+        Step (5+[int](50*$unpacked/$count)) ('Unpacking '+(Name-Of $component.id)+' ('+$unpacked+' of '+$count+')')
         $archive=if($LocalAcceptancePayloads){Get-NativeLocalPayload $component $LocalAcceptancePayloads $cache}else{Get-NativePayload $component $ManifestHash $cache (Join-Path $cache 'cancel')}
         Extract-VerifiedArchive $component $archive $source
     }
-    $entries=[Collections.Generic.List[object]]::new()
+    $entries=[Collections.Generic.List[object]]::new();$componentRecord=[Collections.Generic.List[object]]::new()
     foreach($component in $manifest.components){
         $path=Join-Path $source ('inventories\'+$component.id+'.json')
         $decoded=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
         foreach($entry in @($decoded)){$entries.Add($entry)}
+        $componentRecord.Add([ordered]@{id=$component.id;size=$component.size;sha256=$component.sha256;files=@($decoded)})
     }
     $inventory=Join-Path $cache ('runtime-inventory-'+[Guid]::NewGuid().ToString('N')+'.json')
     [IO.File]::WriteAllText($inventory,($entries.ToArray() | ConvertTo-Json -Depth 4));$hash=(Get-FileHash -LiteralPath $inventory -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -293,6 +338,7 @@ try{
     Set-NativeServiceStartup $program $data
     $receiptRoot=Assert-PlainNativePath (Join-Path $product ('installer\'+$Version));$null=[IO.Directory]::CreateDirectory($receiptRoot)
     [IO.File]::Copy($inventory,(Join-Path $receiptRoot 'installed-inventory.json'),$false)
+    [IO.File]::WriteAllText((Join-Path $receiptRoot 'installed-components.json'),($componentRecord.ToArray() | ConvertTo-Json -Depth 5))
     [IO.File]::WriteAllText((Join-Path $receiptRoot 'installed-receipt.json'),(@{installationId=$installationId;version=$Version;inventorySha256=$hash;manifestSha256=$ManifestHash} | ConvertTo-Json))
     $null=Set-NativeTransactionPhase $lock $directory 'committed';Step 100 'Done'
 }catch{

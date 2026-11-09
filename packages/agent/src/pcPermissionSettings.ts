@@ -32,10 +32,15 @@ export async function preparePcPermissionChange(db:Db,owner:string,key:MasterKey
   let normalized:Record<string,unknown>,detail:string;
   if(area==='pc_control_enabled'||area==='pc_control_full_control'){
     if(typeof body.enabled!=='boolean')throw new PcControlError(400,'Choose on or off.');
-    normalized={enabled:body.enabled};
+    // Turning control on from chat is one ask: it also grants the everyday
+    // allowances (apps, files, windows), so the next request does not ask
+    // again. Commands, deleting, purchases, installs and elevation still ask.
+    const everyday=area==='pc_control_enabled'&&body.enabled&&body.everyday!==false;
+    normalized=everyday?{enabled:true,everyday:true}:{enabled:body.enabled};
     const device=state.devices.find(d=>d.pcId===current.pcId);
     detail=area==='pc_control_enabled'
-      ? body.enabled?'Enable PC control. This alone does not grant access to applications, files, or commands.'+(device&&!device.paired?' Josi on this PC will then ask you once to approve the PC with your password.':'')
+      ? body.enabled?(everyday?'Let Josi work on this PC: open and use programs, read and write files and use windows without asking each time. Commands in a shell ask once per folder; deleting, purchases, credentials, installs, security changes and administrator prompts always ask.'
+          :'Enable PC control. This alone does not grant access to applications, files, or commands.')+(device&&!device.paired?' Josi on this PC will then ask you once to approve the PC with your password.':'')
         :'Disable PC control and revoke temporary and task grants. Completed work is not undone.'
       : body.enabled?'Enable everyday control for browsers, folders and applications. Commands, deletion, purchases, credentials, installs, security changes and elevation still ask. Existing Never rules remain blocked.'
         :'Disable everyday full control. Exact saved permissions still apply.';

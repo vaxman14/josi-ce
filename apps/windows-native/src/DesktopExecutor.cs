@@ -245,7 +245,14 @@ namespace Josi.Native {
         if (scope["kind"].Text != "application" || !string.Equals(payload["application"].Text, application, StringComparison.OrdinalIgnoreCase) || !File.Exists(application)) return refuse("application_missing");
         if (ProtectedApplication(application)) return refuse("protected_surface");
         var arguments = payload["arguments"].Text;
-        var started = Process.Start(new ProcessStartInfo(application) { UseShellExecute = true, Arguments = arguments, WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) });
+        var runnable = PcWork.LaunchablePath(application) ?? application;
+        Process started;
+        try { started = Process.Start(new ProcessStartInfo(runnable) { UseShellExecute = true, Arguments = arguments, WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) }); }
+        catch (Win32Exception) when (!string.Equals(runnable, application, StringComparison.OrdinalIgnoreCase) || PcWork.LaunchablePath(application) == null) {
+          // A Store app refused a direct start: open it through the shell by name.
+          started = Process.Start(new ProcessStartInfo("explorer.exe") { UseShellExecute = true, Arguments = "shell:AppsFolder" });
+          return refuse("application_not_launchable");
+        }
         Thread.Sleep(1500);
         return ok(Wires.O("kind", "desktop_launched", "application", application, "arguments", arguments, "processId", started == null ? 0 : started.Id,
           "windows", Windows().Where(w => string.Equals((string)w["application"], application, StringComparison.OrdinalIgnoreCase)).Cast<object>().ToList(), "untrustedContent", true));

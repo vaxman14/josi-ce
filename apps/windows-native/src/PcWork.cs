@@ -155,7 +155,8 @@ namespace Josi.Native {
       var found = new List<Dictionary<string, object>>(); var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
       Func<string, bool> matches = name => { var n = name.ToLowerInvariant(); return words.All(w => n.Contains(w)); };
       Action<string, string, string, string> add = (name, exe, args, source) => {
-        if (exe == null || !exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !File.Exists(exe)) return;
+        if (exe == null || !exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return;
+        exe = LaunchablePath(exe); if (exe == null) return;
         var key = exe + "|" + (args ?? "");
         if (!seen.Add(key) || found.Count >= 30) return;
         var entry = Wires.O("name", name, "application", Path.GetFullPath(exe), "source", source);
@@ -187,6 +188,17 @@ namespace Josi.Native {
       }
       if (words.Length == 1) { var exe = OnPath(words[0]); if (exe != null) add(words[0], exe, null, "path"); }
       return Tuple.Create(true, (object)Wires.O("kind", "desktop_apps", "query", query, "apps", found.Cast<object>().ToList(), "untrustedContent", true));
+    }
+    /// A path that Process.Start can actually run. A packaged (Store) app under
+    /// Program Files\WindowsApps refuses direct starts; Windows provides an
+    /// execution alias under the user's WindowsApps folder instead.
+    public static string LaunchablePath(string exe) {
+      if (exe == null) return null;
+      if (exe.IndexOf(@"\Program Files\WindowsApps\", StringComparison.OrdinalIgnoreCase) >= 0) {
+        var alias = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Microsoft\WindowsApps", Path.GetFileName(exe));
+        return File.Exists(alias) ? alias : null;
+      }
+      return File.Exists(exe) ? exe : null;
     }
     static bool Shortcut(string link, out string target, out string arguments) {
       target = null; arguments = null;

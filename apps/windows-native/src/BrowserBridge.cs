@@ -222,15 +222,15 @@ namespace Josi.Native {
             registeredFor = registration;
           }
           if (!await api.PcAuthority.Ensure(api)) {
-            // Approval happens where the person is (PC Control, or the chat card
-            // that turned control on), never as a surprise sheet from here.
-            if (api.PcAuthority.NeedsApproval && !approvalAsked && (await api.Request("/admin/pc-control/identity"))["enabled"].Flag) {
-              approvalAsked = true;
-              Raise();
-              if (!model.Active) Notifications.Show("Approve this PC for Josi", "PC control is on, but this PC has not been approved yet. Open PC Control in Josi and choose Approve This PC.");
+            // Approval happens where the person is: a card in the chat and PC
+            // Control, never as a surprise sheet from here.
+            if (api.PcAuthority.NeedsApproval && (await api.Request("/admin/pc-control/identity"))["enabled"].Flag) {
+              PcInbox.Set(new List<Wire>(), true);
+              if (!approvalAsked) { approvalAsked = true; Raise(); if (!model.Active) Notifications.Show("Approve this PC for Josi", "PC control is on, but this PC has not been approved yet. Approve it from the card in Josi's chat."); }
             }
             continue;
           }
+          PcInbox.Set(PcInbox.Requests, false);
           Dictionary<string, object> presence; bool live;
           lock (gate) {
             live = Live();
@@ -246,8 +246,10 @@ namespace Josi.Native {
           }
           if ((DateTime.UtcNow - checkedAt).TotalSeconds >= 4) {
             checkedAt = DateTime.UtcNow;
-            foreach (var q in (await api.Request("/admin/pc-control"))["requests"].List)
-              if (announced.Add(q.Id) && !model.Active) Notifications.Show("Josi is asking for permission", q["description"].Text + ". Approve it in Josi under PC Control.");
+            var waiting = (await api.Request("/admin/pc-control"))["requests"].List;
+            PcInbox.Set(waiting, false);
+            foreach (var q in waiting)
+              if (announced.Add(q.Id) && !model.Active) Notifications.Show("Josi is asking for permission", q["description"].Text + ". Allow or deny it from the card in Josi's chat.");
           }
           // Paused, or you took over: approved work waits rather than runs.
           if (DesktopExecutor.Current.Paused) continue;

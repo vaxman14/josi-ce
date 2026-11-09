@@ -1003,8 +1003,10 @@ async function applyStep(
       if (existing && existing.public_key !== key) throw new SetupError(409, 'This PC already has a different approved key. Revoke it under PC Control first.');
       if (!existing) await db.query('insert into pc_executor_identity(owner_user_id,pc_id,public_key) values($1,$2,$3)', [owner.id, pcId, key]);
       if (body.enable === true) {
-        await db.query('update pc_control_settings set enabled=true where owner_user_id=$1 and pc_id=$2', [owner.id, pcId]);
-        await db.query('insert into pc_control_activity(owner_user_id,pc_id,kind) values($1,$2,$3)', [owner.id, pcId, 'Control enabled during setup; exact scopes still required']);
+        // Everyday allowances come with it (apps, files, windows); commands and
+        // the high-risk actions still ask, as the step's wording says.
+        await db.query('update pc_control_settings set enabled=true, full_control=true where owner_user_id=$1 and pc_id=$2', [owner.id, pcId]);
+        await db.query('insert into pc_control_activity(owner_user_id,pc_id,kind) values($1,$2,$3)', [owner.id, pcId, 'Control and everyday allowances enabled during setup; commands and high-risk actions still ask']);
       }
       return;
     }
