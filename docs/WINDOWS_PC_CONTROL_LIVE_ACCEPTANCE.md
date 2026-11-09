@@ -113,3 +113,18 @@ build.
 - The bar must never sit on screen while nothing happens; paused, stopped and
   taken-over states live in PC Control and the tray, not across the window.
 - Switching models must not make the owner wait for a check they already paid for.
+
+## Josi is the interface: live run on preview.13 to preview.15 (November 8, 2026, evening)
+
+Driven through UI Automation on the installed build, with the owner at the keyboard for the parts that need a real paste.
+
+| Step | Result |
+|---|---|
+| A: "What is the redirect URI for Google, and which model are you on?" | Both exact Google callback URIs for `https://cewin.heyjosi.com` and "Claude Sonnet, primary" in one reply, from `josi_setup_status`. |
+| B: "Set up GitHub, I have a token" (preview.13) | Josi said the card was open; it took up to 30 s to appear (the app polled every 30 s) and had no input (the card travelled under the wrong key). Fixed in `651538d` (card shows with the reply; visible boxes) and `3abccab` (fields reach the app; Paste and Show/Hide). |
+| B again (preview.14) | Card open with the reply; paste and Save worked; the route answered "not permitted for this account": a second member-ceiling check inside the credential store. Fixed in `1a35704`. |
+| B again (preview.15) | Pasted, saved; the chat got "Saved: GitHub is connected." Then "list my three most recently updated repositories" answered from GitHub through the saved token. |
+| Leftover cards | Every "open it again" had left its earlier card waiting, and each popped up after the save. `e43a907` retires stale cards for the same route when a new one opens or one is saved; not yet installed at the time of this run. |
+| G: "I just bought a 2026 Ford Explorer, blue" | "Saved to your World", with the VIN offered as a protected card. "Give you the plate" opened the License plate card (Paste, Show). The My World page shows the vehicle with its three secret fields to set, Remove, and one "Josi knows" line with Forget. |
+| D (member request) | Not driven: needs a second account. |
+| H (extension) | Not built. |
