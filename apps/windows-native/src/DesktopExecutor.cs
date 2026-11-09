@@ -57,7 +57,8 @@ namespace Josi.Native {
       try {
         if (File.Exists(stateFile)) {
           var stored = Wires.Parse(File.ReadAllText(stateFile));
-          lock (gate) { paused = !stored["paused"].IsBool || stored["paused"].Flag; takenOver = !stored["takenOver"].IsBool || stored["takenOver"].Flag; pendingStop = stored["pendingStop"].Flag; }
+          // A takeover is about the action that was running; it is never restored.
+          lock (gate) { paused = !stored["paused"].IsBool || stored["paused"].Flag; takenOver = false; pendingStop = stored["pendingStop"].Flag; }
         }
       } catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is System.Text.Json.JsonException) { paused = true; }
       Raise();
@@ -67,7 +68,7 @@ namespace Josi.Native {
       if (stateFile == null) return;
       lock (persistenceGate) {
       string json;
-      lock (gate) json = Wires.Serialize(Wires.O("paused", paused, "takenOver", takenOver, "pendingStop", pendingStop));
+      lock (gate) json = Wires.Serialize(Wires.O("paused", paused, "takenOver", false, "pendingStop", pendingStop));
       Directory.CreateDirectory(Path.GetDirectoryName(stateFile));
       var temporary = stateFile + ".tmp";
       File.WriteAllText(temporary, json);
@@ -145,13 +146,12 @@ namespace Josi.Native {
     public void TakeOver() { Takeover("button"); }
     void Takeover(string by) {
       bool fresh;
-      lock (gate) { fresh = !takenOver; takenOver = true; }
+      // Your mouse or keyboard interrupts the action on the screen, and only
+      // that: once it has been cancelled you have your PC back, with nothing to
+      // resume. The next request runs as usual (the model re-reads first).
+      lock (gate) { if (!runningOnScreen) return; fresh = !takenOver; takenOver = true; }
       CancelCurrent("human_control");
-      if (fresh) {
-        Raise();
-        // Never do disk I/O inside the low-level input hook.
-        var u = ui; if (u != null) u.BeginInvoke(new Action(SavePause));
-      }
+      if (fresh) Raise();
     }
     void CancelCurrent(string reason) {
       CancellationTokenSource current; bool onScreen;
@@ -189,7 +189,8 @@ namespace Josi.Native {
       catch (Exception e) when (e is InvalidOperationException || e is COMException || e is Win32Exception || e is IOException || e is UnauthorizedAccessException || e is NotSupportedException || e is System.Security.SecurityException) {
         return Tuple.Create(false, (object)Wires.O("code", "desktop_action_failed", "detail", e.GetType().Name));
       } finally {
-        lock (gate) if (running == cancel) { running = null; runningOnScreen = false; }
+        // The action is over, and with it any takeover: you simply have your PC.
+        lock (gate) if (running == cancel) { running = null; runningOnScreen = false; takenOver = false; }
         cancel.Dispose();
         Busy = false; Activity = ""; Raise();
         // Keep the hooks a moment longer: the next request usually follows at once.
