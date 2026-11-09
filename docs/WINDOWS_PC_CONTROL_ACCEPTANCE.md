@@ -1,5 +1,7 @@
 # Windows computer control preview.3 — November 8, 2026
 
+**Subsequent owner test failed:** after installing preview.3, the owner asked Josi to change settings to control this PC. Haiku replied that it could not control the system or change its permissions. This real-chat path is unresolved; the checks below did not cover it. See [PC_CONTROL_CURRENT_HANDOFF.md](PC_CONTROL_CURRENT_HANDOFF.md). Work is stopped at the owner's request.
+
 The owner authorized focused testing, desktop control and a fresh signed installer: “you can test. take over, do what you want. finish and send me the fresh signed isntaller when you are done. and dont get into a 10000000 tests, just what you need.” This supersedes the earlier no-testing instruction for this session.
 
 All source, fixtures, logs and installer output remain in `C:\Users\vaxma\Desktop\Windows Josi Native Redesign\Josi Windows PC control`. The isolated desktop fixture has been closed, its mock server stopped and its synthetic Credential Manager entry removed. Installed Josi services were not changed.
