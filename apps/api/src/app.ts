@@ -42,6 +42,7 @@ import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
 import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
+import { myWorldRoutes } from './http/myWorldRoutes.js';
 import { automationSettingsRoutes } from './http/automationSettingsRoutes.js';
 import { nasController } from './http/nasController.js';
 import { windowsNasController } from './http/nasWindows.js';
@@ -361,6 +362,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
   }));
   api.use('/vault', vaultRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  api.use('/my-world', myWorldRoutes({ db, masterKey: cfg.masterKeyCheck }));
   api.use('/custom-apis', customApiRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,
     resolve: cfg.outboundResolve,

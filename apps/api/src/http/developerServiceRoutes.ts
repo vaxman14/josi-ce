@@ -23,8 +23,7 @@ import {
   discoverObsidianVaults, readObsidianNote, DeveloperCredentialError, checkDeveloperCredentialAccess,
   saveDeveloperConnection, loadDeveloperCredentials, recordDeveloperCheck, deleteDeveloperConnection, withDeveloperServiceTransaction,
   isDeveloperService, isPermissionMode, mayConnect, summarizeScope,
-  type DeveloperService, type EffectiveScope, type PermissionMode,
-} from '@josi-ce/connectors';
+  type DeveloperService, type EffectiveScope, type PermissionMode, allowDeveloperServiceFor } from '@josi-ce/connectors';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 
@@ -127,7 +126,7 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
             emailLabel: d.emailLabel ?? null,
             baseUrlLabel: d.baseUrlLabel ?? null,
             // Whether I MAY, kept separate from whether I HAVE.
-            allowed: mayConnect(scope, userId),
+            allowed: req.user!.role === 'super_admin' || mayConnect(scope, userId),
             // The administrator's own words when they refused it, so a person
             // is told why by the person who decided rather than by a generic
             // "not available".
@@ -177,7 +176,7 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
 
       const scopes = await loadScopes(db);
       const scope = scopes.get(service)!;
-      if (!mayConnect(scope, userId)) {
+      if (req.user!.role !== 'super_admin' && !mayConnect(scope, userId)) {
         // 403 with the administrator's reason where there is one. Not 404: the
         // service plainly exists, and pretending otherwise would send somebody
         // looking for a bug instead of asking their administrator.
@@ -251,6 +250,21 @@ export function adminDeveloperServiceRoutes(ctx: DeveloperServiceCtx): Router {
   const r = Router();
   const { db } = ctx;
   r.use(requireSuperAdmin);
+
+  /** One person may connect one service from now on (a member's request the
+   * owner approved in the app). Keeps whoever was already allowed. */
+  r.post(
+    '/:service/allow',
+    handle(async (req, res) => {
+      const service = param(req, 'service');
+      if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
+      const userId = typeof req.body?.userId === 'string' ? req.body.userId : '';
+      const [person] = await db.query<{ id: string }>(`select id from users where id = $1`, [userId]);
+      if (!person) throw new RouteError(404, 'no such user');
+      const result = await allowDeveloperServiceFor(db, { service, userId, actorUserId: req.user!.id });
+      return res.json({ ok: true, ...result });
+    }),
+  );
 
   /** The permission for each service, and separately the health of whoever has
    * connected one.

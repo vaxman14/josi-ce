@@ -241,7 +241,9 @@ namespace Josi.Native {
       Model.SectionChanged += UpdateStatus;
       // A settings change Josi prepared: ask here, in front of whatever is open.
       Model.SettingsChangeProposed += proposal => Dispatcher.BeginInvoke(new Action(() => {
-        if (Model.Screen == Screen.Workspace) Dialogs.SettingsChange(this, Model, proposal);
+        if (Model.Screen != Screen.Workspace) return;
+        if (proposal["area"].Text == "credential_card") Dialogs.CredentialCard(this, Model, proposal);
+        else Dialogs.SettingsChange(this, Model, proposal);
       }), System.Windows.Threading.DispatcherPriority.Background);
       InputBindings.Add(new KeyBinding(new Command(() => {
         if (Model.Screen == Screen.Workspace && !Model.Busy) Model.Run(() => Model.NewThread());

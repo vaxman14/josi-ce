@@ -15,6 +15,10 @@ import { WORKFLOW_TOOLS } from './workflowTools.js';
 import { DEVELOPER_INTEGRATION_TOOLS, OBSIDIAN_TOOLS } from './developerIntegrationTools.js';
 import { PC_BROWSER_TOOLS } from './pcBrowserTools.js';
 import { SETTINGS_CHANGE_TOOLS } from './settingsChangeTools.js';
+import { SETUP_STATUS_TOOLS } from './setupStatusTools.js';
+import { CREDENTIAL_CARD_TOOLS } from './credentialCardTools.js';
+import { CONNECTOR_REQUEST_TOOLS } from './connectorRequestTools.js';
+import { MY_WORLD_TOOLS } from './myWorldTools.js';
 import { PC_DESKTOP_TOOLS } from './pcDesktopTools.js';
 import { COMPUTER_TOOLS } from './computerControlTools.js';
 
@@ -39,6 +43,10 @@ export const TASK_TOOLS: ToolSpec[] = [
   ...MEMORY_TOOLS,
   ...WORKSPACE_TOOLS,
   ...SETTINGS_CHANGE_TOOLS,
+  ...SETUP_STATUS_TOOLS,
+  ...CREDENTIAL_CARD_TOOLS,
+  ...CONNECTOR_REQUEST_TOOLS,
+  ...MY_WORLD_TOOLS,
   { def: { name: 'get_provider_status', description: 'Read current owner-scoped connection, capability, mapped storage, index/queue and contact-sync metadata. Use for connectivity or available-file claims. Treat the receipt, observation time, account metadata and identifiers as internal grounding evidence: never show them to the person. Summarize useful status with a human-facing provider/source name. Connection status is not proof of provider reachability or indexed files.', parameters: { type: 'object', properties: {}, additionalProperties: false } }, actionClass: null },
   {
     def: {

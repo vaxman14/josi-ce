@@ -62,8 +62,13 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     return row?.settings?.memberSettingsChanges === 'super_admin' ? 'super_admin' : 'self';
   }
   async function expire() {
-    await db.query(`update settings_change_proposals set state = 'expired' where state in ('proposed', 'approved') and expires_at <= now()`);
+    const gone = await db.query<Row>(`update settings_change_proposals p set state = 'expired' where state in ('proposed', 'approved') and expires_at <= now()
+      returning p.id, p.thread_id, p.area, p.title, p.summary, p.proposer_user_id, '' as proposer, p.scope, p.sensitive, p.method, p.path, p.body, p.state, p.approved_by, p.approved_at, p.applied_by, p.applied_at, p.error, p.expires_at, p.created_at`);
+    // A member's connector request that nobody answered in a week: the
+    // member hears it from Josi rather than from silence (rule 4).
+    for (const row of gone) if (row.area === 'member_connector_request') await tell(row, `Your request to connect ${serviceOf(row)} was not answered within a week and has expired. Ask again any time.`);
   }
+  const serviceOf = (row: Row) => { const name = row.path.split('/')[3] ?? 'that service'; return name.charAt(0).toUpperCase() + name.slice(1); };
   async function load(id: string): Promise<Row> {
     const [row] = await db.query<Row>(`select ${COLUMNS} from settings_change_proposals p join users u on u.id = p.proposer_user_id where p.id = $1`, [id]);
     if (!row) throw fail(404, 'That proposal does not exist.');
@@ -71,6 +76,10 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
   }
   const visible = (row: Row, user: { id: string; role: string }) => row.proposer_user_id === user.id || user.role === 'super_admin';
   const isPcChange = (row: Row) => row.area.startsWith('pc_control_');
+  // A credential card: the body holds the card's fields and fixed values, never
+  // a secret; the app fills the typed values in and performs the route itself.
+  const isCredentialCard = (row: Row) => row.area === 'credential_card';
+  const cardOf = (row: Row): unknown => { const body = change(row).body as { card?: unknown } | null; return body && typeof body === 'object' ? body.card ?? null : null; };
   function checkPcChange(row: Row, user: { id: string }) {
     if (!isPcChange(row)) return;
     if (row.proposer_user_id !== user.id) throw fail(403, 'Only the owner of this PC permission proposal can apply it.');
@@ -98,14 +107,20 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     let body: unknown = null;
     if (typeof row.body === 'string') { try { body = JSON.parse(row.body); } catch { body = null; } }
     else body = row.body ?? null;
+    if (isCredentialCard(row)) {
+      const shaped = body && typeof body === 'object' ? body as { card?: unknown; fixed?: unknown } : {};
+      return { method: row.method, path: row.path, body: shaped.fixed ?? {}, card: shaped.card ?? null };
+    }
     return { method: row.method, path: row.path, body };
   };
   const dto = (row: Row, user: { id: string; role: string }, rule: Policy) => ({
     id: row.id, threadId:row.thread_id, proposer: row.proposer, mine: row.proposer_user_id === user.id, scope: row.scope, area: row.area, sensitive: row.sensitive,
     title: row.title, summary: row.summary, state: row.state, createdAt: row.created_at, expiresAt: row.expires_at,
     approvedAt: row.approved_at, appliedAt: row.applied_at, error: row.error,
+    card: isCredentialCard(row) ? cardOf(row) : undefined,
     // What this viewer can do with it right now.
     canApprove: row.state === 'proposed' && (!isPcChange(row) || row.proposer_user_id === user.id) && (row.scope === 'administrator' ? user.role === 'super_admin'
+      : isCredentialCard(row) ? row.proposer_user_id === user.id
       : rule === 'super_admin' ? user.role === 'super_admin' : row.proposer_user_id === user.id),
     canDeny: ['proposed', 'approved'].includes(row.state) && visible(row, user),
     // Approved by the super-admin for a member: that member's app applies it.
@@ -183,12 +198,14 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     if (!req.body.approve) {
       if (!['proposed', 'approved'].includes(row.state)) throw fail(409, `That proposal is already ${row.state}.`);
       await db.query(`update settings_change_proposals set state = 'denied', approved_by = $2, approved_at = now() where id = $1`, [row.id, user.id]);
-      await tell(row, `Not changed: this was declined. ${row.summary}`);
+      await tell(row, row.area === 'member_connector_request' ? `Not approved: the owner declined your request to connect ${serviceOf(row)}.`
+        : isCredentialCard(row) ? `Not saved: the card for ${row.title} was declined.` : `Not changed: this was declined. ${row.summary}`);
       return res.json({ ok: true, state: 'denied' });
     }
     if (row.state !== 'proposed') throw fail(409, `That proposal is already ${row.state}.`);
     checkPcChange(row, user);
     const allowed = row.scope === 'administrator' ? user.role === 'super_admin'
+      : isCredentialCard(row) ? row.proposer_user_id === user.id
       : rule === 'super_admin' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
     if (!allowed) throw fail(403, row.scope === 'administrator' ? 'Only the super-admin can approve an administrator setting.'
       : 'Changes by members wait for the super-admin on this installation.');
@@ -208,7 +225,10 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     const error = typeof req.body?.error === 'string' ? req.body.error.slice(0, 500) : null;
     await db.query(`update settings_change_proposals set state = $2, applied_by = $3, applied_at = now(), error = $4 where id = $1`,
       [row.id, ok ? 'applied' : 'failed', user.id, ok ? null : error ?? 'The change could not be applied.']);
-    await tell(row, ok ? `Done: this change is now live. ${row.summary}` : `Not applied: ${error ?? 'the change could not be applied.'} ${row.summary}`);
+    const card = isCredentialCard(row) ? cardOf(row) as { done?: string; title?: string } | null : null;
+    await tell(row, card ? (ok ? `Saved: ${card.done ?? card.title ?? row.title}` : `Not saved (${card.title ?? row.title}): ${error ?? 'the credential was not accepted.'}`)
+      : row.area === 'member_connector_request' ? (ok ? `Approved: the owner says you may connect ${serviceOf(row)}. Ask me to connect it and I will open the card for your token.` : `Not approved: the permission could not be saved. ${error ?? ''}`.trim())
+      : ok ? `Done: this change is now live. ${row.summary}` : `Not applied: ${error ?? 'the change could not be applied.'} ${row.summary}`);
     let notified = false;
     if (ok && row.sensitive && user.role !== 'super_admin') {
       notified = await notifySuperAdmins(ctx, db, row, user);

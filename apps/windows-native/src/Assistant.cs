@@ -39,7 +39,8 @@ namespace Josi.Native {
             Ui.Copyable(p["summary"].Text),
             Ui.Caption("Proposed " + Wires.Date(p["createdAt"].Text) + (p["mine"].Flag ? "" : " by " + p["proposer"].Text) + " · expires " + Wires.Date(p["expiresAt"].Text)) };
           var actions = Ui.Wrap();
-          if (p["canApprove"].Flag) actions.Children.Add(Ui.Pill(administrator || p["mine"].Flag ? "Approve and Apply" : "Approve", () => Perform(async (api, stamp) => { string secret = null; if (proposal["sensitive"].Flag) { secret = Dialogs.AskPassword(owner, "Confirm to approve: " + proposal["title"].Text, proposal["summary"].Text, "Approve"); if (secret == null) return; } note = await model.DecideSettingsChange(proposal, true, secret); }), true));
+          if (p["canApprove"].Flag && p["area"].Text == "credential_card") actions.Children.Add(Ui.Pill("Fill in", () => { Dialogs.CredentialCard(owner, model, proposal); StartLoad(); }, true));
+          else if (p["canApprove"].Flag) actions.Children.Add(Ui.Pill(administrator || p["mine"].Flag ? "Approve and Apply" : "Approve", () => Perform(async (api, stamp) => { string secret = null; if (proposal["sensitive"].Flag) { secret = Dialogs.AskPassword(owner, "Confirm to approve: " + proposal["title"].Text, proposal["summary"].Text, "Approve"); if (secret == null) return; } note = await model.DecideSettingsChange(proposal, true, secret); }), true));
           if (p["canDeny"].Flag) actions.Children.Add(Ui.Pill("Decline", () => Perform(async (api, stamp) => { note = await model.DecideSettingsChange(proposal, false); })));
           if (!p["canApprove"].Flag && p["state"].Text == "proposed") items.Add(Ui.Caption(administrator ? "Waiting for the super-admin." : "Waiting for the super-admin's consent; your Josi applies it after that."));
           items.Add(actions);

@@ -382,6 +382,40 @@ namespace Josi.Native {
       if (result["apply"].IsNull) return "Approved. It is applied by " + (proposal["scope"].Text == "administrator" ? "the administrator's" : proposal["proposer"].Text + "'s") + " Josi.";
       return await ApplySettingsChange(proposal, result["apply"], password);
     }
+    /// Performs a credential card: claims the proposal, then the route with
+    /// the typed values folded into the fixed body, then reports the outcome.
+    /// Throws JosiException with the route's own words so the card can show
+    /// them and stay open; a cancelled card is never reported as failed.
+    public async Task<string> SaveCredentialCard(Wire proposal, IDictionary<string, object> values) {
+      var api = Api; if (api == null) throw new JosiException("Not signed in.");
+      var decided = await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/decide", "POST", Wires.O("approve", true));
+      var apply = decided["apply"];
+      if (apply.IsNull) throw new JosiException("This card can only be filled in by the person it was opened for.");
+      var fixedBody = apply["body"].Raw as IDictionary<string, object> ?? new Dictionary<string, object>();
+      var body = new Dictionary<string, object>();
+      object shape; fixedBody.TryGetValue("__shape", out shape);
+      if ((shape as string) == "smtp") {
+        int port; int.TryParse(values.ContainsKey("port") ? values["port"] as string : "", out port);
+        Func<string, string> s = key => values.ContainsKey(key) ? values[key] as string ?? "" : "";
+        var from = s("fromAddress"); var fromName = s("fromName");
+        object expected; fixedBody.TryGetValue("expected", out expected);
+        body["expected"] = expected;
+        body["system"] = Wires.O("copyFromSystem", false, "host", s("host"), "port", port, "security", s("security").ToLowerInvariant(), "username", s("username"), "password", s("password"), "clearPassword", false, "fromName", fromName, "fromAddress", from);
+        body["communications"] = Wires.O("copyFromSystem", true, "host", "", "port", 0, "security", "", "username", "", "password", "", "clearPassword", false, "fromName", fromName, "fromAddress", from);
+      } else {
+        foreach (var pair in fixedBody) body[pair.Key] = pair.Value;
+        foreach (var pair in values) body[pair.Key] = pair.Value;
+      }
+      string error = null;
+      try { await api.Request(apply["path"].Text, apply["method"].Text, body); }
+      catch (JosiException e) { error = e.Message; }
+      finally { body.Clear(); values.Clear(); }
+      try { await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/applied", "POST", error == null ? Wires.O("ok", true) : Wires.O("ok", false, "error", error)); }
+      catch (JosiException) { }
+      if (error != null) throw new JosiException(error);
+      Notify();
+      return proposal["card"]["done"].Text;
+    }
     /// Performs the stored request with this app's own session, so the
     /// setting's own route decides. A route that needs the account password
     /// gets the one from the approval popup, or asks through the usual dialog.

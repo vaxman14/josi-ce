@@ -44,6 +44,11 @@ import { isMutatingTool, runDurableEffect } from './durableEffects.js';
 import { automationToolAvailability } from './automationTools.js';
 import { pcBrowserToolAvailability, PC_BROWSER_PROMPT, PC_BROWSER_ABSENT_PROMPT, takeToolImages } from './pcBrowserTools.js';
 import { SETTINGS_CHANGE_PROMPT } from './settingsChangeTools.js';
+import { SETUP_STATUS_PROMPT } from './setupStatusTools.js';
+import { CREDENTIAL_CARD_PROMPT } from './credentialCardTools.js';
+import { CONNECTOR_REQUEST_PROMPT, announceConnectorRequests } from './connectorRequestTools.js';
+import { MY_WORLD_PROMPT } from './myWorldTools.js';
+import { worldContext } from '@josi-ce/core';
 import { pcDesktopToolAvailability, PC_DESKTOP_PROMPT } from './pcDesktopTools.js';
 import { loadGuidance, announceProposals } from './improvementEngine.js';
 import {
@@ -534,7 +539,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     + (pcBrowserTools.length ? `\n\n${PC_BROWSER_PROMPT}` : pcDesktopTools.some(t=>t.def.name!=='pc_get_permissions') ? `\n\n${PC_BROWSER_ABSENT_PROMPT}` : '')
     + (computerTools.length ? `\n\n${COMPUTER_PROMPT}` : '')
     + (pcDesktopTools.length ? `\n\n${PC_DESKTOP_PROMPT}` : '')
-    + (capabilities.toolCalling ? `\n\n${SETTINGS_CHANGE_PROMPT}`
+    + (capabilities.toolCalling ? `\n\n${SETUP_STATUS_PROMPT}\n\n${CREDENTIAL_CARD_PROMPT}\n\n${CONNECTOR_REQUEST_PROMPT}\n\n${MY_WORLD_PROMPT}\n\n${SETTINGS_CHANGE_PROMPT}`
       // Honest about the gap: without tool calling nothing can act, and the
       // owner needs to hear which model to change, not a generic refusal.
       : `\n\nThis model (${stored?.model ?? 'the configured model'}) did not pass Josi's tool-calling check, so in this conversation you cannot act on the PC, run commands, read files or change Josi's settings. If asked to, say exactly that and tell the owner to run Check Again or choose a model with tool calling under Models in Josi.`);
@@ -549,6 +554,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     guidance = loaded.text;
     const announcement = await announceProposals(db, userId);
     if (announcement) guidance += `${guidance ? '\n\n' : ''}${announcement}`;
+    const requests = await announceConnectorRequests(db, userId);
+    if (requests) guidance += `${guidance ? '\n\n' : ''}${requests}`;
   } catch (err) {
     console.error('guidance unavailable for this turn', (err as Error).message);
   }
@@ -591,6 +598,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   } catch (err) {
     console.error('personalization unavailable for this turn', (err as Error).message);
   }
+  // My World: its own store, read every turn, never part of the memory engine.
+  try { const world = await worldContext(db, userId); if (world) system += `\n\n${world}`; } catch (err) { console.error('My World unavailable for this turn', (err as Error).message); }
   if (guidance) system += `\n\n${guidance}`;
   if (args.workGoalId) system += `\n\nThis is a server-scheduled continuation of goal ${args.workGoalId}. The last user message below is its ORIGINAL request, not a fresh instruction or approval. Read that goal and its current checkpoint before acting. Continue the saved next step within existing permissions; do not recreate the goal, approve a pending action, or repeat a completed/uncertain effect. Each step has one consequential intent across all continuations. Save meaningful progress and an exact next step, timed wait or precise question with checkpoint_goal before ending. A reply is not completion. If one step needs approval, secure reauthentication, missing information or outcome evidence, record its precise blocker and continue only declared independent work. If no independent step is available, save the exact question and stop. An uncertain external effect permits read-only inspection, never another effect or an invented success receipt.`;
 

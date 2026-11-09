@@ -35,6 +35,10 @@ import { executeAutomationTool, AUTOMATION_TOOL_NAMES } from './automationTools.
 import { executePcBrowserTool, PC_BROWSER_TOOL_NAMES } from './pcBrowserTools.js';
 import { executeMemoryTool, MEMORY_TOOL_NAMES } from './memoryEngine.js';
 import { executeSettingsChangeTool, SETTINGS_CHANGE_TOOL_NAMES } from './settingsChangeTools.js';
+import { executeSetupStatusTool, SETUP_STATUS_TOOL_NAMES } from './setupStatusTools.js';
+import { executeCredentialCardTool, CREDENTIAL_CARD_TOOL_NAMES } from './credentialCardTools.js';
+import { executeConnectorRequestTool, CONNECTOR_REQUEST_TOOL_NAMES } from './connectorRequestTools.js';
+import { executeMyWorldTool, MY_WORLD_TOOL_NAMES } from './myWorldTools.js';
 import { executePcDesktopTool, PC_DESKTOP_TOOL_NAMES } from './pcDesktopTools.js';
 
 async function actionSummary(db:Db,userId:string,domain:string,operation:string,slots:Record<string,unknown>):Promise<string>{
@@ -97,6 +101,10 @@ export async function executeAssistantTool(
   if (PC_BROWSER_TOOL_NAMES.has(name)) return executePcBrowserTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input);
   if (PC_DESKTOP_TOOL_NAMES.has(name)) return executePcDesktopTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input, ctx.workGoalId);
   if (MEMORY_TOOL_NAMES.has(name)) return executeMemoryTool(db, userId, ctx.threadId, name, input);
+  if (SETUP_STATUS_TOOL_NAMES.has(name)) return executeSetupStatusTool(db, userId, name, input);
+  if (CREDENTIAL_CARD_TOOL_NAMES.has(name)) return executeCredentialCardTool(db, userId, name, input, ctx.threadId);
+  if (MY_WORLD_TOOL_NAMES.has(name)) return executeMyWorldTool(db, userId, name, input, ctx.threadId);
+  if (CONNECTOR_REQUEST_TOOL_NAMES.has(name)) return executeConnectorRequestTool(db, userId, name, input, ctx.threadId, ctx.connectors?.masterKey() ?? null);
   if (SETTINGS_CHANGE_TOOL_NAMES.has(name)) return executeSettingsChangeTool(db, userId, name, input, ctx.threadId, ctx.connectors?.masterKey() ?? null);
   if (WORK_GOAL_TOOL_NAMES.has(name)) return executeWorkGoalTool(db, ctx, name, input);
   if (WORKSPACE_TOOLS.some(t=>t.def.name===name)) return executeWorkspaceTool(db,userId,name,input);

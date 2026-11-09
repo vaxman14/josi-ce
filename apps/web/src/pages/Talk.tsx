@@ -32,6 +32,7 @@ import type { ShellOutlet } from '@/components/layout/Shell';
 import { VoiceChat } from '@/components/VoiceChat';
 import { ChatWorkProgress } from '@/components/WorkProgress';
 import { PcPermissionCards } from '@/components/PcPermissionCards';
+import { CredentialCards } from '@/components/CredentialCards';
 
 /** "Today", "Yesterday", or the date — the label WhatsApp taught everyone. */
 function dayLabel(at: Date): string {
@@ -360,6 +361,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
           </ul>
         ) : null}
         {thread ? <PcPermissionCards key={'permissions-'+thread.id} threadId={thread.id} /> : null}
+        {thread ? <CredentialCards key={'credentials-'+thread.id} threadId={thread.id} /> : null}
         {thread ? <ChatWorkProgress key={thread.id} threadId={thread.id} /> : null}
         {sending ? <Working text="Josi is thinking" elapsed size={28} className="py-2 pl-1" /> : null}
         <div ref={end} />

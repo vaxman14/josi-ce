@@ -24,8 +24,8 @@ function key(ctx: Ctx) {
 
 async function calendarAccess(db: Db, connectionId: string): Promise<boolean> {
   const [row] = await db.query<{ allowed: boolean }>(
-    `select cc.enabled and cc.scopes_granted_at is not null and coalesce(p.allowed, true) as allowed
-       from connection_capabilities cc
+    `select cc.enabled and cc.scopes_granted_at is not null and (coalesce(p.allowed, true) or exists(select 1 from users u where u.id = c.owner_user_id and u.role = 'super_admin')) as allowed
+       from connection_capabilities cc join connections c on c.id = cc.connection_id
        left join admin_capability_policy p on p.capability = cc.capability
       where cc.connection_id = $1 and cc.capability in ('google.calendar.read','microsoft.calendar.read','local.calendar.read')`,
     [connectionId],

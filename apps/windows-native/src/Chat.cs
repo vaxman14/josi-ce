@@ -136,7 +136,8 @@ namespace Josi.Native {
       modelPick.SelectionChanged += delegate { if (settingPick) return; var id = Ui.Selected(modelPick); if (id.Length > 0 && id != currentModel) SwitchModel(id); };
       goalChip = Automation.Id(Ui.Pill("", () => ShowHistory(true)), "josi.chat.goals");
       goalChip.Visibility = Visibility.Collapsed;
-      BarActions = Ui.Row(12, goalChip, modelName, modelPick, holder);
+      var world = Automation.Id(Ui.RoundButton(Glyph.Person, "My World", () => model.Section = "my-world"), "josi.chat.my-world");
+      BarActions = Ui.Row(12, goalChip, modelName, modelPick, world, holder);
 
       var root = new Grid();
       root.Children.Add(dock); root.Children.Add(history);

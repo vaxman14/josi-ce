@@ -17,3 +17,8 @@ export * from './tools.js';
 export * from './memoryEngine.js';
 export * from './improvementEngine.js';
 export * from './pcPermissionSettings.js';
+export * from './settingsChangeTools.js';
+export * from './setupStatusTools.js';
+export * from './credentialCardTools.js';
+export * from './connectorRequestTools.js';
+export * from './myWorldTools.js';
