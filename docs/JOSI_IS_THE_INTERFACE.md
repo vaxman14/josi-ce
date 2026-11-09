@@ -54,6 +54,20 @@ and delivered in chat is not finished.
 6. **Fewer steps, always.** One ask, one card, a password only when the server
    genuinely needs it. Nothing that happens between requests shows on screen.
 
+7. **Three levels of ask.**
+   - Ordinary: done, no card. Opening a program, answering a setup question,
+     connecting a service the person may use.
+   - Serious (money leaves, something is deleted or sent, security or
+     permissions widen): one card stating the exact effect, the person's
+     password or Windows Hello, then done.
+   - Secrets (card numbers, passwords, tokens, recovery keys): Josi never
+     reads, speaks, stores or transcribes them. "Read my card number back" is
+     answered with a reveal card: unlocked by the owner's password or Hello,
+     shown on screen only, never on voice, only to the person who owns the
+     item. Josi may still use a secret on the person's behalf through a
+     protected flow (a payment form filled by the Vault, not by her) without
+     ever seeing it. Members get the same for their own items only.
+
 ## Implementation plan (in order)
 
 | Step | What | Where |
