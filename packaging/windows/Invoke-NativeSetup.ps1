@@ -221,6 +221,10 @@ try{
         if(!$acl.AreAccessRulesProtected -or $owner -cnotin @('S-1-5-18','S-1-5-32-544')){throw 'Installer cache ownership must be reviewed'}
         foreach($rule in $acl.Access){$sid=$rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($rule.AccessControlType -ne 'Allow' -or $sid -cnotin @('S-1-5-18','S-1-5-32-544')){throw 'Installer cache grants unexpected access'}}
     }
+    # Staging folders of earlier runs are scratch. One left behind by a failed
+    # run can hold extra links to the installed files, which the single-link
+    # check then refuses, so they go before this run stages anything.
+    foreach($stale in Get-ChildItem -LiteralPath $cache -Directory -Filter 'expanded-*' -ErrorAction SilentlyContinue){try{[IO.Directory]::Delete($stale.FullName,$true)}catch{Note ('Could not remove old staging folder '+$stale.Name)}}
     $source=Assert-PlainNativePath (Join-Path $cache ('expanded-'+[Guid]::NewGuid().ToString('N')));$null=[IO.Directory]::CreateDirectory($source)
     # An update reuses the components that did not change since the installed
     # version (same archive hash): their files are linked from the installed

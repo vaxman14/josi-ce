@@ -65,6 +65,16 @@ during this run are in `e5951c8` and ship in `1.2.5-preview.6`.
 | Chat after preview.8 | Plain chat worked; every PC request failed after minutes with a provider error. Cause: the old app saved "paused" as it quit; the new app loaded it; approved work was never claimed; the model timed out. Fixed in `554e654` (no pause saved on exit; a paused app sends no presence so tools fail fast with the reason; readiness card shows Paused with Resume). Verified: card said "Paused on this PC / Not ready: pcPresence", Resume made it Ready, then Notepad, Downloads and `git log` ran from chat. |
 | Model capability check | Passed in about 40 s (chat, tools, images, structured answers) while chat PC work was failing, which separated the model path from the executor path. |
 
+## preview.9 to preview.11, late evening
+
+| Build | Result |
+|---|---|
+| preview.9 (`ab216d8`) | Built, not installed (superseded). |
+| preview.10 (`0f8cfd4`) | First update to keep all seven unchanged components ("Keeping Python from version 1.2.5-preview.8"...). Then the file check refused them: hard links have two links and the check requires one (`NativeFileAttributes.cs`, `Links == 1`). The installer stopped before changing anything; preview.8 kept running. |
+| preview.11 (`e2a4590`) | Reuse now copies instead of linking. Installed cleanly in 2 min 47 s, but every "Keeping" fell back to "Unpacking": the failed preview.10 run had left hard links to preview.8's files in the installer cache, so those files failed the single-link check as reuse sources. Preview.11's own files have one link each, so the next update is the first that can prove the saving. The cache's old staging folders are now removed at the start of a run (committed after preview.11). After install: the new app took over from the dev build on its own, and "open notepad" opened Notepad on the first ask, no pause, no card. |
+
+Expected on the next update (from preview.11): unpack about 15 s instead of 50, file check a few seconds instead of 23, copy unchanged (30 s), database and services unchanged (80 s): roughly 2 minutes, of which the services are most. The setup-timing log in `Program Files\Josi CE Server\installer` tells.
+
 ## Owner feedback carried forward
 
 - Fewer steps, always: the setup step now pairs and enables in one go; the
