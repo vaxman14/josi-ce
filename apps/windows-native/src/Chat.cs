@@ -13,6 +13,10 @@ namespace Josi.Native {
     readonly AppModel model; readonly Window owner;
     readonly TextBlock title = Ui.Caption("Conversation");
     readonly TextBlock modelName = Ui.Caption("");
+    // The model, switchable from the chat for the Claude plan: Haiku, Sonnet, Opus.
+    // A pick saves the model and runs the capability check before it is used.
+    readonly ComboBox modelPick = Ui.Choice(Ui.Options("haiku", "Haiku · fastest", "sonnet", "Sonnet · balanced", "opus", "Opus · most capable"), "haiku");
+    string primaryProvider = "", currentModel = ""; bool settingPick;
     readonly StackPanel messages = new StackPanel { MaxWidth = 900, Margin = new Thickness(28) };
     readonly ScrollViewer scroller;
     // Work in progress sits beside the conversation, never under the composer.
@@ -127,9 +131,12 @@ namespace Josi.Native {
       historyBadge.Child = historyCount; historyBadge.Visibility = Visibility.Collapsed;
       var holder = new Grid(); holder.Children.Add(open); holder.Children.Add(historyBadge);
       modelName.VerticalAlignment = VerticalAlignment.Center;
+      modelPick.VerticalAlignment = VerticalAlignment.Center; modelPick.Visibility = Visibility.Collapsed; modelPick.MinWidth = 150;
+      Automation.Id(modelPick, "josi.chat.model.pick", "Model");
+      modelPick.SelectionChanged += delegate { if (settingPick) return; var id = Ui.Selected(modelPick); if (id.Length > 0 && id != currentModel) SwitchModel(id); };
       goalChip = Automation.Id(Ui.Pill("", () => ShowHistory(true)), "josi.chat.goals");
       goalChip.Visibility = Visibility.Collapsed;
-      BarActions = Ui.Row(12, goalChip, modelName, holder);
+      BarActions = Ui.Row(12, goalChip, modelName, modelPick, holder);
 
       var root = new Grid();
       root.Children.Add(dock); root.Children.Add(history);
@@ -285,10 +292,48 @@ namespace Josi.Native {
       if (model.IsAdministrator) {
         try {
           var primary = (await api.Request("/admin/llm"))["primary"];
-          if (model.Api == api) modelName.Text = primary["provider"].Text == "openai_subscription" ? "ChatGPT plan" : primary["model"].Text;
+          if (model.Api == api) {
+            primaryProvider = primary["provider"].Text; currentModel = primary["model"].Text;
+            modelName.Text = primaryProvider == "openai_subscription" ? "ChatGPT plan" : currentModel;
+            var pickable = primaryProvider == "anthropic_subscription" && new[] { "haiku", "sonnet", "opus" }.Contains(currentModel);
+            settingPick = true;
+            try { foreach (ComboBoxItem item in modelPick.Items) if ((string)item.Tag == currentModel) modelPick.SelectedItem = item; } finally { settingPick = false; }
+            modelPick.Visibility = pickable ? Visibility.Visible : Visibility.Collapsed; modelPick.IsEnabled = true;
+            modelName.Visibility = pickable ? Visibility.Collapsed : Visibility.Visible;
+          }
         } catch (Exception) { }
       }
       RenderComposer();
+    }
+    /// Saves the picked model for the primary slot and runs its capability
+    /// check, the same two calls the Models screen makes; the chat uses it once
+    /// the check passes. The conversation sees "Checking…" meanwhile.
+    void SwitchModel(string id) {
+      var api = model.Api; if (api == null) return;
+      var provider = primaryProvider; modelPick.IsEnabled = false;
+      model.Run(async () => {
+        try {
+          var saved = await api.Request("/admin/llm/providers/primary", "PUT", Wires.O("provider", provider, "baseUrl", "", "model", id, "externalAcknowledged", true));
+          if (!saved["needsProbe"].Flag) {
+            // Active at once. A sibling's result was carried over: confirm this
+            // model quietly in the background; only a failure is reported.
+            if (saved["verify"].Flag) _ = System.Threading.Tasks.Task.Run(async () => {
+              try {
+                var result = await api.Request("/admin/llm/providers/primary/probe", "POST", Wires.O());
+                if (!result["provider"]["active"].Flag) Notifications.Show("Model check failed", id + " did not pass its check on this server: " + result["result"]["fatal"].Text);
+              } catch (JosiException) { }
+            });
+            return;
+          }
+          // Never checked on this server: one real check, visible, before it answers.
+          modelName.Text = "Checking " + id + "…"; modelName.Visibility = Visibility.Visible;
+          model.Activity = "Checking " + id + " with the provider…"; model.Notify();
+          var result = await api.Request("/admin/llm/providers/primary/probe", "POST", Wires.O());
+          var fatal = result["result"]["fatal"].Text;
+          if (!result["provider"]["active"].Flag) { model.Error = fatal.Length > 0 ? fatal : id + " did not pass its capability check."; model.Notify(); }
+        } catch (JosiException e) { model.Error = e.Message; model.Notify(); }
+        finally { model.Activity = ""; LoadModelName(); }
+      });
     }
 
     bool Thinking { get { return model.Turns.Any(t => t["status"].Text == "queued" || t["status"].Text == "running"); } }

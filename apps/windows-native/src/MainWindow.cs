@@ -123,6 +123,9 @@ namespace Josi.Native {
     Screen? shown;
     WorkspaceView workspace;
     Tray tray; bool quitting;
+    /// How long the bar stays after a step ends, waiting for the next one.
+    static readonly TimeSpan BarHold = TimeSpan.FromSeconds(6);
+    DateTime lastWorking = DateTime.MinValue; System.Windows.Threading.DispatcherTimer barHold;
     // Demo mode: a scripted PC Control banner (--pc-banner) and "stopped" after Stop Josi.
     string demoPc; bool pcStopped;
     /// Brings the window back from the tray.
@@ -141,9 +144,18 @@ namespace Josi.Native {
       if (scripted != null) takenOver = scripted == "takeover";
       if (executor.Busy && !executor.Paused && !executor.PendingStop) pcStopped = false;
       var stopped = pcStopped || executor.PendingStop;
-      // Only while something is happening on the screen: a paused or stopped
-      // Josi takes no room. Resume lives in PC Control, the chat cards and the tray.
-      var show = working || takenOver;
+      // Only while something is happening: a paused or stopped Josi takes no
+      // room (Resume lives in PC Control, the chat cards and the tray). Between
+      // the steps of one request the bar holds for a few seconds, so it stays
+      // up while more work is coming and goes away once the work is done.
+      var now = DateTime.UtcNow;
+      if (working) lastWorking = now;
+      var holding = !working && !takenOver && scripted == null && (now - lastWorking) < BarHold;
+      if (holding) {
+        if (barHold == null) { barHold = new System.Windows.Threading.DispatcherTimer(); barHold.Tick += delegate { barHold.Stop(); RenderControlBar(); }; }
+        barHold.Interval = BarHold - (now - lastWorking) + TimeSpan.FromMilliseconds(50); barHold.Stop(); barHold.Start();
+      }
+      var show = working || takenOver || holding;
       tray?.Update(paused, working);
       Automation.Pc = stopped ? "stopped" : !show ? "off" : paused ? "paused" : takenOver ? "takeover" : working ? "working" : "ready";
       if (controlOverlay != null) controlOverlay.Stopped = stopped;
@@ -166,7 +178,7 @@ namespace Josi.Native {
         actions.Children.Add(Automation.Id(Ui.Pill("Resume", resume), "josi.pc-control.continue"));
         actions.Children.Add(Automation.Id(Ui.Pill("Pause Josi", pause), "josi.pc-control.pause"));
       } else if (!working) {
-        sentence = "Josi is ready. You are in control.";
+        sentence = "Josi finished that step on this PC.";
         status = Ui.T(sentence, 13.5, FontWeights.Medium);
       } else {
         sentence = "Josi is using this PC: " + (scripted != null ? "demo activity" : executor.Activity) + ". Move the mouse or type to take over.";

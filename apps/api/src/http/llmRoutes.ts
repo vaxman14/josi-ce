@@ -506,6 +506,30 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         acknowledged: external || acknowledged, subscriptionCommand: command, secrets, settings, actorUserId: req.user!.id,
       });
 
+      // A model this server already checked (same provider, model and address)
+      // within the last 30 days takes its remembered result and is active at
+      // once, so switching between known models costs nothing. A model never
+      // checked here still gets its one real check.
+      const [remembered] = await db.query<{ probed_at: string; probe_steps: unknown; cap_chat: boolean | null; cap_structured_output: boolean | null; cap_tool_calling: boolean | null; cap_vision: boolean | null; cap_context_tokens: number | null }>(
+        `select probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens from llm_probe_memory
+         where provider = $1 and model = $2 and base_url = $3 and cap_chat = true and probed_at > now() - interval '30 days'`,
+        [descriptor.kind, model, descriptor.baseUrlMode === 'none' ? '' : (baseUrl || '')]);
+      // On a subscription path (Claude Code, Codex) the capabilities belong to
+      // the path, not to the model alias: what the server proved for one model
+      // of the plan carries over to its siblings, so a switch is instant. The
+      // client confirms the new model quietly afterwards (verify: true).
+      const sibling = remembered ? null : (await db.query<typeof remembered>(
+        `select probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens from llm_probe_memory
+         where provider = $1 and provider in ('anthropic_subscription', 'openai_subscription') and cap_chat = true and probed_at > now() - interval '30 days'
+         order by probed_at desc limit 1`, [descriptor.kind]))[0] ?? null;
+      const carried = remembered ?? sibling;
+      if (carried) {
+        await db.query(
+          `update llm_providers set probed_at = $2, probe_steps = $3, cap_chat = $4, cap_structured_output = $5, cap_tool_calling = $6, cap_vision = $7, cap_context_tokens = $8,
+             activated_at = coalesce(activated_at, now()) where role = $1`,
+          [role, carried.probed_at, json(carried.probe_steps), carried.cap_chat, carried.cap_structured_output, carried.cap_tool_calling, carried.cap_vision, carried.cap_context_tokens]);
+        return res.json({ provider: await providerDto(db, role), needsProbe: false, remembered: carried.probed_at, verify: !remembered });
+      }
       return res.json({ provider: await providerDto(db, role), needsProbe: true });
     }),
   );
@@ -595,6 +619,14 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       if (!updated.length) {
         return res.status(409).json({ error: 'The model changed during the test. Test the current selection again.' });
       }
+      // Remember the result for this model, so choosing it again is instant.
+      await db.query(
+        `insert into llm_probe_memory (provider, model, base_url, probed_at, probe_steps, cap_chat, cap_structured_output, cap_tool_calling, cap_vision, cap_context_tokens)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         on conflict (provider, model, base_url) do update set probed_at = excluded.probed_at, probe_steps = excluded.probe_steps, cap_chat = excluded.cap_chat,
+           cap_structured_output = excluded.cap_structured_output, cap_tool_calling = excluded.cap_tool_calling, cap_vision = excluded.cap_vision, cap_context_tokens = excluded.cap_context_tokens`,
+        [stored.provider, stored.model, stored.base_url ?? '', result.probedAt, json(result.steps), result.capabilities.chat, result.capabilities.structuredOutput,
+          result.capabilities.toolCalling, result.capabilities.vision, result.capabilities.contextTokens]);
 
       await appendEvent(db, {
         actorUserId: req.user!.id,
