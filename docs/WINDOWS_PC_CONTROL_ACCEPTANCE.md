@@ -30,13 +30,22 @@ The overlay probe also checks persistent human takeover, Pause/Stop process canc
 
 ## Signed packaging
 
-Target version: `1.2.5-preview.3`. Build from clean committed source:
+Completed version: `1.2.5-preview.3`, built from clean source commit `85000c3298c02505acf74bc3a659d2f465c08c2c` using:
 
 ```powershell
 node scripts/windows/run-background.mjs powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows/Build-Release.ps1 -Version 1.2.5-preview.3 -Sign -SkipProvision
 ```
 
-The release pipeline includes its launcher and setup-bridge runtime checks. It keeps temporary files and caches inside the approved workspace and signs the app, launcher and installers. The package metadata and final source commit will be recorded below after completion, and in the release folder's `BUILD-RECEIPT.json`.
+The release pipeline passed its launcher, setup-bridge and installer-kit runtime checks. It kept temporary files and caches inside the approved workspace and signed the app, launcher and installers. The server and native payloads record the same source commit. Packaged TypeScript and web typechecking/build also passed.
+
+Both installers have valid timestamped SoCal Receptionist Authenticode signatures. Their SHA-256 values match `SHA256SUMS.txt`. Output is under `artifacts/windows-native/releases/1.2.5-preview.3/`:
+
+| Installer | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `Josi-CE-1.2.5-preview.3-Windows-x64.exe` (full server and app) | 1019146128 | `925c12589a4b3a9ce9937c9bd0a83f83072b30535ddffeba2611bab29af60fba` |
+| `Josi-Client-1.2.5-preview.3-Windows-x64.exe` (client app) | 80385688 | `063d2ee93472830a41180dfbfa10f49855cf96a90cf073b4d6bc2dbdf68843c9` |
+
+`BUILD-RECEIPT.json` records signatures, hashes, source identity, completed checks and explicit acceptance limits. The build log is `artifacts/windows-native/evidence/build-1.2.5-preview.3.log`. Earlier installers are preserved. Later documentation-only commits do not change these binary bytes.
 
 ## Acceptance limits
 
