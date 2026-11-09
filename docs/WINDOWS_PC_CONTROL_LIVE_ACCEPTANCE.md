@@ -128,3 +128,27 @@ Driven through UI Automation on the installed build, with the owner at the keybo
 | G: "I just bought a 2026 Ford Explorer, blue" | "Saved to your World", with the VIN offered as a protected card. "Give you the plate" opened the License plate card (Paste, Show). The My World page shows the vehicle with its three secret fields to set, Remove, and one "Josi knows" line with Forget. |
 | D (member request) | Not driven: needs a second account. |
 | H (extension) | Not built. |
+
+## Step H, the browser extension: live run on preview.17 and preview.18 (November 9, 2026, night)
+
+Driven through UI Automation on the installed build (Sonnet), with extension
+0.9.0 loaded unpacked from `C:\Dev\josi-dev\browser-extension\chrome`. The
+owner reloaded the extension and accepted the install prompts.
+
+| Check | Result |
+|---|---|
+| Link without a tab (preview.17) | "Which tabs do I have open?" got "13 tabs" from `browser_list_tabs`, with no tab attached. |
+| "Use this tab" from chat | With Chrome's front tab on `chrome://extensions`, Josi said plainly that it was not a website. "Attach the Mercari tab" then went through PC Control and came back `site_permission_required`; the owner clicked the icon once. The owner found that click too much, so `4ff7e36` asks for site access once at install (PC Control still decides each site). |
+| Read | First turn: the model claimed it had no read tool (a one-off slip). Asked again, it read the "In progress" listings. |
+| Photo | Described the real thumbnail (SOLD banner, the graphics card). |
+| Open a page (preview.17) | The tab navigated, but the tool reported failure: Chrome still shows the old address until the navigation commits. Fixed in `4ff7e36` (`loadedTab` waits through `pendingUrl`). |
+| Open with no tab attached (preview.18) | "Open the Mercari in-progress page" opened a new tab, attached it and read it. |
+| Select | `the-internet.herokuapp.com/dropdown`: Option 2 selected, confirmed on re-read. (I opened this practice site in the owner's tab without asking first; the owner objected. Tests use a new tab or a page I name first from now on.) |
+| Download | `Images.txt` landed in Downloads, but the narrated-search guard flagged the file name as invented and the model retracted a true answer. Fixed in `87d5aa7`: a successful browser, PC or desktop tool counts as evidence. |
+| Pause mid-task | The bar showed Josi working; Pause stopped it before the next photo. The model then said "click the extension to relink" (no presence while paused). Fixed in `87d5aa7`: the tool says Josi is paused and to press Resume. Resume from PC Control kept the tab attached. |
+| Stop mid-task | Stop on the floating bar ended the task and turned PC control off; the model said so and did not retry. Turning control back on needs the owner (the toggle did not stick from automation). |
+| Josi restart with the tab attached | A second launch only focused the running copy. After ending the process and starting Josi fresh, the Mercari tab re-attached by itself with no click. |
+| Garage-sale task | Not run yet: waiting for the owner to turn PC control back on. |
+
+Not installed yet: the two fixes in `87d5aa7` (the evidence guard and the
+paused message). They go into the next installer.
