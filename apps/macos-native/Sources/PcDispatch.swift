@@ -19,6 +19,6 @@ func pcDispatch(_ request: Wire, cancel: PcCancel) async -> PcOutcome {
     default:
         if kind.hasPrefix("desktop.terminal.") { return PcTerminals.shared.execute(requestId: request.identifier, payload: payload, scope: scope) }
         if kind.hasPrefix("desktop.") { return await PcDesktop.shared.perform(kind: kind, requestId: request.identifier, payload: payload, scope: scope, cancel: cancel) }
-        return pcRefuse("browser_not_linked", "No browser is linked to Josi on this Mac yet. Josi can still read and use the browser's window like any other program.")
+        return await PcBrowserBridge.shared.dispatch(request, cancel: cancel)
     }
 }

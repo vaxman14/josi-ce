@@ -11,7 +11,8 @@ const config = globalThis.JOSI_BROWSER_CONFIG;
 // The Windows host learns tabs and sites from these messages; the macOS host
 // requires its exact original fields, so only Windows gets the extras and the
 // standing link (a link with no tab attached).
-const windowsHost = /^Win/.test(globalThis.navigator?.platform ?? '');
+// Josi on Windows and on a Mac keeps a standing link and reads the tab list.
+const windowsHost = /^(Win|Mac)/.test(globalThis.navigator?.platform ?? '');
 const LINK_ALARM = 'josi-link', TABS_REPORTED = 30, PHOTO_BASE64_LIMIT = 98304, UPLOAD_LIMIT = 8 * 1024 * 1024;
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const bounded = (value, limit = 192 * 1024) => new TextEncoder().encode(JSON.stringify(value)).length <= limit;

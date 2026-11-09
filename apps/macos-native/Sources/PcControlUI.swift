@@ -1,4 +1,5 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 /// What the owner must decide about work on this Mac, as cards above the chat
@@ -13,10 +14,18 @@ struct PcRequestCards: View {
     private static let everyday: Set<String> = ["desktop.view", "explorer.view", "folder.read", "folder.write", "file.rename", "file.move",
                                                 "app.launch", "app.view", "app.control", "app.close", "browser.view", "browser.fill"]
     var body: some View {
-        if model.isAdministrator, pc.needsApproval || !pc.requests.isEmpty {
+        if model.isAdministrator, pc.needsApproval || !pc.requests.isEmpty || pc.browserDiscovery != nil || pc.browserHelperNeedsApproval {
             ScrollView {
                 VStack(spacing: 10) {
                     if pc.needsApproval { approveCard }
+                    if let found = pc.browserDiscovery { browserCard(found) }
+                    if pc.browserHelperNeedsApproval {
+                        card {
+                            Text("Let Josi reach your browser").font(JosiFont.headline)
+                            NativeLeanNote(text: "Josi's browser helper is waiting for your OK in System Settings > General > Login Items & Extensions. Turn on Josi there, then turn on the Josi extension in Safari > Settings > Extensions.")
+                            Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }.buttonStyle(JosiOutlineButtonStyle())
+                        }
+                    }
                     ForEach(pc.requests, id: \.identifier) { requestCard($0) }
                 }
             }.frame(maxHeight: 300).padding(.horizontal, 26).frame(maxWidth: 830)
@@ -35,6 +44,16 @@ struct PcRequestCards: View {
                 }
             }
             if !problem.isEmpty, asking.isEmpty { Text(problem).font(JosiFont.caption).foregroundStyle(JosiTheme.error) }
+        }
+    }
+    private func browserCard(_ found: PcBrowserBridge.Discovery) -> some View {
+        card {
+            Text("\(found.browser) wants to link with Josi").font(JosiFont.headline)
+            NativeLeanNote(text: "Allowing lets Josi see the sites and titles of this browser's tabs and work in a tab you attach, each time with your PC Control permission. Nothing on a page is read until you ask.")
+            HStack {
+                Button("Allow \(found.browser)") { PcBrowserBridge.shared.allowDiscovered() }.buttonStyle(JosiGoldButtonStyle(fullWidth: false))
+                Button("Not Now") { PcBrowserBridge.shared.ignoreDiscovered() }.buttonStyle(JosiOutlineButtonStyle())
+            }
         }
     }
     private func requestCard(_ request: Wire) -> some View {
@@ -165,10 +184,12 @@ struct PcControlStrip: View {
     @ObservedObject private var pc = PcExecutor.shared
     private var status: String {
         pc.pendingStop ? "Stopped · You are in control" : pc.paused ? "Paused · You are in control" : pc.takenOver ? "You are in control"
+            : !pc.browserActivity.isEmpty && !pc.busy ? "Josi is working in \(pc.browserLinked ?? "the browser")"
             : !pc.busy && pc.terminals == 0 ? "Ready · You are in control" : pc.onScreen ? "Josi is using this Mac" : "Josi is working in the background"
     }
     private var detail: String {
         pc.pendingStop ? "Computer control is stopped." : pc.paused ? "Choose Resume when you're ready." : pc.takenOver ? "Screen work stopped. Josi reads again before her next step."
+            : !pc.browserActivity.isEmpty && !pc.busy ? pc.browserActivity
             : !pc.busy ? (pc.terminals > 0 ? "\(pc.terminals) terminal\(pc.terminals == 1 ? "" : "s") open." : "Ready when you ask Josi to work.")
             : pc.onScreen ? "\(pc.activity) · Move your mouse or type to take over." : pc.activity
     }

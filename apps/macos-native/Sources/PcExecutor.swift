@@ -19,6 +19,12 @@ import Foundation
     @Published private(set) var requests: [Wire] = []
     @Published private(set) var terminals = 0
     @Published private(set) var lastWork: Date?
+    /// Work in the linked browser, shown in the same control bar with the same Pause and Stop.
+    @Published private(set) var browserActivity = ""
+    @Published private(set) var browserDiscovery: PcBrowserBridge.Discovery?
+    @Published private(set) var browserLinked: String?
+    @Published private(set) var browserHelperNeedsApproval = false
+    private var externalCount = 0
     private var current: PcCancel?
     private var approved = false
     private var nextIdentityCheck = Date.distantPast
@@ -51,18 +57,27 @@ import Foundation
 
     // ------------------------------------------------------------ controls
     func setRequests(_ list: [Wire]) { requests = list }
+    func beginExternal(_ what: String) { externalCount += 1; browserActivity = what; PcControlBar.shared.update() }
+    func endExternal() { externalCount = max(0, externalCount - 1); if externalCount == 0 { browserActivity = ""; lastWork = Date() }; PcControlBar.shared.update() }
+    private func syncBrowser() {
+        let bridge = PcBrowserBridge.shared
+        bridge.blocked = paused || takenOver
+        if browserDiscovery != bridge.discovery { browserDiscovery = bridge.discovery }
+        if browserLinked != bridge.linkedBrowser { browserLinked = bridge.linkedBrowser }
+        if approved, browserHelperNeedsApproval != PcBrowserBridge.brokerNeedsApproval { browserHelperNeedsApproval = PcBrowserBridge.brokerNeedsApproval }
+    }
     func pause() {
-        defer { PcControlBar.shared.update() }
+        defer { PcControlBar.shared.update(); syncBrowser() }
         paused = true; current?.cancel(); PcTerminals.shared.stopAll(); PcDesktop.shared.forget(); save(); lastPresence = nil
     }
     func resume() {
         guard !pendingStop else { return }
-        paused = false; takenOver = false; save(); PcControlBar.shared.update()
+        paused = false; takenOver = false; save(); syncBrowser(); PcControlBar.shared.update()
     }
     func stop() { pendingStop = true; pause() }
-    func takeOver() { guard onScreen, busy else { return }; takenOver = true; current?.cancel() }
+    func takeOver() { guard onScreen, busy else { return }; takenOver = true; current?.cancel(); syncBrowser() }
     var showsControls: Bool {
-        busy || terminals > 0 || paused || takenOver || pendingStop || (lastWork.map { Date().timeIntervalSince($0) < 20 } ?? false)
+        busy || !browserActivity.isEmpty || terminals > 0 || paused || takenOver || pendingStop || (lastWork.map { Date().timeIntervalSince($0) < 20 } ?? false)
     }
 
     // ------------------------------------------------------------ pairing
@@ -112,6 +127,7 @@ import Foundation
             while true {
                 try? await Task.sleep(for: .seconds(1))
                 await tick(model)
+                syncBrowser()
                 PcControlBar.shared.update()
             }
         }
@@ -132,10 +148,13 @@ import Foundation
                 registeredFor = registration
             }
             guard try await ensure(api, owner: owner) else { return }
+            // Paired: the browser broker may start, so Safari's extension can reach Josi.
+            PcBrowserBridge.shared.start()
             // Paused here means paused for the server too: no presence, so a PC tool
             // answers at once that Josi is paused instead of leaving work waiting.
             if paused { return }
-            let presence: Wire = ["connected": .bool(true),
+            // A linked browser, or Josi open on this Mac with no browser linked.
+            let presence: Wire = PcBrowserBridge.shared.presence() ?? ["connected": .bool(true),
                                   "browser": ["family": "desktop", "application": .string(Bundle.main.bundlePath), "profile": "Default", "origin": .null, "title": .null]]
             if presence != lastPresence || Date().timeIntervalSince(presenceAt) >= 10 {
                 _ = try await api.request("/admin/pc-control/executor/presence", method: "PUT", body: presence)

@@ -91,13 +91,16 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
                 guard self.owner.map(ObjectIdentifier.init) == key, data.count <= 8192,
                       let next = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw GuestBrowserError.invalid }
                 let discovery = next["mode"] as? String == "browser-profile-discovery"
+                // host-desktop: Josi itself, on this Mac, is the owner. It checks each
+                // browser and profile itself, so the relay carries any of them.
+                let desktop = next["mode"] as? String == "host-desktop"
                 let fields: Set<String> = ["workspaceId", "profileId", "family", "guestBootId", "hostBootId", "connectionId", "generation", "leaseUntilMs"]
-                guard Set(next.keys) == (discovery ? fields.union(["mode"]) : fields),
+                guard Set(next.keys) == (discovery || desktop ? fields.union(["mode"]) : fields),
                       ["workspaceId", "guestBootId", "hostBootId"].allSatisfy({ key in
                           guard let id = next[key] as? String else { return false }
                           return UUID(uuidString: id)?.uuidString.lowercased() == id
                       }), let family = next["family"] as? String, ["chrome", "brave", "firefox", "safari"].contains(family),
-                      discovery ? next["profileId"] is NSNull
+                      discovery || desktop ? next["profileId"] is NSNull
                         : (next["profileId"] as? String).map { UUID(uuidString: $0)?.uuidString.lowercased() == $0 } == true,
                       let digest = next["connectionId"] as? String, UUID(uuidString: digest)?.uuidString.lowercased() == digest,
                       let generation = next["generation"] as? NSNumber, CFGetTypeID(generation) != CFBooleanGetTypeID(),
@@ -131,10 +134,13 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
                 guard self.peers[key] != nil, self.live(), let authority = self.authority,
                       self.requests.count < 16384, let id = request["requestId"] as? String, !self.requests.contains(id),
                       peer.count <= 8192, let source = try JSONSerialization.jsonObject(with: peer) as? [String: Any],
-                      ["family", "guestBootId", "hostBootId"].allSatisfy({ source[$0] as? String == authority[$0] as? String }),
+                      (authority["mode"] as? String == "host-desktop" ? ["guestBootId", "hostBootId"] : ["family", "guestBootId", "hostBootId"])
+                        .allSatisfy({ source[$0] as? String == authority[$0] as? String }),
                       !self.outstanding || request["operation"] as? String == "browser.stop", let owner = self.owner
                 else { throw GuestBrowserError.unavailable }
-                if authority["mode"] as? String == "browser-profile-discovery" {
+                if authority["mode"] as? String == "host-desktop" {
+                    // Josi checks the family, extension and profile of every request itself.
+                } else if authority["mode"] as? String == "browser-profile-discovery" {
                     // Discovery may return a profile candidate only. There is
                     // no session, poll, page read, action or model projection.
                     guard request["operation"] as? String == "browser.hello", request["sessionId"] is NSNull
