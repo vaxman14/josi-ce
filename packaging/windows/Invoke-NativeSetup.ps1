@@ -104,6 +104,22 @@ function Ready($Context){
     }while([DateTime]::UtcNow -lt $deadline)
     throw 'Josi did not pass readiness; use retained transaction diagnostics before recovery'
 }
+function Read-ArchiveInventory($Component,[string]$Archive){
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip=[IO.Compression.ZipFile]::OpenRead($Archive)
+    try{
+        $entry=$zip.GetEntry('inventories/'+$Component.id+'.json');if(!$entry -or $entry.Length -gt 64MB){return $null}
+        $reader=[IO.StreamReader]::new($entry.Open());try{return $reader.ReadToEnd()}finally{$reader.Dispose()}
+    }finally{$zip.Dispose()}
+}
+function Test-SameInventory([string]$Text,$Known){
+    if(!$Text){return $false}
+    $fresh=[array](ConvertFrom-Json $Text);$old=[array]$Known.files
+    if(!$fresh -or !$old -or $fresh.Count -ne $old.Count){return $false}
+    $map=@{};foreach($f in $old){$map[[string]$f.path]=([string]$f.size)+'|'+$f.sha256}
+    foreach($f in $fresh){if($map[[string]$f.path] -cne (([string]$f.size)+'|'+$f.sha256)){return $false}}
+    return $true
+}
 function Link-InstalledComponent($Component,$Known,[string]$PriorProgram,[string]$Destination){
     # Rebuild one component in the staging folder from the installed version:
     # its inventory, then every listed file as a hard link (same volume) or a
@@ -213,21 +229,26 @@ try{
             foreach($item in [array]$parsedRecord){if($item -and $item.id -is [string]){$reusable[$item.id]=$item}}
         }
     }
-    $unpacked=0;$count=@($manifest.components).Count
+    $unpacked=0;$count=@($manifest.components).Count;$reused=@{}
     foreach($component in $manifest.components){
         Stop-IfCancelled;$unpacked++
+        $archive=if($LocalAcceptancePayloads){Get-NativeLocalPayload $component $LocalAcceptancePayloads $cache}else{Get-NativePayload $component $ManifestHash $cache (Join-Path $cache 'cancel')}
+        # Archives are zipped afresh for every release, so their hashes differ
+        # even when every file inside is the same. The component's inventory
+        # (path, size, SHA-256 of each file) is what decides whether the
+        # installed version already has exactly these files.
         $known=$reusable[$component.id]
-        if($known -and $known.sha256 -ceq $component.sha256 -and $known.size -eq $component.size){
+        if($known -and (Test-NativePayload $component $archive) -and (Test-SameInventory (Read-ArchiveInventory $component $archive) $known)){
             Step (5+[int](50*$unpacked/$count)) ('Keeping '+(Name-Of $component.id)+' from version '+$prior.version+' ('+$unpacked+' of '+$count+')')
-            try{Link-InstalledComponent $component $known $priorProgram $source;continue}
+            try{Link-InstalledComponent $component $known $priorProgram $source;foreach($f in @($known.files)){$reused[[string]$f.path]=$true};continue}
             catch{
                 # Anything odd about the installed copy: fall back to the archive.
+                foreach($f in @($known.files)){$reused.Remove([string]$f.path)}
                 $partial=Join-Path $source $component.id;if(Test-Path -LiteralPath $partial){[IO.Directory]::Delete($partial,$true)}
-                $list=Join-Path $source ('inventories'+$component.id+'.json');if(Test-Path -LiteralPath $list){[IO.File]::Delete($list)}
+                $list=Join-Path $source ('inventories\'+$component.id+'.json');if(Test-Path -LiteralPath $list){[IO.File]::Delete($list)}
             }
         }
         Step (5+[int](50*$unpacked/$count)) ('Unpacking '+(Name-Of $component.id)+' ('+$unpacked+' of '+$count+')')
-        $archive=if($LocalAcceptancePayloads){Get-NativeLocalPayload $component $LocalAcceptancePayloads $cache}else{Get-NativePayload $component $ManifestHash $cache (Join-Path $cache 'cancel')}
         Extract-VerifiedArchive $component $archive $source
     }
     $entries=[Collections.Generic.List[object]]::new();$componentRecord=[Collections.Generic.List[object]]::new()
@@ -249,6 +270,8 @@ try{
         foreach($entry in $entries){
             $path=Assert-PlainNativePath (Join-Path $source $entry.path) $checked
             if(![Josi.NativeSetup.FileAttributes]::IsSingleRegularFile($path) -or [IO.FileInfo]::new($path).Length -ne $entry.size){throw 'Expanded payload failed verification'}
+            # A reused file is a hard link to a file the previous install verified and runs; size and shape are checked, the hash is not redone.
+            if($reused.ContainsKey([string]$entry.path)){continue}
             $stream=[IO.File]::OpenRead($path)
             try{$digest=[BitConverter]::ToString($sha.ComputeHash($stream)).Replace('-','').ToLowerInvariant()}finally{$stream.Dispose()}
             if($digest -cne $entry.sha256){throw 'Expanded payload failed verification'}
@@ -288,7 +311,16 @@ try{
     $journal=New-NativeTransaction $lock $installationId $Operation $(if($prior){$prior.version}else{'none'}) $Version $ManifestHash;$directory=$journal.Directory
     $null=[IO.Directory]::CreateDirectory($program)
     $checked=@{}
-    foreach($entry in $entries){$target=Assert-PlainNativePath (Join-Path $program $entry.path) $checked;$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target));[IO.File]::Copy((Join-Path $source $entry.path),$target,$false)}
+    foreach($entry in $entries){
+        $target=Assert-PlainNativePath (Join-Path $program $entry.path) $checked;$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+        # A reused file becomes another hard link to the installed version's file
+        # (same bytes, same Program Files permissions); everything else is copied.
+        # Fresh files are never linked from the cache: a link keeps the cache's
+        # administrator-only permissions, which the services could not read.
+        $linked=$false
+        if($reused.ContainsKey([string]$entry.path) -and $priorProgram){try{$null=New-Item -ItemType HardLink -Path $target -Value (Join-Path $priorProgram $entry.path) -ErrorAction Stop;$linked=$true}catch{$linked=$false}}
+        if(!$linked){[IO.File]::Copy((Join-Path $source $entry.path),$target,$false)}
+    }
     $null=Set-NativeTransactionPhase $lock $directory 'verified';Step 66 'Creating Josi''s folders'
     if($Operation -ceq 'install'){
         $failureStage='initial-configuration';$failureCategory='permissions'
