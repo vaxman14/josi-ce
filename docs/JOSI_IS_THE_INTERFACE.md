@@ -87,6 +87,13 @@ and delivered in chat is not finished.
    - Default field sensitivity per type (card and account numbers, passport
      and ID numbers, VINs and plates, loan numbers are secret; names, models,
      cities, dates are not), adjustable by the person.
+   - Two layers, both visible to the person. The Vault holds the record with
+     its secrets, behind the password. Josi's memory holds the non-secret
+     facts as she learns them ("Roman owns a 2026 Ford Explorer, added Nov 8;
+     plate and VIN are in his World"), so in conversation she simply knows,
+     and when a secret is needed she names the Vault item without seeing its
+     value. The My World page shows a "Josi knows" list of those memory lines,
+     and the person can correct or remove any of them there or by asking.
    - Members have their own World; the admin sees nothing of it. A child's
      World can be viewed by a parent only where parental controls say so.
 
@@ -100,7 +107,7 @@ and delivered in chat is not finished.
 | D | Member requests: `request_connector_access` creates an approval the admin can decide from chat (card), the app (Approvals) or a phone notification; decision notifies the member's thread and continues the flow. | `settingsChangeTools.ts` (new area `member_connector_request`), approvals routes, notifications, mobile push |
 | E | Prompt: Josi is told she is the way to configure Josi; never "check your Josi app". | `assistantAgent.ts` |
 | F | Show the hidden pages again (Connectors, Apps, Storage) so what Josi talks about is visible. | `Flags.cs` (`Integrations = true`, committed in `28973e3`) |
-| G | My World: Vault-backed personal records (people, places, documents, vehicles, properties, cards) with typed fields and per-field sensitivity; a page behind password or Hello; chat tools to add and update non-secret facts and to request a protected card for secret fields; Josi's memory references items by name, never by value. | `packages/core/src/vaultRecords.ts` (extend), new routes, `apps/windows-native/src` page and menu button, agent tools |
+| G | My World: Vault-backed personal records (people, places, documents, vehicles, properties, cards) with typed fields and per-field sensitivity; a page behind password or Hello; chat tools to add and update non-secret facts and to request a protected card for secret fields; Josi's memory references items by name, never by value. | `packages/core/src/vaultRecords.ts` (extend), new routes, `apps/windows-native/src` page and menu button, agent tools; memory lines through `packages/agent/src/memoryEngine.ts` with a `world:` source tag so they can be listed and removed together |
 
 Verification is the same as PC control: a live chat on the installed build,
 driven step by step, recorded in the acceptance doc.
