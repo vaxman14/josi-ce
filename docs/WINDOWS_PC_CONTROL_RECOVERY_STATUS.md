@@ -1,5 +1,14 @@
 # PC control recovery: what was built (November 8, 2026, evening)
 
+> **Later the same evening:** the live acceptance happened and passed for
+> programs, files and commands from chat; see
+> [WINDOWS_PC_CONTROL_LIVE_ACCEPTANCE.md](WINDOWS_PC_CONTROL_LIVE_ACCEPTANCE.md).
+> Commits after this document: `2613a4d` (one-ask card, approvals as chat
+> cards, tray icon, quieter bar, app-launch fix, installer reuse), `e5951c8`
+> (re-approve waiting requests, repaint on outside show), `bd03715` (reuse
+> actually runs, phase timing log), `fb7365c` (newer copy takes over).
+> Installers: preview.5 (`2613a4d`), preview.6 (`e5951c8`), preview.7 (`bd03715`).
+
 Companion to [PC_CONTROL_RECOVERY_PLAN.md](PC_CONTROL_RECOVERY_PLAN.md). The
 owner lifted the stop ("go build. all of it.") and asked for PC registration as
 a setup step. Everything below is in commit `c36fe5a` on

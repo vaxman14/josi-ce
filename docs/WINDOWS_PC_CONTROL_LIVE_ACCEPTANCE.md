@@ -34,14 +34,26 @@ during this run are in `e5951c8` and ship in `1.2.5-preview.6`.
   in the chat; commands ask once per shell and folder.
 - The X keeps Josi running in the tray; the services were never touched.
 
-## Still to verify on preview.6
+## preview.6 (from `e5951c8`), same evening
 
-- The fast update itself (preview.5 → preview.6 should say "Keeping … from
-  version 1.2.5-preview.5" for the unchanged components and finish in a
-  fraction of the time).
-- No "Josi is ready" bar at rest; relaunch from the tray paints the window.
+| Step | Result |
+|---|---|
+| Install (Update) | 366 s wall clock including the wait for the owner's clicks; staging ended 18:36:16, commit phase 18:36:16 to 18:37:42 (86 s). Reuse did **not** run: a Windows PowerShell quirk made the component record parse as one object. Fixed in `bd03715`, measured by running the reuse step against the installed files (Node 6 files in 96 ms, ffmpeg in 69 ms). |
+| After install | The old preview.5 process (hidden in the tray) answered the installer's "open Josi" and showed an unpainted frame; preview.6 never started. Recovered by hand. Fixed twice: the window repaints on an outside show (`e5951c8`), and a newer copy now asks the older one to quit (`fb7365c`, effective from the next update). |
+| "open notepad" | Opened, no question. |
+| "list the five newest files in Downloads" | Listed (the second ask returned the names on one line). |
+| `git log --oneline -1` through PowerShell | Real output, the latest commit line. |
+| Bar at rest | None. `pc=off` in the status line while idle. |
+| Dev build from the repo against the installed server | Works like the installed app (opened Notepad). App-side fixes are tested this way from now on; only server changes need an installer run. |
+
+## Still to verify on preview.7 (`bd03715`: reuse fix, phase timing log)
+
+- The fast update itself: `Program Files\Josi CE Server\installer\setup-timing-1.2.5-preview.7.log`
+  should show "Keeping Python/Node.js/the database… from version 1.2.5-preview.6" and
+  the timestamps say which phase is still slow.
 - A pending request that a widening card covers runs instead of being cancelled.
 - Haiku's wording after a wait for approval.
+- The takeover (`fb7365c`) is in the build after preview.7.
 
 ## Owner feedback carried forward
 
