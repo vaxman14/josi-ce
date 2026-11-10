@@ -412,6 +412,7 @@ cleanup() {
 YES=0 TTY=0 styled=0 QL=0 QH=0 ERR='' CL='' MARK='>'
 A_MODE='' A_LAN='' A_DOMAIN='' A_EMAIL='' A_URL='' A_PORT='' A_PC='' A_NOPC=0 A_BROWSER='' GIVEN=' '
 S_MODE='' S_LAN='' S_DOMAIN='' S_EMAIL='' S_URL='' S_PORT='' S_PC='' S_BROWSER='' CUR_PORT='' LAN_IP='' SUDO_REAL=''
+CUR_VERSION='' UPDATING=0 HEADLINE='A few questions, then Josi installs itself.'
 CLI_ARGS=()
 
 usage() {
@@ -479,6 +480,10 @@ load_saved() {
   local f=/etc/josi/install.json out
   if [ -f /var/lib/josi/status.json ]; then
     CUR_PORT=$(sed -n 's/.*"publicPort": *\([0-9][0-9]*\).*/\1/p' /var/lib/josi/status.json 2>/dev/null || true)
+  fi
+  # The version running here now, for the update question.
+  if [ -f /var/lib/josi/data/config/runtime.json ]; then
+    CUR_VERSION=$(sed -n 's/.*"version": *"\([0-9A-Za-z.+~-]*\)".*/\1/p' /var/lib/josi/data/config/runtime.json 2>/dev/null | head -n 1 || true)
   fi
   [ -f "$f" ] && [ ! -L "$f" ] && [ "$(stat -c %u "$f" 2>/dev/null)" = 0 ] || return 0
   command -v python3 >/dev/null 2>&1 || return 0
@@ -649,7 +654,7 @@ q_clear() {
 q_header() {
   local i
   local -a t=('' '' '' '' "${BOLD}${GOLD}Josi${RST}  ${LILAC}${VERSION}${RST}"
-    "${LILAC}A few questions, then Josi installs itself.${RST}"
+    "${LILAC}${HEADLINE}${RST}"
     "${DIM}Enter keeps the answer shown; Ctrl-C stops.${RST}" '' '' '' '')
   QH=0
   if [ "$styled" = 1 ] && [ "$GL" -gt 0 ]; then
@@ -657,7 +662,7 @@ q_header() {
     for ((i = 0; i < GL; i++)); do printf '\r\e[2K  %s    %s\n' "${GH[0,$i]}" "${t[i]}" >&5; done
     QH=$((GL + 1))
   else
-    printf '\n%s  %s\n' "$CL" "${BOLD}${GOLD}Josi${RST} ${LILAC}${VERSION}${RST}  a few questions, then Josi installs itself." >&5
+    printf '\n%s  %s\n' "$CL" "${BOLD}${GOLD}Josi${RST} ${LILAC}${VERSION}${RST}  ${HEADLINE}" >&5
     QH=2
   fi
   printf '%s\n' "$CL" >&5
@@ -893,7 +898,16 @@ summary() {
     *) address=$A_URL how="your proxy forwards to http://$LAN_IP:$A_PORT" ;;
   esac
   if [ "$A_NOPC" = 1 ] || [ -z "$A_PC" ]; then pc=no; else pc="yes, as $A_PC"; fi
-  q "${BOLD}Josi will be set up like this:${RST}"
+  if [ "$UPDATING" = 1 ]; then
+    if [ -n "${CUR_VERSION:-}" ] && [ "$CUR_VERSION" != "$VERSION" ]; then
+      q "${BOLD}Josi ${CUR_VERSION} is on this computer. It will be updated to ${VERSION}.${RST}"
+    else
+      q "${BOLD}Josi ${VERSION} is already on this computer. It will be repaired.${RST}"
+    fi
+    q "${DIM}Your accounts, chats and settings stay as they are:${RST}"
+  else
+    q "${BOLD}Josi will be set up like this:${RST}"
+  fi
   q ''
   q "  ${LILAC}Address${RST}       ${BOLD}${GOLD}${address}${RST}"
   q "                ${DIM}${how}${RST}"
@@ -904,6 +918,14 @@ summary() {
     if [ "$A_BROWSER" = 1 ]; then q "  ${LILAC}Own browser${RST}   yes, Chrome on a hidden screen"; else q "  ${LILAC}Own browser${RST}   no"; fi
   fi
   q ''
+  if [ "$UPDATING" = 1 ]; then
+    ask 'Go ahead? (y = yes, c = change these settings first):' y choice
+    REPLY=${REPLY:-y}
+    case ${REPLY,,} in y | yes) return 0 ;; esac
+    UPDATING=0  # c or n: every question, with these answers shown
+    GIVEN=' '
+    return 1
+  fi
   ask 'Install Josi now? (y/n):' y choice
   REPLY=${REPLY:-y}
   case ${REPLY,,} in y | yes) return 0 ;; esac
@@ -935,12 +957,20 @@ questions() {
     case $GIVEN in *' pc '*) ;; *) if [ "$A_NOPC" != 1 ] && [ -n "$A_PC" ] && [ -z "$S_PC" ]; then CLI_ARGS+=(--pc-control-user "$A_PC" --browser); fi ;; esac
     return 0
   fi
+  # Josi is already here and no flag asks for a change: this is an update.
+  # One question, with the saved settings shown, instead of all of them again.
+  UPDATING=0 HEADLINE='A few questions, then Josi installs itself.'
+  if [ -n "$S_MODE" ] && [ -z "${GIVEN// /}" ]; then
+    UPDATING=1 HEADLINE='Josi is already here: one question, then it updates itself.'
+  fi
   q_header
   while :; do
-    ask_mode
-    ask_port
-    ask_pc
-    ask_browser
+    if [ "$UPDATING" != 1 ]; then
+      ask_mode
+      ask_port
+      ask_pc
+      ask_browser
+    fi
     if summary; then break; fi
   done
   if [ "$styled" = 1 ]; then printf '\e[%dA\r\e[J' $((QL + QH)) >&5; fi
