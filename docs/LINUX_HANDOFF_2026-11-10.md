@@ -209,6 +209,26 @@ Windows and the Mac inherit it when they merge this branch's packages.
   claw's LAN server and in the GitHub draft. The VM e2e runs use `--yes`, so they never
   type; a typed-answers check belongs in the test list.
 
+## beta.12 (2026-11-10 evening): what Roman found using beta.11 on gate
+- Gate was installed by Roman with the one-line command, set up with a real Google
+  account (keys, connect, test message) and is in use. Google sign-in is live there.
+- **Email approval in the web chat had no reachable buttons.** The stage clipped a tall
+  reply plus card at both ends with no scroll. Now: with an approval on the stage the ghost
+  is smaller, the card shrinks to the room left and its text scrolls inside it, the reply
+  that only repeats the card is not shown, and the stage scrolls as a last resort
+  (`Talk.tsx`, `.stage-with-card` in index.css). Checked with Playwright at 1000x505,
+  1280x720 and 390x760: Approve is fully above the message bar in all three.
+- **A typed "approved" did nothing.** The web chat never sent `reply_to_message_id`, which
+  the server requires of durable clients, and "approved" was not an accepted word. The
+  web now sends the id of Josi's message on screen; YES also takes approved, go ahead,
+  I approve; NO takes denied, decline, don't send it (`packages/core/src/actionState.ts`).
+  Not tried end to end with a worker; the server rule is unit-tested. Windows, Mac and
+  iPhone still do not send `reply_to_message_id`, so a typed yes there is still refused.
+- Built from `a8ed2f3`; Ubuntu 24.04 VM upgraded beta.11 -> beta.12, all three e2e scripts
+  PASS. claw's LAN install address serves beta.12; rerunning the install command upgrades.
+- Still open from Roman's run: the installer's doubled ghost (LINUX_FIX_LIST.md); the web
+  card says "Not now", Josi's text says "Approve or Deny".
+
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
 (text files she writes); one new draft release when this lands; login terminal may run
