@@ -69,10 +69,12 @@ Linux branch does not have (after `9cb6123`): `1ede1a5` server: a signed-in pers
 controls their own PCs; `1e86435` Windows client is a node of whoever signs in;
 `0e75cc0`, `8082162` Mac handoffs; `c47e9d0` Forget This PC; `9b7afc7` Safari handoff.
 Before the Linux branch takes them, know:
-- **Migration number clash.** Windows adds `0123_member_pc_control.sql`
-  (`users.pc_control_allowed`); Linux already has `0123_live_signin_grants.sql`.
-  Renumber one to `0124` before merging, and renumber the same file on gate and any
-  database that already ran it (gate ran Linux's 0123).
+- **Migration numbers (CORRECTION, not a real clash).** Windows adds
+  `0123_member_pc_control.sql` (`users.pc_control_allowed`); Linux has
+  `0123_live_signin_grants.sql`. `packages/db/migrate.mjs` records the FULL FILE NAME in
+  `_migrations`, so both run, in name order, and neither depends on the other. Do NOT
+  rename either: gate already ran Linux's, and Windows servers already ran theirs.
+  Leave both. (Tidier but riskier: new migrations from now on start at 0124.)
 - **Conflicts to expect** in `pcControlRoutes.ts`, `settingsChangeRoutes.ts`,
   `pcPermissionSettings.ts`, `settingsChangeTools.ts`, `pcDesktopTools.ts`: Windows
   moved PC control from owner-only to "any signed-in person allowed
@@ -83,6 +85,67 @@ Before the Linux branch takes them, know:
   `docs/SAFARI_EXTENSION_HANDOFF_2026-11-10.md`.
 - For the Mac: do NOT merge `linux/josi-server` wholesale. Port the "Shared-code changes"
   list above; show Roman any conflict with the Mac look first.
+
+## TAKE-OVER PLAN for the Mac (Roman is travelling with it; do all of this)
+Goal: Linux branch absorbs the 6 newer Windows commits, builds beta.11, gate upgraded,
+draft replaced. Standing rules: commits and pushes to Josi are pre-approved; NEVER open
+PRs or merge into main; NEVER publish a release (drafts only, Roman presses Publish);
+secrets never through the model; do not upgrade claw's own Josi (1.1.6); commit with
+`git -c user.name="Roman Vaxman" -c user.email="roman@Romans-MacBook-Pro.local" -c core.hooksPath=/dev/null -c commit.gpgsign=false`.
+
+**Reachability.** Roman is leaving the house: 10.10.1.x (claw 10.10.1.3, gate 10.10.1.5)
+is only reachable on the home network or a VPN. Without it you can still do steps 1-3
+(code, unit tests) anywhere. Steps 4-6 need claw/gate; do them when the Mac is back on
+the home network, or check whether a VPN/Tailscale route exists. The public address
+https://ce.heyjosi.com/ (gate, through the Cloudflare tunnel) works from anywhere, so you
+can check gate's health and version there (`/ready`, `/login`) at any time. If you cannot
+reach claw, stop after step 3, push, and tell Roman exactly where you stopped.
+
+1. **Get the branch.** `git fetch origin && git checkout linux/josi-server` (head `01b09c2`
+   or later). Do NOT merge it into any Mac branch. Work in a worktree of this repo.
+2. **Merge Windows into it.** `git merge origin/redesign/windows-lean-beta` (head
+   `9b7afc7`, 6 commits after `9cb6123`). Resolve conflicts keeping BOTH sides' intent:
+   - Windows rule: PC control routes need a signed-in user allowed
+     `users.pc_control_allowed`, not the owner role; every row keyed by user and PC; PC
+     permission cards are applied by the person whose PC it is; `POST /identity` accepts
+     the password or `elevated:true` on a sign-in under ten minutes old.
+   - Linux keeps: local pairing via spool (`packages/core/src/pcLocalExecutors.ts`,
+     `apps/api/src/http/pcLocalPairing.ts`), `linux-<32hex>` PC ids, the sign-in routes
+     and grants, `send_file_to_my_devices`, light thinking, `ALL_TOOLS` entries
+     (`SIGN_IN_TOOLS`, `SEND_FILE_TOOLS`).
+   - Files likely to conflict: `apps/api/src/http/pcControlRoutes.ts`,
+     `settingsChangeRoutes.ts`, `packages/agent/src/pcPermissionSettings.ts`,
+     `settingsChangeTools.ts`, `pcDesktopTools.ts`, `apps/api/test/pcControlRoutes.test.ts`.
+   - Linux local pairing writes a ticket carrying an OWNER session; after the merge it
+     should be a session for the person who approves the card (they own that PC row).
+     Sign-in routes (`liveSignInRoutes.ts`) stay owner-or-granted, unchanged.
+   - Windows-only files (`apps/windows-native/**`, `packaging/windows/**`) come along
+     untouched; ignore them.
+3. **Test (no hardware needed).** `npm ci`, then at least: `npx vitest run` in
+   `packages/core`, `packages/agent`, `apps/api` (needs the test database the repo
+   already uses), `apps/web`; plus `toolRegistry.test.ts`, `pcDesktopLinux.test.ts`,
+   `apps/api/test/liveSignIn.test.ts`, `pcControlRoutes.test.ts`. Known unrelated
+   failures from the Windows handoff: ~32 connector tests, 3 API storage tests,
+   `immediateRetry`; dataTools failures are NOT pre-existing on Linux. Commit and push.
+4. **Build beta.11 on claw** (`roman@10.10.1.3`, source in `~/josi-linux/src`): copy the
+   tree there, then `DOCKER_CONFIG=~/josi-linux/docker-anon scripts/linux/build-release.sh
+   --version 1.2.8-beta.11 --skip-provision` (Docker Hub login fails on claw; the anonymous
+   config is the fix). Output: the release folder with `.deb`, Arch pkg, `linux` installer,
+   `install.sh`, `SHA256SUMS.txt`.
+5. **Test on the VMs** (via claw): `josi-debian13-vm` (ssh -p 2223) and
+   `josi-ubuntu2404-vm` (-p 2224). Install the build, then run `scripts/linux/e2e-fake.mjs`,
+   `e2e-pc.mjs` (9 steps), `e2e-signin.mjs` (5 steps), `e2e-screens.mjs`. All must pass.
+6. **Gate (10.10.1.5)**: copy the release folder to `~/josi-install-11` and run
+   `sudo ./install.sh --yes` (keeps data; one sudo prompt). Check `https://ce.heyjosi.com/`
+   reports `1.2.8-beta.11`, services `josi josi-pc josi-browser cloudflared` active.
+7. **GitHub draft**: replace the beta.10 draft with ONE new draft `v1.2.8-beta.11`
+   (pre-release, draft). Never publish. Draft URL for beta.10 is under
+   github.com/vaxman14/josi-ce/releases (untagged-3337c85b00f38f60ede1).
+8. **Report to Roman**: what merged, what conflicted and how you resolved it, test
+   results with failures named, and the HQ block.
+
+Still untested with the REAL model on gate (only the fake model so far): sign-in cards
+and `send me that report`. Ask Roman to try them when he is on gate.
 
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
