@@ -25,7 +25,7 @@ namespace Josi.Native {
     /// Store-assigned Chromium IDs (Chrome Web Store, Edge Add-ons) beside the
     /// development one; keep in step with chromiumStoreIds in
     /// apps/browser-extension/development-identity.json. Empty until published.
-    static readonly string[] StoreExtensionIds = { };
+    static readonly string[] StoreExtensionIds = { "hnhfoacbnkiebihopmppfblmmmonhmbm" /* Chrome Web Store (Chrome, Brave) */ };
     /// Every Chromium ID this Josi answers: development, store, and an
     /// operator override file (%LOCALAPPDATA%\Josi\BrowserHost\extension-ids.json,
     /// a JSON array of 32-letter IDs) for a store build published after this one.
