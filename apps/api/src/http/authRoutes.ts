@@ -376,14 +376,14 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     const code = typeof req.body?.code === 'string' ? req.body.code : '';
     if (!code) return res.status(400).json({ error: 'code required' });
     const [redeemed] = await db.query<{
-      user_id: string; id: string; email: string; username: string; role: string; display_name: string | null; mfa_enabled_at: string | null; passkey_proved: boolean;
+      user_id: string; id: string; email: string; username: string; role: string; display_name: string | null; mfa_enabled_at: string | null; passkey_proved: boolean; pc_control_allowed: boolean;
     }>(
       `with claimed as (
          update auth_native_codes set used_at = now()
          where code_hash = $1 and used_at is null and expires_at > now()
          returning user_id, passkey_proved
        )
-       select c.user_id, c.passkey_proved, u.id, u.email, u.username, u.role, u.display_name, u.mfa_enabled_at
+       select c.user_id, c.passkey_proved, u.id, u.email, u.username, u.role, u.display_name, u.mfa_enabled_at, u.pc_control_allowed
        from claimed c join users u on u.id = c.user_id
        where u.status = 'active'`,
       [createHash('sha256').update(code).digest('hex')],
@@ -625,7 +625,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
 }
 
 function publicUser(u: {
-  id: string; email: string; username: string; role: string; display_name?: string | null;
+  id: string; email: string; username: string; role: string; display_name?: string | null; pc_control_allowed?: boolean;
 }) {
   return {
     id: u.id,
@@ -633,6 +633,8 @@ function publicUser(u: {
     username: u.username,
     role: u.role,
     displayName: u.display_name ?? null,
+    // The owner is never gated; a member unless the owner switched it off.
+    pcControlAllowed: u.role === 'super_admin' || u.pc_control_allowed !== false,
   };
 }
 

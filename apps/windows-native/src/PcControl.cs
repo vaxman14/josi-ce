@@ -169,6 +169,10 @@ namespace Josi.Native {
         }), "josi.pc-control.revoke-identity"));
         items.Add(buttons);
       }
+      else if (authority != null) items.Add(Ui.Wrap(Automation.Id(Ui.Pill("Forget This PC", () => {
+        if (Dialogs.Confirm(owner, "Forget this PC?", "Stops control on this PC and removes it from your account on the server. Your saved permissions stay. To use it again, approve this PC again.", "Forget"))
+          Perform(async (api, stamp) => { await api.Request("/admin/pc-control/identity", "DELETE", null); api.PcAuthority.Forgotten(); });
+      }), "josi.pc-control.forget-pc")));
       return Ui.CardBox("Is Josi able to work on this PC?", items.ToArray());
     }
     /// One switch instead of a permission per site: everyday actions in allowed
@@ -202,20 +206,20 @@ namespace Josi.Native {
       if (asked != null) items.Add(Ui.Stack(6, Ui.T(asked.Browser + " asked to connect to Josi", 14, FontWeights.Medium),
         Ui.Caption(asked.Application + " · attaching " + asked.Url),
         Ui.Wrap(Ui.Pill("Allow This Browser", () => bridge.Allow(), true), Ui.Pill("Ignore", () => bridge.Ignore())),
-        Ui.Caption("After allowing it, the browser links to Josi by itself. Then say \"use this tab\" in chat, or click the Josi icon and choose Attach this tab.")));
+        Ui.Caption("After allowing it, the browser links to Josi by itself. Then just ask in chat: Josi uses the tab you are looking at, or opens the page you name.")));
       if (bridge.Attached) {
         var origin = bridge.AttachedOrigin;
-        items.Add(Ui.Stack(6, Ui.T(bridge.AttachedBrowser + " tab attached: " + (bridge.AttachedTitle.Length > 0 ? bridge.AttachedTitle : origin), 14, FontWeights.Medium),
+        items.Add(Ui.Stack(6, Ui.T("Josi is using " + bridge.AttachedBrowser + ": " + (bridge.AttachedTitle.Length > 0 ? bridge.AttachedTitle : origin), 14, FontWeights.Medium),
           Ui.Caption(origin + " · " + bridge.AttachedApplication + " · profile " + bridge.AttachedProfile),
           Ui.Wrap(origin.Length > 0 ? Ui.Pill("Always Let Josi Read This Site", () => Perform(async (api, stamp) => await api.Request("/admin/pc-control/policies", "PUT",
               Wires.O("action", "browser.view", "scope", Wires.O("kind", "browser", "target", origin, "application", bridge.AttachedApplication, "profile", bridge.AttachedProfile), "mode", "always")))) : null,
-            Ui.Pill("Detach Tab", () => bridge.Disconnect()))));
-        if (!enabled) items.Add(Ui.Caption("Turn on \"Allow Josi to control this PC\" above, or Josi cannot use the attached tab."));
+            Ui.Pill("Unlink Browser", () => bridge.Disconnect()))));
+        if (!enabled) items.Add(Ui.Caption("Turn on \"Allow Josi to control this PC\" above, or Josi cannot use the browser."));
       } else if (bridge.Linked) {
-        items.Add(Ui.Stack(6, Ui.T(bridge.AttachedBrowser + " is linked to Josi, with no tab attached", 14, FontWeights.Medium),
-          Ui.Caption("Say \"use this tab\" in chat and Josi attaches the tab you are looking at (you approve it once per site), or click the Josi icon in the browser and choose Attach this tab."),
+        items.Add(Ui.Stack(6, Ui.T(bridge.AttachedBrowser + " is linked to Josi", 14, FontWeights.Medium),
+          Ui.Caption("Open a website and ask in chat: Josi uses the tab you are looking at, or opens the page you name. Each site asks once unless you allow it always or turn on Full control."),
           Ui.Wrap(Ui.Pill("Unlink Browser", () => bridge.Disconnect()))));
-      } else if (asked == null) items.Add(Ui.Caption("To let Josi use a browser tab: open Chrome, Brave, Edge or Firefox with the Josi extension installed while Josi is open; it links by itself. Then say \"use this tab\" in chat. Josi stays limited to the tab you attach."));
+      } else if (asked == null) items.Add(Ui.Caption("To let Josi use your browser: install the Josi extension in Chrome, Brave, Edge or Firefox while Josi is open; it links by itself. Then just ask in chat. Every site and action still follows your permissions here."));
       var allowed = bridge.Allowed();
       if (allowed.Count > 0) {
         var list = Ui.Stack(6, Ui.Caption("Allowed browsers"));

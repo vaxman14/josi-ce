@@ -34,7 +34,7 @@ describe('transactional conversational action state',()=>{
     expect((await getTask(db,task.id)).state).toBe('ready');
     expect(await db.query(`select id from job_queue where kind='task.wake' and payload->>'taskId'=$1`,[task.id])).toHaveLength(1);
     const again=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes'});
-    expect(again.reply).not.toMatch(/queued the exact/i);
+    expect(again).toEqual({handled:false});
     expect(await db.query(`select id from job_queue where kind='task.wake' and payload->>'taskId'=$1`,[task.id])).toHaveLength(1);
     expect((await db.query<{status:string}>(`select status from approvals where id=$1`,[state.approval.id]))[0].status).toBe('approved');
     expect((await db.query<{kind:string}>(`select kind from events where subject_id=$1 order by created_at`,[task.id])).map(x=>x.kind)).toEqual(expect.arrayContaining(['approval.requested','approval.granted']));
@@ -122,7 +122,7 @@ describe('transactional conversational action state',()=>{
     const email=await prepared('email',emailSlots);
     await addMessage(db,{threadId:thread,direction:'out',body:'An unrelated later answer.'});
     const result=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes'});
-    expect(result.reply).toMatch(/do not have one immediately preceding/i);
+    expect(result.action).toBeUndefined();
     expect((await getTask(db,email.task.id)).state).toBe('awaiting_approval');
   });
 

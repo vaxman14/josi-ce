@@ -8,7 +8,7 @@ let state = null;
 function render(next) {
   state = next;
   status.textContent = next.status;
-  attach.hidden = !next.canAttach; attach.textContent = next.attached && !next.attachedHere ? 'Switch to this tab' : 'Attach this tab';
+  attach.hidden = !next.canAttach; attach.textContent = next.phase === 'standby' ? 'Use this browser' : 'Let Josi use this site';
   stop.hidden = !next.canStop; resume.hidden = !next.canResume;
   if (next.asked) attach.classList.add('asked'); else attach.classList.remove('asked');
 }

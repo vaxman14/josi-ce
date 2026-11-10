@@ -14,9 +14,10 @@ export interface User {
   status: 'active' | 'disabled';
   last_login_at: string | null;
   created_at: string;
+  pc_control_allowed: boolean;
 }
 
-const PUBLIC_COLUMNS = `id, email, username, role, display_name, status, last_login_at, created_at`;
+const PUBLIC_COLUMNS = `id, email, username, role, display_name, status, last_login_at, created_at, pc_control_allowed`;
 
 export class UserError extends Error {}
 
@@ -85,13 +86,14 @@ export async function findUserByLogin(
 export async function updateUser(
   db: Db,
   id: string,
-  patch: { email?: string; username?: string; displayName?: string; status?: 'active' | 'disabled' },
+  patch: { email?: string; username?: string; displayName?: string; status?: 'active' | 'disabled'; pcControlAllowed?: boolean },
 ): Promise<User> {
   const columns: Record<string, unknown> = {
     email: patch.email,
     username: patch.username,
     display_name: patch.displayName,
     status: patch.status,
+    pc_control_allowed: patch.pcControlAllowed,
   };
   const sets: string[] = [];
   const params: unknown[] = [id];

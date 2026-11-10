@@ -112,11 +112,11 @@ namespace Josi.Native {
           ? Ui.Caption("Not set up yet. Register " + name + "'s application credentials under Connectors (in Administration), then anyone here can connect their account.")
           : Ui.Caption("Not set up on this installation. An administrator has to register " + name + " application credentials under Connectors before anyone can connect an account."));
       } else if (provider == "nextcloud") {
-        items.Add(Ui.Caption("Connecting starts read-only. In your Nextcloud account, go to Settings → Security → Devices & sessions and create an app password for Josi. Do not use your regular Nextcloud password."));
+        items.Add(Ui.Caption("Josi only reads your files. In your Nextcloud account, go to Settings → Security → Devices & sessions and create an app password for Josi. Do not use your regular Nextcloud password."));
         items.Add(F("Server address", nextcloudServer)); items.Add(F("Username", nextcloudUser)); items.Add(F("App password", nextcloudPassword));
         items.Add(Ui.Pill("Connect Nextcloud", ConnectNextcloud, true));
       } else {
-        items.Add(Ui.Caption(name + " asks once for Josi's supported permission bundle in your browser. Every capability stays off in Josi until you turn it on here."));
+        items.Add(Ui.Caption(name + " asks once for Josi's supported permission bundle in your browser. Everything it grants starts on in Josi. You can turn any of it off here afterwards."));
         items.Add(Ui.Pill("Connect " + name, () => StartOAuth(provider, null), true));
       }
       return Ui.CardBox(name, items.ToArray());

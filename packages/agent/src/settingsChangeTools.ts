@@ -210,7 +210,7 @@ export function buildPath(area: SettingsArea, params: Record<string, unknown>): 
 export async function executeSettingsChangeTool(db: Db, userId: string, name: string, input: Record<string, unknown>, threadId: string | null = null, key: MasterKey | null = null) {
   if (name === 'list_josi_settings') {
     return { settings: SETTINGS_AREAS.map(({ area, title, scope, sensitive, params, fields }) => ({ area, title, scope, sensitive, params: params ?? [], fields })),
-      note: 'Personal settings change only the person asking. Administrator settings wait for the super-admin. Every change is approved in the Josi app before it applies.' };
+      note: 'Personal settings change only the person asking. Administrator settings wait for the super-admin, except PC control: that belongs to the person whose PC it is, who approves it themselves. Every change is approved in the Josi app before it applies.' };
   }
   if (name !== 'propose_josi_setting_change') return { ok: false, code: 'unknown_tool' };
   const area = AREAS.get(String(input.area ?? ''));
@@ -240,7 +240,7 @@ export async function executeSettingsChangeTool(db: Db, userId: string, name: st
     // JSON string scalar, and the app would send it on double-encoded.
     [userId, area.scope, area.area, sensitive, area.title, summary, area.method, path, json(body), threadId]);
   return { ok: true, proposalId: row.id, scope: area.scope, state: 'proposed',
-    message: area.scope === 'administrator'
+    message: area.scope === 'administrator' && !PC_SETTING_AREAS.has(area.area)
       ? `Prepared. It waits for the super-admin\'s approval under Approvals in the Josi app${area.sensitive ? ', with their password' : ''}; nothing has changed yet.`
       : `Prepared. It waits for the person\'s approval under Approvals in the Josi app (a popup also asks them${area.sensitive ? ', with their password' : ''}); nothing has changed yet.` };
 }

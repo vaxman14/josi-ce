@@ -44,7 +44,7 @@ namespace Josi.Native {
       {"channels", Channels}, {"apps", Apps}, {"voice-box", VoiceBox}, {"policy", Policy},
       {"connectors", Integrations}, {"integrations", Integrations}, {"custom-apis", Integrations},
       {"storage", Storage}, {"workspace", WorkspaceAdmin}, {"family", Family}, {"parental", ParentalControls},
-      {"models", ServerApp}, {"network", ServerApp}, {"server", ServerApp},
+      {"network", ServerApp}, {"server", ServerApp},
       {"files", ExtraSections}, {"reminders", ExtraSections}, {"memory", ExtraSections},
       {"personalization", ExtraSections}, {"templates", ExtraSections}, {"migration", ExtraSections},
       {"usage", ExtraSections}, {"checklist", ExtraSections}, {"mail-settings", ExtraSections},

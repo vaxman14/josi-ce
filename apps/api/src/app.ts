@@ -43,6 +43,7 @@ import { mountWebApp } from './http/staticApp.js';
 import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
 import { myWorldRoutes } from './http/myWorldRoutes.js';
+import { deviceTransferRoutes } from './http/deviceTransferRoutes.js';
 import { automationSettingsRoutes } from './http/automationSettingsRoutes.js';
 import { nasController } from './http/nasController.js';
 import { windowsNasController } from './http/nasWindows.js';
@@ -363,6 +364,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   api.use('/vault', vaultRoutes({ db, masterKey: cfg.masterKeyCheck }));
   api.use('/my-world', myWorldRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  api.use('/device-transfers', deviceTransferRoutes({ db }));
   api.use('/custom-apis', customApiRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,
     resolve: cfg.outboundResolve,

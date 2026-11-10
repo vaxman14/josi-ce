@@ -36,6 +36,14 @@ import { isNativeClient } from './cookies.js';
  * the PKCE verifier kept here. */
 const NATIVE_CONNECTION_RETURN = '/app/connections/native-return';
 const NATIVE_CONNECTION_URI = 'josi://connections/callback';
+/** An app that asks for the outcome itself (start with `poll: true`) needs no
+ * link back from the browser: the callback keeps what the provider returned
+ * here, in memory, until the session that started the handshake collects it. */
+const RETURN_KEPT_MS = 10 * 60 * 1000;
+const RETURN_MAX = 500;
+const RETURN_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Back to Josi</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#2a1a33;color:#fff;font:18px system-ui,sans-serif}
+main{text-align:center;padding:24px}p{color:#cbb8d6}</style></head><body><main><h1>You can go back to Josi</h1><p>Josi is finishing the connection. You can close this tab.</p></main></body></html>`;
 
 export interface ConnectorRoutesCtx {
   db: Db;
@@ -128,6 +136,13 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
 export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
+  const awaited = new Map<string, { at: number; result?: { code: string; declined: boolean } }>();
+  function awaitReturn(state: string) {
+    const now = Date.now();
+    for (const [key, held] of awaited) if (now - held.at > RETURN_KEPT_MS) awaited.delete(key);
+    while (awaited.size >= RETURN_MAX) awaited.delete(awaited.keys().next().value!);
+    awaited.set(state, { at: now });
+  }
 
   /** The one thing here that works without a session. The browser in a native
    * app's sign-in sheet has no Josi cookie, because the app's session is a bearer
@@ -145,6 +160,12 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
         `select id from oauth_states where id = $1 and provider = $2 and return_path = $3 and consumed_at is null and expires_at > now()`,
         [state, provider, NATIVE_CONNECTION_RETURN]);
       if (!pending) return next();
+      const held = awaited.get(state);
+      if (held) {
+        held.result = typeof req.query.error === 'string' ? { code: '', declined: true } : { code: String(req.query.code ?? '').slice(0, 4096), declined: false };
+        res.set({ 'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'", 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+        return res.status(200).type('html').send(RETURN_PAGE);
+      }
       const back = new URL(NATIVE_CONNECTION_URI);
       back.searchParams.set('provider', provider);
       back.searchParams.set('state', state);
@@ -336,6 +357,8 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
           : safeReturnPath(req.body?.returnPath === NATIVE_CONNECTION_RETURN ? undefined : req.body?.returnPath),
         targetConnectionId,
       });
+      const polled = !shared && isNativeClient(req) && req.body?.native === true && req.body?.poll === true;
+      if (polled) awaitReturn(state);
 
       await appendEvent(db, {
         actorUserId: req.user!.id,
@@ -353,6 +376,7 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
       return res.json({
         url: buildAuthUrl(client, { state, scopes, codeChallenge: challenge }),
         capabilities,
+        ...(polled ? { poll: true } : {}),
       });
     }),
   );
@@ -382,6 +406,12 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
       const provider = param(req, 'provider');
       if (!isOAuthRouteProvider(provider)) throw new RouteError(404, 'no such provider');
       if (!isNativeClient(req)) throw new RouteError(403, 'native client required');
+      // An app that asks instead of being linked back sends the state alone.
+      const held = awaited.get(str(req.body?.state, 512));
+      if (held && req.body?.code === undefined && req.body?.declined !== true) {
+        if (!held.result) return res.status(202).json({ waiting: true });
+        return finishHandshake(req, res, provider, str(req.body?.state, 512), held.result.declined, held.result.code, req.user!.session_id, NATIVE_CONNECTION_RETURN);
+      }
       return finishHandshake(req, res, provider, str(req.body?.state, 512), req.body?.declined === true,
         str(req.body?.code, 4096), req.user!.session_id, NATIVE_CONNECTION_RETURN);
     }),

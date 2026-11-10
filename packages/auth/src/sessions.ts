@@ -15,6 +15,9 @@ export interface SessionUser {
   display_name: string | null;
   status: 'active' | 'disabled';
   session_id: string;
+  /** When this sign-in happened; a fresh one may approve a PC without the password again. */
+  session_created_at: string;
+  pc_control_allowed: boolean;
 }
 
 /** The cookie value never touches the database. We store sha256(token), so a
@@ -47,7 +50,8 @@ export async function createSession(
 export async function resolveSession(db: Db, token: string | undefined): Promise<SessionUser | null> {
   if (!token) return null;
   const rows = await db.query<SessionUser>(
-    `select u.id, u.email, u.username, u.role, u.display_name, u.status, s.id as session_id
+    `select u.id, u.email, u.username, u.role, u.display_name, u.status, s.id as session_id,
+            s.created_at as session_created_at, u.pc_control_allowed
      from sessions s join users u on u.id = s.user_id
      where s.token_hash = $1
        and s.revoked_at is null

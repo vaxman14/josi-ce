@@ -31,6 +31,9 @@ namespace Josi.Native {
     internal void BindPc(string owner) {
       if (owner != pcOwner) { if (!Wires.IsUuid(owner)) throw new JosiException("Sign in before pairing this PC."); pcOwner = owner; PcAuthority = new PcAuthority(OriginText, owner); }
     }
+    /// When the person last signed in here by hand (not a remembered sign-in).
+    /// A sign-in made moments ago approves this PC without the password again.
+    internal DateTime SignedInAt = DateTime.MinValue;
     bool closed, native;
     CancellationTokenSource progress;
 
@@ -40,11 +43,14 @@ namespace Josi.Native {
     public JosiApi(string address, TunnelHandler tunnel) {
       Uri parsed;
       var text = (address ?? "").Trim();
+      // A bare name or a local network address ("josi.example.com",
+      // "192.168.1.20:8443") means HTTPS. Plain HTTP is for this PC only.
+      if (text.Length > 0 && text.IndexOf("://", StringComparison.Ordinal) < 0) text = "https://" + text;
       if (!Uri.TryCreate(text, UriKind.Absolute, out parsed) || string.IsNullOrEmpty(parsed.Host)
           || parsed.UserInfo.Length > 0 || parsed.Query.Length > 0 || parsed.Fragment.Length > 0
           || (parsed.AbsolutePath != "/" && parsed.AbsolutePath.Length > 0)
           || !(parsed.Scheme == "https" || (parsed.Scheme == "http" && IsLoopback(parsed.Host)))) {
-        throw new JosiException("Use your server's HTTPS address, or HTTP localhost for a server on this PC.");
+        throw new JosiException("Enter your server's address, such as josi.example.com or 192.168.1.20:8443. Plain HTTP works only for a server on this PC.");
       }
       OriginText = parsed.GetLeftPart(UriPartial.Authority);
       Origin = new Uri(OriginText);

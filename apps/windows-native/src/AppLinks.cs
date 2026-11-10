@@ -45,13 +45,20 @@ namespace Josi.Native {
       if (Testing) return;
       var exe = Environment.ProcessPath;
       if (string.IsNullOrEmpty(exe)) return;
+      var wanted = "\"" + exe + "\" \"%1\"";
       using (var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\josi")) {
         key.SetValue("", "URL:Josi");
         key.SetValue("URL Protocol", "");
         using (var icon = key.CreateSubKey("DefaultIcon")) icon.SetValue("", "\"" + exe + "\",0");
-        using (var command = key.CreateSubKey(@"shell\open\command")) command.SetValue("", "\"" + exe + "\" \"%1\"");
+        using (var command = key.CreateSubKey(@"shell\open\command")) command.SetValue("", wanted);
       }
+      // A browser that is already open keeps the copy of Josi it learned for
+      // josi:// until Windows announces the change; without this it kept
+      // starting a version from days ago, which then replaced the running one.
+      try { SHChangeNotify(0x08000000, 0, IntPtr.Zero, IntPtr.Zero); } catch (Exception) { }
     }
+    [System.Runtime.InteropServices.DllImport("shell32.dll")]
+    static extern void SHChangeNotify(int eventId, uint flags, IntPtr item1, IntPtr item2);
 
     /// From a second copy: give the link to the running Josi.
     public static void Forward(string link) {

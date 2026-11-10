@@ -450,8 +450,19 @@ namespace Josi.Native {
         Ui.Field("Current password", confirmPassword),
         Ui.Pill("Confirm Password", () => { var secret = confirmPassword.Password; confirmPassword.Clear(); if (secret.Length > 0) Post("/assistant/step-up", Wires.O("password", secret)); })), 20);
       Ui.Add(page, Note(), 20);
+      if (!Josi.Native.Automation.Demo) Ui.Add(page, ThisPcCard(), 20);
       Ui.Add(page, UpdateCard(), Ui.PageSpacing);
       return page;
+    }
+    /// How Josi behaves on this PC. Kept on the PC, not in the account.
+    UIElement ThisPcCard() {
+      var keep = Ui.Toggle("Keep Josi running when I close the window", AppPrefs.KeepRunning);
+      keep.Click += delegate { AppPrefs.KeepRunning = keep.IsChecked == true; };
+      var start = Ui.Toggle("Start Josi when I sign in to Windows", AppPrefs.StartAtSignIn);
+      start.Click += delegate { AppPrefs.StartAtSignIn = start.IsChecked == true; };
+      return Ui.CardBox("Josi on this PC", keep,
+        Ui.Caption("Josi stays in the notification area by the clock, so it can keep working on this PC and show you notifications. With this off, closing the window quits Josi and it cannot work on this PC until you open it again."),
+        start, Ui.Caption("Josi starts quietly in the notification area, without opening a window."));
     }
     UIElement QrImage() {
       var raw = setup["qrDataUrl"].Text; const string prefix = "data:image/png;base64,";
@@ -581,12 +592,12 @@ namespace Josi.Native {
       Ui.Add(page, Ui.CardBox("This PC",
         Ui.Row(10, Ui.Icon(Glyph.Desktop, 20, Ui.Text), Ui.Headline(Environment.MachineName + " · " + Environment.UserName)),
         Ui.T("Josi works in your current Windows session and in browser tabs you explicitly attach. It does not create a separate desktop, virtual machine or browser profile, and your browser sign-ins stay in your browser."),
-        model.IsAdministrator
+        model.CanControlPc
           ? Ui.T("Desktop control is ready while this app is open: Josi can list windows, read a program's controls, take screenshots, click, type, press keys and open programs, within the permissions under PC Control (or Full control). " +
-              (BrowserBridge.Current.Attached ? "A " + BrowserBridge.Current.AttachedBrowser + " tab is attached, so browser control is ready too." : BrowserBridge.Current.Linked ? BrowserBridge.Current.AttachedBrowser + " is linked; say \"use this tab\" in chat to attach one." : "Open your browser with the Josi extension for browser control."), 14)
-          : Ui.T("Desktop and browser control on this PC are run by the administrator's Josi app.", 14),
+              (BrowserBridge.Current.Linked ? BrowserBridge.Current.AttachedBrowser + " is linked, so Josi can use your browser too." : "Install the Josi browser extension and Josi can use your browser too."), 14)
+          : Ui.T("PC control is switched off for your account. The owner of this Josi can switch it on.", 14),
         Ui.Caption("Who is in control is always shown at the top of the window, with Pause and Stop. Moving your mouse or typing stops Josi immediately for 20 seconds; Josi reads a window again before every next step rather than assuming its last action worked."),
-        model.IsAdministrator ? Ui.Pill("Open PC Control", () => model.Section = "pc-control") : null), 20);
+        model.CanControlPc ? Ui.Pill("Open PC Control", () => model.Section = "pc-control") : null), 20);
 
       var rooms = automation["workspaces"].List;
       if (rooms.Count > 0) {
