@@ -3,7 +3,7 @@ import { verifyPassword, checkLoginRate, recordLoginAttempt } from '@josi-ce/aut
 import { verifyPcExecutor } from './pcExecutorIdentity.js';
 import { clientIp } from './cookies.js';
 import { pairLocalExecutor, localExecutorPaired, revokeExecutorSessions } from './pcLocalPairing.js';
-import { disablePcControl, localExecutorSpool, syncLocalExecutors, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
+import { disablePcControl, localExecutorSpool, readLocalExecutors, syncLocalExecutors, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
 import { pcControlReadiness } from '@josi-ce/agent';
 import { requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
@@ -20,7 +20,13 @@ export function pcControlRoutes(ctx:Ctx):Router {
   r.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
   function targetPc(req:Request){
     if(req.query.ownerId!==undefined&&req.query.ownerId!==req.user!.id)throw new PcControlError(403,'This PC permission change belongs to another account.');
-    if(req.query.pcId===undefined)return pcIdFrom(req.get('x-josi-pc'));
+    if(req.query.pcId===undefined){
+      // A browser names no PC. On a Linux server the PC it means is the
+      // server's own PC service, not the Windows hosting-PC placeholder.
+      const header=req.get('x-josi-pc');
+      if(!header){const local=readLocalExecutors();if(local.length===1)return local[0].pcId;}
+      return pcIdFrom(header);
+    }
     if(req.path.startsWith('/executor')||typeof req.query.pcId!=='string'||!/^[a-z0-9-]{1,80}$/.test(req.query.pcId))
       throw new PcControlError(400,'Choose a valid target PC.');
     return req.query.pcId;

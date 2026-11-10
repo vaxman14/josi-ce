@@ -75,6 +75,9 @@ try {
     await page.getByText(RESULT_MARKER, { exact: false }).first().waitFor({ timeout: 90_000 });
     await page.waitForTimeout(4_000); // let the word-by-word reveal finish
     await page.screenshot({ path: join(out, 'ghost-stage-reply.png') });
+    // E2E_REMOTE_MODEL=1: the browser runs on another machine than Josi and
+    // its fake model, so only the page itself is checked.
+    if (process.env.E2E_REMOTE_MODEL === '1') return 'reply with the tool result shown on the stage';
     const seen = fake.requests.slice(mark);
     const called = seen.find((r) => r.answer?.tool)?.answer.tool.name;
     if (!called || !seen.some((r) => r.seen?.toolResults?.length)) throw new Error('the fake model never received a tool result');
@@ -87,6 +90,32 @@ try {
     await page.screenshot({ path: join(out, 'ghost-stage-history.png') });
     await page.keyboard.press('Escape');
   });
+
+  await step('a settings card on the stage', async () => {
+    const local = await page.evaluate(async () => (await (await fetch('/api/admin/pc-control/local')).json()));
+    const pcId = local.executors?.[0]?.pcId;
+    if (!pcId) throw new Error('no PC service on this server');
+    const input = { area: 'pc_control_full_control', summary: 'Stop the everyday allowances on this server.', params: { pcId }, body: { enabled: false } };
+    await page.goto(`${BASE}/app`, { waitUntil: 'networkidle' });
+    await page.fill('[aria-label="Message Josi"]', `Please turn off everyday control. E2E_TOOL:propose_josi_setting_change:${JSON.stringify(input)}`);
+    await page.click('[aria-label="Send message"]');
+    await page.getByRole('button', { name: /decline/i }).first().waitFor({ timeout: 90_000 });
+    await page.waitForTimeout(1_500);
+    await page.screenshot({ path: join(out, 'ghost-stage-card.png') });
+    await page.getByRole('button', { name: /decline/i }).first().click();
+    return 'the card appeared on the stage, under the reply, and was declined';
+  });
+
+  for (const [name, path] of [['my-world', '/app/my-world'], ['pc-control', '/admin/pc-control'], ['network', '/admin/network'], ['setup-menu', '/app/tasks']]) {
+    await step(`page ${path}`, async () => {
+      await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });
+      await page.waitForTimeout(1_500);
+      await page.screenshot({ path: join(out, `${name}.png`), fullPage: true });
+      const text = await page.locator('main').innerText().catch(() => '');
+      if (/something went wrong|unexpected error/i.test(text)) throw new Error('the page shows an error');
+      return `${text.split(String.fromCharCode(10)).filter(Boolean).slice(0, 3).join(' | ').slice(0, 160)}`;
+    });
+  }
 
   await step('phone width', async () => {
     await page.setViewportSize({ width: 390, height: 844 });
