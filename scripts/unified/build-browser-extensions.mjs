@@ -11,6 +11,7 @@
 // Publishing steps and what each store asks for: docs/BROWSER_EXTENSION_STORES.md.
 import { mkdir, cp, writeFile, readFile, readdir, lstat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { deflateRawSync } from 'node:zlib';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -78,9 +79,39 @@ for (const family of FAMILIES) {
   catalog.extensions.push({ family, extensionId: extensionId(family), version: VERSION, digest: digestOf(files), files });
 }
 
-// Store packages: the same files with the store manifest, zipped with the
-// archive writer the backups use (packages/ops), so no extra tool is needed.
-const { writeZip } = await import(pathToFileURL(join(repo, 'packages/ops/dist/zip.js')).href);
+// Store packages: the same files with the store manifest. The backups' zip
+// writer streams and records sizes after each file (a data descriptor), which
+// the Chrome Web Store refuses; these packages are small, so they are built in
+// memory: deflated, sizes in every header, the layout every store accepts.
+const { crc32 } = await import(pathToFileURL(join(repo, 'packages/ops/dist/zip.js')).href);
+async function writeZip(destination, sources) {
+  const locals = [], central = []; let offset = 0;
+  const stamp = { time: 0, date: (2026 - 1980) << 9 | 1 << 5 | 1 }; // fixed, so builds are reproducible
+  for (const source of sources) {
+    const data = source.data ?? await readFile(source.path);
+    const packed = deflateRawSync(data, { level: 9 });
+    const stored = packed.length >= data.length;
+    const body = stored ? data : packed, name = Buffer.from(source.name, 'utf8'), crc = crc32(data) >>> 0;
+    const head = Buffer.alloc(30);
+    head.writeUInt32LE(0x04034b50, 0); head.writeUInt16LE(20, 4); head.writeUInt16LE(0x0800, 6); head.writeUInt16LE(stored ? 0 : 8, 8);
+    head.writeUInt16LE(stamp.time, 10); head.writeUInt16LE(stamp.date, 12); head.writeUInt32LE(crc, 14);
+    head.writeUInt32LE(body.length, 18); head.writeUInt32LE(data.length, 22); head.writeUInt16LE(name.length, 26); head.writeUInt16LE(0, 28);
+    locals.push(head, name, body);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0); entry.writeUInt16LE(20, 4); entry.writeUInt16LE(20, 6); entry.writeUInt16LE(0x0800, 8);
+    entry.writeUInt16LE(stored ? 0 : 8, 10); entry.writeUInt16LE(stamp.time, 12); entry.writeUInt16LE(stamp.date, 14); entry.writeUInt32LE(crc, 16);
+    entry.writeUInt32LE(body.length, 20); entry.writeUInt32LE(data.length, 24); entry.writeUInt16LE(name.length, 28);
+    entry.writeUInt32LE(offset, 42);
+    central.push(entry, name);
+    offset += head.length + name.length + body.length;
+  }
+  const directory = Buffer.concat(central), end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(sources.length, 8); end.writeUInt16LE(sources.length, 10);
+  end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);
+  const zip = Buffer.concat([...locals, directory, end]);
+  await writeFile(destination, zip, { flag: 'wx' });
+  return { byteSize: zip.length, sha256: createHash('sha256').update(zip).digest('hex') };
+}
 for (const family of STORES) {
   const folder = join(output, family);
   const files = (await inventory(folder)).filter(f => f.path !== 'manifest.json');
