@@ -53,7 +53,7 @@ describe('chat-managed PC permission foundation',()=>{
     expect((await call('/admin/pc-control/executor/presence','PUT',{connected:true,browser},token,'win-target')).status).toBe(200);
     const state=await call('/admin/pc-control','GET',undefined,token,'win-target');
     expect(state.body.browser).toEqual(browser);
-    expect(state.body.availability).toMatch(/chrome browser is linked with no tab attached/);
+    expect(state.body.availability).toMatch(/chrome browser is linked\./);
   });
   it('applies the exact full-access chat card once with password approval, retaining the separate administrator denial',async()=>{
     await control.setEnabled(owner,true);
