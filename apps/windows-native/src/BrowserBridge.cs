@@ -159,6 +159,11 @@ namespace Josi.Native {
               discovered = new Discovery { NativeProfileId = nativeProfileId, Browser = browser, Application = peer["application"].Text, Url = OriginOf(url) };
               return Reply(id, true, Wires.O("profileDiscovered", true));
             }
+            // One browser is linked at a time. A standing link (no tab) from a
+            // different browser, or its remembered tab, waits while another is live,
+            // so several allowed browsers do not knock each other off; only a tab
+            // the person attaches with a click takes over.
+            if (!payload["explicit"].Flag && Live() && link.ProfileId != known["profileId"].Text) return Reply(id, true, Wires.O("standby", true, "family", link.Family));
             if (link != null) { Fail(link.Sent, "replaced"); Fail(link.Queued, "replaced"); }
             link = new Link { Owner = owner, SessionId = Guid.NewGuid().ToString(), ProfileId = known["profileId"].Text, Family = family,
               Browser = browser, Application = known["application"].Text, Profile = known["profile"].Text.Length > 0 ? known["profile"].Text : "Default",

@@ -36,6 +36,7 @@ const STATUS = {
   paused: 'Josi is paused; resume in Josi.',
   reconnect: 'Reconnecting to Josi…',
   stopped: 'You have control. Josi will not use this browser until you resume.',
+  standby: 'Josi is using another browser right now. Click "Attach this tab" to use this one instead.',
   site: 'Josi asked to use this tab. Click "Attach this tab" once to let Josi use this site.',
   unsupported: 'Josi cannot use this kind of tab. Open a website to attach it.',
 };
@@ -124,7 +125,7 @@ async function profileId() {
 }
 /** Links to Josi: at startup, every 30 s (alarm), when the popup opens, and
  * again after Josi restarts. Carries the attached tab when there is one. */
-async function link() {
+async function link(explicit = false) {
   await ready;
   if (stopped || linking || workspace) return;
   linking = true; const epoch = ++generation;
@@ -139,9 +140,12 @@ async function link() {
     channel?.close(); channel = connection;
     const reply = await native('browser.hello', { family: config.family,
       extensionId: config.family === 'safari' ? config.extensionId : browserApi.runtime.id, nativeProfileId: await profileId(),
-      attachedTabId: tab ? tab.id : null, ...(windowsHost && tab ? { url: tab.url, title: clip(tab.title) } : {}) }, null);
+      attachedTabId: tab ? tab.id : null, ...(windowsHost && tab ? { url: tab.url, title: clip(tab.title) } : {}),
+      ...(windowsHost && explicit ? { explicit: true } : {}) }, null);
     if (epoch !== generation) return;
     if (reply?.profileDiscovered === true) { drop(); setPhase('unknown'); return; }
+    // Another browser holds Josi's link; this one waits and asks again on the alarm.
+    if (reply?.standby === true) { drop(); setPhase('standby'); return; }
     const verified = acceptSession(reply);
     if (epoch !== generation) return;
     workspace = verified; seen.clear(); lastClock = Date.now();
@@ -160,7 +164,7 @@ async function attachHere(tabId) {
   stopped = false; attachedTabId = tab.id; askedSite = null; persist();
   for (let i = 0; i < 40 && (linking || polling); i++) await new Promise(resolve => setTimeout(resolve, 50));
   drop(); setPhase('reconnect');
-  await link();
+  await link(true);
   return phase === 'attached';
 }
 async function stopHere() {
@@ -468,7 +472,7 @@ async function popupState() {
     : STATUS[phase] ?? STATUS.off;
   return { phase, status: sentence, family: config.family, origin: here ? webUrl(here.url).origin : null, tabId: here?.id ?? null,
     attachedHere: !!attachedHere, attached: attachedTabId !== null, asked: !!asked,
-    canAttach: !!here && !attachedHere && ['linked', 'attached', 'paused', 'off', 'reconnect'].includes(phase) && (windowsHost || phase !== 'unknown'),
+    canAttach: !!here && !attachedHere && ['linked', 'attached', 'paused', 'off', 'reconnect', 'standby'].includes(phase) && (windowsHost || phase !== 'unknown'),
     canStop: ['linked', 'attached', 'paused', 'reconnect'].includes(phase), canResume: phase === 'stopped' };
 }
 browserApi.runtime.onMessage.addListener((message, sender, sendResponse) => {

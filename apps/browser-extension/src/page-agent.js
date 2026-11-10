@@ -138,10 +138,20 @@
     }
     if (stopped || session !== request.sessionId || Date.now() >= request.expiresAt || location.href !== request.expectedUrl
       || !image.isConnected || !image.complete || !image.naturalWidth || image.currentSrc !== expectedSource) throw new Error('photo_changed');
-    await new Promise(resolve => setTimeout(resolve, 50));
+    // Lazy content and sticky bars can move the page after scrolling; a
+    // screenshot crop needs the picture where it settles, so wait until two
+    // measurements a moment apart agree (at most about a second).
+    const frame = elements.get(request.elementId).frame;
+    let bounds = rectOf(image, frame);
+    for (let i = 0; i < 8; i++) {
+      await new Promise(resolve => setTimeout(resolve, 120));
+      const next = rectOf(image, frame);
+      const settled = ['x', 'y', 'width', 'height'].every(k => Math.abs(next[k] - bounds[k]) < 1);
+      bounds = next;
+      if (settled) break;
+    }
     if (stopped || session !== request.sessionId || Date.now() >= request.expiresAt || location.href !== request.expectedUrl) throw new Error('photo_changed');
     if (mutations.takeRecords().length) revision++;
-    const bounds = rectOf(image, elements.get(request.elementId).frame);
     const center = bounds.y + bounds.height / 2;
     if (crossSite) return { center, photo: { screenshot: true, alt: String(image.alt || '').slice(0, 300), untrustedContent: true,
       area: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, viewportWidth: innerWidth, viewportHeight: innerHeight } } };
