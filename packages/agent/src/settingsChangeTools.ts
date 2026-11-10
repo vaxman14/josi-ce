@@ -114,6 +114,9 @@ export const SETTINGS_AREAS: readonly SettingsArea[] = [
   { area: 'member_account', title: 'A member\'s role or status', scope: 'administrator', sensitive: true,
     method: 'PATCH', path: '/admin/users/{userId}', params: ['userId'], keys: ['status', 'role', 'displayName'],
     fields: 'params.userId: the person\'s user id. body.status: active or disabled; body.role: member or super_admin; body.displayName.' },
+  { area: 'live_signin_grant', title: 'Whether someone may sign in for Josi', scope: 'administrator', sensitive: true,
+    method: 'PUT', path: '/admin/live-signin/grants/{userId}', params: ['userId'], keys: ['granted'],
+    fields: 'params.userId: the person user id. body.granted: true lets that person see the whole of Josi browser and open her login terminal to sign in for her (it can show the owner logins too); false takes it away. Off for everyone but the owner by default.' },
   // ---- personal, added with the settings pages
   { area: 'show_narration', title: 'Whether Josi narrates what she is doing', scope: 'personal', sensitive: false,
     method: 'PUT', path: '/persona/settings', keys: ['showNarration'],
@@ -170,6 +173,9 @@ export const SETTINGS_AREAS: readonly SettingsArea[] = [
   { area: 'member_settings_policy', title: 'Whether members\' changes wait for the super-admin', scope: 'administrator', sensitive: true,
     method: 'PUT', path: '/settings-changes/policy', keys: ['memberSettingsChanges'],
     fields: 'body.memberSettingsChanges: "self" or "super_admin".' },
+  { area: 'chat_reasoning', title: 'How hard Josi thinks on ordinary chat', scope: 'administrator', sensitive: false,
+    method: 'PUT', path: '/settings-changes/reasoning', keys: ['chatReasoning'],
+    fields: 'body.chatReasoning: "light" (quick replies, the default) or "model_default" (the model own level: slower, a little more careful on every reply). Long multi-step jobs always use the model own level.' },
 ];
 const AREAS = new Map(SETTINGS_AREAS.map((a) => [a.area, a]));
 

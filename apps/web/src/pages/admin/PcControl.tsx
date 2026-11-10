@@ -18,6 +18,23 @@ type Local={available:boolean;executors:LocalExecutor[]};
 /** A pcId Josi's Linux executor reports starts with "linux-". */
 const isLinuxPc=(pcId:string|null|undefined)=>!!pcId&&pcId.startsWith('linux-');
 
+/** Who may sign in for Josi (docs/LIVE_SIGN_IN.md): the owner always can; a
+ * grant lets another person see Josi's whole browser. */
+function SignInGrants(){
+  const [users,setUsers]=useState<{id:string;name:string;granted:boolean}[]|null>(null),[missing,setMissing]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState<string|null>(null);
+  async function load(){try{setUsers((await api.get<{users:{id:string;name:string;granted:boolean}[]}>('/admin/live-signin/grants')).users);}catch(e){if(e instanceof ApiError&&e.status===404){setMissing(true);return;}setError(e instanceof Error?e.message:'Could not read who may sign in.');}}
+  useEffect(()=>{void load();},[]);
+  async function set(id:string,granted:boolean){setBusy(id);setError('');try{await api.put('/admin/live-signin/grants/'+encodeURIComponent(id),{granted});await load();}catch(e){setError(e instanceof Error?e.message:'Could not change that.');}finally{setBusy(null);}}
+  if(missing)return null;
+  return <section className="space-y-3 rounded-lg border p-4" aria-label="Who can sign in for Josi" data-testid="josi.pc.signin-grants">
+    <h2 className="font-semibold">Who can sign in for Josi</h2>
+    <p className="text-sm text-muted-foreground">The owner always can. When Josi needs a login she cannot do, a person who is allowed opens a card and signs in themselves on a live view of her screen or in a terminal. A grant lets that person see Josi&rsquo;s whole browser, which can include your logins. Off by default.</p>
+    {error?<ErrorNote>{error}</ErrorNote>:null}
+    {!users?<p className="text-sm">Loading…</p>:!users.length?<p className="text-sm">There are no other people on this Josi.</p>:
+      <ul className="space-y-1">{users.map(u=><li key={u.id}><label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={u.granted} disabled={busy===u.id} onChange={e=>void set(u.id,e.target.checked)}/>{u.name}</label></li>)}</ul>}
+  </section>;
+}
+
 /** "This server": the Linux executors on the machine Josi runs on, paired to
  * this account with the account password. */
 function ThisServer(){
@@ -84,6 +101,7 @@ export function AdminPcControl(){
       {state?.uac&&!(linux&&/\bUAC\b|Windows/.test(state.uac))?<p className="text-sm">{state.uac}</p>:null}
     </section>
     <ThisServer/>
+    <SignInGrants/>
     {state?<>
       <section className="space-y-3 rounded-lg border p-4">
         <h2 className="font-semibold">Choose one exact scope</h2>

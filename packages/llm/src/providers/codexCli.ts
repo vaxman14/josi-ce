@@ -158,7 +158,7 @@ export function childEnvironment(parent: NodeJS.ProcessEnv = process.env): NodeJ
  * at the CLI is safe precisely because the approval that matters — Josi's
  * step-up policy — is enforced inside the server, where the CLI cannot reach.
  */
-export function codexArgs(model: string, harness?: HarnessSession | null, imagePaths: string[] = [], schemaPath?: string): string[] {
+export function codexArgs(model: string, harness?: HarnessSession | null, imagePaths: string[] = [], schemaPath?: string, effort?: 'low' | 'medium' | 'high'): string[] {
   const mcp = harness
     ? [
       // process.execPath, not `node`: the CLI spawns the server itself and
@@ -186,6 +186,8 @@ export function codexArgs(model: string, harness?: HarnessSession | null, imageP
     // not only structured ones.
     '-c', 'features.apps=false', '-c', 'features.plugins=false',
     '-c', 'tools.experimental_request_user_input.enabled=false',
+    // Ordinary chat thinks lightly so replies are quick; long jobs pass nothing and keep the model's own level.
+    ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
     ...(schemaPath ? ['--ephemeral', '--output-schema', schemaPath,
       '-c', 'web_search="disabled"', '-c', 'tools.update_plan.enabled=false'] : []),
     ...mcp,
@@ -375,7 +377,7 @@ export function codexCliProvider(opts: CodexCliOptions): LlmProvider {
         }
         result = await runner({
           command,
-          args: codexArgs(opts.model, harness, imagePaths, schemaPath),
+          args: codexArgs(opts.model, harness, imagePaths, schemaPath, request.reasoningEffort),
           input: callerTools ? renderCodexTurn(request) : renderPrompt(request),
           env: childEnvironment(),
           timeoutMs,

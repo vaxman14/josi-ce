@@ -46,6 +46,7 @@ import { useWorkGoals } from '@/lib/workGoals';
 import { failureMessage, followTurn, submitTurn, turnReply } from '@/lib/turns';
 import { PcPermissionCards } from '@/components/PcPermissionCards';
 import { CredentialCards } from '@/components/CredentialCards';
+import { SignInCards } from '@/components/SignInCards';
 import { ProposalCard, SettingsChangeCards } from '@/components/SettingsChangeCards';
 import { belongsHere, useSettingsChanges, waitingOnMe } from '@/lib/settingsChanges';
 import {
@@ -165,7 +166,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
   // poll, checked again the moment a reply lands (lib/settingsChanges.ts).
   const { proposals, needsPassword } = useSettingsChanges(thread?.id, lastReply?.id);
   const [cardsDone, setCardsDone] = useState<string[]>([]);
-  const cardDone = useCallback((id: string) => setCardsDone(ids => ids.includes(id) ? ids : [...ids, id]), []);
+  const cardDone = useCallback((id: string) => { setCardsDone(ids => ids.includes(id) ? ids : [...ids, id]); if (window.matchMedia('(pointer: fine)').matches) window.setTimeout(() => inputElement.current?.focus(), 0); }, []);
   const threadCards = thread ? proposals.filter(p => !cardsDone.includes(p.id) && belongsHere(p, thread.id, needsPassword) && waitingOnMe(p, needsPassword)) : [];
 
   // Hello when the page opens. The controller lives as long as the page.
@@ -189,7 +190,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
   }, [ghost, work.goals]);
 
   const openHistory = useCallback(() => setHistoryOpen(true), []);
-  const closeHistory = useCallback(() => { setHistoryOpen(false); historyButton.current?.focus(); }, []);
+  const closeHistory = useCallback(() => { setHistoryOpen(false); (window.matchMedia('(pointer: fine)').matches ? inputElement.current : historyButton.current)?.focus(); }, []);
 
   useEffect(() => {
     const panel = historyPanel.current;
@@ -393,6 +394,8 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       sendLock.current = false;
       setSending(false);
       setActivity('');
+      // Back to the message bar once the reply is in, except on touch screens where it would raise the keyboard.
+      window.setTimeout(() => { if (window.matchMedia('(pointer: fine)').matches) inputElement.current?.focus(); }, 0);
     }
   }
 
@@ -589,6 +592,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
             ) : null}
             {thread && historyOpen ? <PcPermissionCards key={'permissions-'+thread.id} proposals={threadCards} onDone={cardDone} /> : null}
             {thread && historyOpen ? <CredentialCards key={'credentials-'+thread.id} proposals={threadCards} onDone={cardDone} /> : null}
+            {thread && historyOpen ? <SignInCards key={'signin-'+thread.id} proposals={threadCards} onDone={cardDone} /> : null}
             {thread && historyOpen ? <SettingsChangeCards key={'settings-'+thread.id} proposals={threadCards} needsPassword={needsPassword} onDone={cardDone} /> : null}
             <ChatWorkProgressList {...work} />
             {sending ? <Working text="Josi is thinking" elapsed size={28} className="py-2 pl-1" /> : null}

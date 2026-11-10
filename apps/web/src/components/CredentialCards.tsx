@@ -1,7 +1,7 @@
 import {useState} from 'react';
 import {api} from '@/lib/api';
 import {Button,ErrorNote,Input} from '@/components/ui';
-import {claimApply,isCredentialProposal,releaseApply,type ApplyRequest,type Proposal} from '@/lib/settingsChanges';
+import {accountConnectionProvider,claimApply,isCredentialProposal,rememberAccountCard,releaseApply,type ApplyRequest,type Proposal} from '@/lib/settingsChanges';
 
 // A credential card Josi opened in conversation (docs/JOSI_IS_THE_INTERFACE.md
 // rules 3 and 5): the person pastes into secure fields; the browser performs
@@ -17,7 +17,42 @@ function smtpBody(fixed:Record<string,unknown>,values:Record<string,unknown>):Re
     communications:{copyFromSystem:true,host:'',port:0,security:'',username:'',password:'',clearPassword:false,fromName,fromAddress:from}};
 }
 
+/** "Sign in with <provider>": nothing to type. Claims the card, starts the
+ * ordinary web handshake (no native flag) and leaves for the provider; the
+ * return to /app reports the outcome (lib/settingsChanges.ts finishAccountCard). */
+function AccountConnectionCard({proposal,provider,onDone}:{proposal:Proposal;provider:string;onDone:()=>void}){
+  const card=proposal.card!;
+  const [busy,setBusy]=useState(false),[error,setError]=useState('');
+  const name=card.title.replace(/^Connect\s+/,'')||provider;
+  async function signIn(){
+    if(busy)return;
+    setBusy(true);setError('');
+    claimApply(proposal.id);
+    try{
+      const decided=await api.post<{apply:Apply|null}>(`/settings-changes/${proposal.id}/decide`,{approve:true});
+      if(!decided.apply)throw new Error('This card can only be used by the person it was opened for.');
+      const started=await api.post<{url:string}>(decided.apply.path,{returnPath:'/app'});
+      rememberAccountCard(proposal.id,provider);
+      window.location.assign(started.url);
+    }catch(e){
+      releaseApply(proposal.id);
+      setError(e instanceof Error?e.message:'Could not start the sign-in.');setBusy(false);
+    }
+  }
+  return <article className="approval-card rounded-xl p-4" aria-label={card.title} aria-busy={busy}>
+    <h3 className="font-display font-semibold">{card.title}</h3>
+    <p className="mt-2 whitespace-pre-wrap break-words text-sm">{card.intro}</p>
+    {error?<div role="alert" className="mt-2"><ErrorNote>{error}</ErrorNote></div>:null}
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Button type="button" disabled={busy} onClick={()=>void signIn()}>{busy?'Opening…':`Sign in with ${name}`}</Button>
+      <Button type="button" variant="secondary" disabled={busy} onClick={()=>{setBusy(true);void api.post(`/settings-changes/${proposal.id}/decide`,{approve:false}).then(onDone).catch(e=>setError(e instanceof Error?e.message:'Could not decline.')).finally(()=>setBusy(false));}}>Decline</Button>
+    </div>
+  </article>;
+}
+
 export function CredentialCard({proposal,onDone}:{proposal:Proposal;onDone:()=>void}){
+  const account=accountConnectionProvider(proposal);
+  if(account)return <AccountConnectionCard proposal={proposal} provider={account} onDone={onDone}/>;
   const card=proposal.card!;
   const [values,setValues]=useState<Record<string,unknown>>({});
   const [busy,setBusy]=useState(false),[error,setError]=useState('');

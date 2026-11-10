@@ -201,8 +201,8 @@ export function Connections() {
           ) : !view.connection ? (
             <>
               <p className="mb-3 text-sm text-muted-foreground">
-                {PROVIDER_LABEL[view.provider]} asks once for Josi's supported permission bundle. Every
-                capability stays off in Josi until you choose to turn it on here.
+                {PROVIDER_LABEL[view.provider]} asks once for Josi's supported permission bundle. Everything
+                it grants starts on in Josi. You can turn any of it off here afterwards.
               </p>
               <Button onClick={() => void connect(view.provider)} disabled={busy === view.provider}>
                 {busy === view.provider ? 'Starting…' : `Connect ${PROVIDER_LABEL[view.provider]}`}

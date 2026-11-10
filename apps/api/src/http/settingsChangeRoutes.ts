@@ -79,7 +79,8 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
   const isPcChange = (row: Row) => row.area.startsWith('pc_control_');
   // A credential card: the body holds the card's fields and fixed values, never
   // a secret; the app fills the typed values in and performs the route itself.
-  const isCredentialCard = (row: Row) => row.area === 'credential_card';
+  // A sign-in card is the same kind of thing: the body holds the card, the person acts on it in the app (docs/LIVE_SIGN_IN.md).
+  const isCredentialCard = (row: Row) => row.area === 'credential_card' || row.area === 'sign_in_card';
   const cardOf = (row: Row): unknown => (change(row) as { card?: unknown }).card ?? null;
   function checkPcChange(row: Row, user: { id: string }) {
     if (!isPcChange(row)) return;
@@ -248,6 +249,13 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     if (value !== 'self' && value !== 'super_admin') throw fail(400, 'Choose "self" or "super_admin".');
     await db.query(`update workspace set settings = settings || $1::jsonb where id = true`, [json({ memberSettingsChanges: value })]);
     return res.json({ ok: true, policy: value });
+  }));
+  // How hard the model thinks on ordinary chat: "light" (quick replies, the default) or "model_default".
+  r.put('/reasoning', requireSuperAdmin, handle(async (req, res) => {
+    const value = req.body?.chatReasoning;
+    if (value !== 'light' && value !== 'model_default') throw fail(400, 'Choose "light" or "model_default".');
+    await db.query(`update workspace set settings = settings || $1::jsonb where id = true`, [json({ chatReasoning: value })]);
+    return res.json({ ok: true, chatReasoning: value });
   }));
   return r;
 }

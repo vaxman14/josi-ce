@@ -3,7 +3,8 @@ import {api} from '@/lib/api';
 import {Button,ErrorNote} from '@/components/ui';
 import {PcPermissionCard} from '@/components/PcPermissionCards';
 import {CredentialCard} from '@/components/CredentialCards';
-import {applyChange,claimApply,isCredentialProposal,isPcProposal,isSettingsProposal,releaseApply,type ApplyRequest,type Proposal} from '@/lib/settingsChanges';
+import {SignInCard} from '@/components/SignInCards';
+import {applyChange,claimApply,isCredentialProposal,isPcProposal,isSettingsProposal,isSignInProposal,releaseApply,type ApplyRequest,type Proposal} from '@/lib/settingsChanges';
 
 // Every other settings change Josi prepares in conversation (docs/JOSI_IS_THE_INTERFACE.md
 // rule 1), member connector requests included: answered right here, like the
@@ -66,6 +67,7 @@ export function SettingsChangeCard({proposal,needsPassword,onDone}:{proposal:Pro
 /** Any proposal's card: PC permission, credential card or settings change. */
 export function ProposalCard({proposal,needsPassword,onDone}:{proposal:Proposal;needsPassword:readonly string[];onDone:()=>void}){
   if(isPcProposal(proposal))return <PcPermissionCard proposal={proposal} onDone={onDone}/>;
+  if(isSignInProposal(proposal))return <SignInCard proposal={proposal} onDone={onDone}/>;
   if(isCredentialProposal(proposal))return proposal.card?<CredentialCard proposal={proposal} onDone={onDone}/>:null;
   return <SettingsChangeCard proposal={proposal} needsPassword={needsPassword.includes(proposal.id)} onDone={onDone}/>;
 }

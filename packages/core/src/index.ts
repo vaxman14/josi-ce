@@ -88,3 +88,4 @@ export * from './automationBlockers.js';
 export { readLinuxSecret, readProtectedLinuxFile } from './linuxSecrets.js';
 
 export * from './computerControl.js';
+export * from './liveSignIn.js';

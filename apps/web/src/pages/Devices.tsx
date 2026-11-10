@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Button, Card, CardTitle, ErrorNote } from '@/components/ui';
 import { RelayPrivacy } from '@/components/RelayPrivacy';
+import { SendToDevices } from '@/components/devices/SendToDevices';
 
 interface Device { id: string; name: string; platform: string; pairedAt: string; lastSeenAt: string | null; revokedAt: string | null }
 interface Pairing { code: string; link: string | null; qr: string | null; expiresAt: string }
@@ -74,6 +75,8 @@ export function Devices() {
               </li>
             ))}</ul>}
       </Card>
+
+      <SendToDevices />
 
       <RelayPrivacy />
     </div>

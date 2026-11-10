@@ -32,6 +32,8 @@ import {
 import { hostname, userInfo, homedir, cpus, arch, release } from 'node:os';
 import { basename, dirname, join, posix } from 'node:path';
 import { createBrowserBridge } from './browser.mjs';
+import { createLiveSessions } from './live.mjs';
+import { createTransferReceiver } from './receive.mjs';
 
 const API = (process.env.JOSI_PC_API || 'http://127.0.0.1:18080').replace(/\/+$/, '');
 const SPOOL = process.env.JOSI_PC_SPOOL || '/var/lib/josi/data/pc-spool';
@@ -112,7 +114,7 @@ const paused = () => { const p = readJson(PAUSE); return p ? p.paused !== false 
 
 // ---------------------------------------------------------------------- HTTP
 
-let me, session, bridge = null;
+let me, session, bridge = null, live = null, receiver = null;
 class HttpError extends Error { constructor(status, message) { super(message); this.status = status; } }
 
 async function request(method, path, body, { signed = false, timeout = 15000 } = {}) {
@@ -702,6 +704,12 @@ async function serve() {
   writeHello(me);
   session = readJson(SESSION);
   let registered = false, paired = false, identityAt = 0, presenceAt = 0, presenceKey = '', helloAt = Date.now(), lastState = '';
+  // Sign-in sessions (docs/LIVE_SIGN_IN.md) run on their own timer, so they never delay claims.
+  live = createLiveSessions({ request, graphical, userEnv, which, stateDir: STATE, log, home: HOME, username: ME.username });
+  live.start(() => !!session?.token && paired && !paused());
+  // "Send to my devices": files sent to this server land in the user's Downloads.
+  receiver = createTransferReceiver({ api: API, token: () => session?.token, deviceId: () => me.pcId, home: HOME, log, isActive: () => !!session?.token && paired && !paused() });
+  receiver.start();
   const state = text => { if (text !== lastState) { log(text); lastState = text; } };
   for (;;) {
     try {
@@ -738,7 +746,7 @@ async function serve() {
   }
 }
 
-function shutdown() { for (const s of terminals.values()) closeTerminal(s); Promise.resolve(bridge?.stop()).catch(() => {}).finally(() => process.exit(0)); }
+function shutdown() { live?.stop(); receiver?.stop(); for (const s of terminals.values()) closeTerminal(s); Promise.resolve(bridge?.stop()).catch(() => {}).finally(() => process.exit(0)); }
 process.on('SIGTERM', shutdown); process.on('SIGINT', shutdown);
 
 const verb = process.argv[2];

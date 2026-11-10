@@ -142,6 +142,10 @@ export interface ChatRequest {
   jsonMode?: boolean;
   maxTokens?: number;
   temperature?: number;
+  /** How hard a reasoning model should think on this reply. Set for ordinary chat
+   * so replies come back sooner; omitted for long jobs, which keep the model's own
+   * level. Only the Codex subscription provider uses it so far. */
+  reasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 export interface ToolCall {

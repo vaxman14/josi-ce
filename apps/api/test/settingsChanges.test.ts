@@ -135,7 +135,8 @@ describe('the catalogue', () => {
 
   it('marks everything that widens what Josi may do as sensitive', () => {
     const plain = SETTINGS_AREAS.filter((a) => !a.sensitive).map((a) => a.area).sort();
-    expect(plain).toEqual(['calendar_source', 'contact_sync_interval', 'memory_learning', 'personality_profile', 'show_narration', 'workspace'].sort());
+    // chat_reasoning only changes how quickly she answers, so it needs no password.
+    expect(plain).toEqual(['calendar_source', 'chat_reasoning', 'contact_sync_interval', 'memory_learning', 'personality_profile', 'show_narration', 'workspace'].sort());
   });
 
   it('points every entry at a route that exists', async () => {

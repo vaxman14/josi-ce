@@ -2,13 +2,14 @@ import { Router, type Request, type Response } from 'express';
 import { verifyPassword, checkLoginRate, recordLoginAttempt } from '@josi-ce/auth';
 import { verifyPcExecutor } from './pcExecutorIdentity.js';
 import { clientIp } from './cookies.js';
+import { type LiveSignInBroker } from '@josi-ce/core';
 import { pairLocalExecutor, localExecutorPaired, revokeExecutorSessions } from './pcLocalPairing.js';
 import { disablePcControl, localExecutorSpool, readLocalExecutors, syncLocalExecutors, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
 import { pcControlReadiness } from '@josi-ce/agent';
 import { requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
-interface Ctx { db:Db; windows?:boolean; masterKey?:LoadOptions|false }
+interface Ctx { db:Db; windows?:boolean; masterKey?:LoadOptions|false; live?:LiveSignInBroker }
 // Item 36: each Josi app names its PC in the x-josi-pc header (win-<id>); an
 // app without one is the hosting PC of the single-PC form. Permissions,
 // requests and presence are kept per PC. No execution/proposal endpoint is
@@ -225,6 +226,25 @@ export function pcControlRoutes(ctx:Ctx):Router {
   }));
   r.get('/executor/terminals/:id/lease',handle(async(req,res)=>{
     return res.json(await control(req).terminalAuthorization(req.user!.id,param(req,'id')));
+  }));
+  // Signing in for Josi (docs/LIVE_SIGN_IN.md): the PC service relays the
+  // person's live session. Frames and keystrokes pass through memory only.
+  r.get('/executor/live',handle(async(req,res)=>{
+    const pcId=targetPc(req);
+    return res.json({sessions:(ctx.live?.active(pcId)??[]).map(s=>({id:s.id,kind:s.kind,state:s.state,title:s.title,url:s.url,command:s.command,runAs:s.runAs}))});
+  }));
+  r.post('/executor/live/:id/sync',handle(async(req,res)=>{
+    const live=ctx.live,pcId=targetPc(req),s=live?.get(param(req,'id'));
+    if(!live||!s||s.pcId!==pcId)throw new PcControlError(404,'No such sign-in on this PC.');
+    const b=(req.body??{}) as {ready?:unknown;error?:unknown;frame?:{width?:unknown;height?:unknown;jpegBase64?:unknown};output?:{data?:unknown;running?:unknown;exitCode?:unknown}};
+    if(typeof b.error==='string'&&b.error)live.fail(s.id,b.error);
+    else{
+      if(b.ready===true)live.ready(s.id);
+      if(b.frame&&typeof b.frame.jpegBase64==='string')live.pushFrame(s.id,Number(b.frame.width),Number(b.frame.height),Buffer.from(b.frame.jpegBase64,'base64'));
+      if(b.output)live.pushOutput(s.id,typeof b.output.data==='string'?b.output.data:'',b.output.running!==false,Number.isInteger(b.output.exitCode)?Number(b.output.exitCode):null);
+    }
+    const ended=s.state==='ended';
+    return res.json({input:ended?[]:live.takeInput(s.id),ended});
   }));
   r.post('/executor/:id/result',handle(async(req,res)=>{
     const active=running.get(param(req,'id'));
