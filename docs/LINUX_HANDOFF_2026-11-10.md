@@ -200,6 +200,14 @@ Windows and the Mac inherit it when they merge this branch's packages.
   (claw serves `~/josi-linux/lan` with `python3 -m http.server 18099`; start it again after a
   claw reboot). Answer "my own proxy", public address `https://ce.heyjosi.com`, port 8080.
 - `ec9fa84` (client ID wording in setup) is on the branch but not in the beta.11 build.
+- **Installer fix after Roman's first try on gate** (`281f7e3`): under sudo-rs (Ubuntu 25.10+,
+  gate is 26.04) typed answers lost letters or Enter, because sudo-rs relays the keyboard
+  into its own terminal while the installer also read the outer one. Now under sudo-rs
+  the installer becomes the foreground group of its own terminal and reads there; classic
+  sudo is unchanged. Checked by typing through a real pty on gate, Debian 13 and Ubuntu
+  24.04. The `linux` file was re-rendered (packages unchanged) in the release folder, on
+  claw's LAN server and in the GitHub draft. The VM e2e runs use `--yes`, so they never
+  type; a typed-answers check belongs in the test list.
 
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
