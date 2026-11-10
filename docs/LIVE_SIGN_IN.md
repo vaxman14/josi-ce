@@ -39,7 +39,7 @@ into the thread ("Signed in…"); Cancel → `denied`.
 | Route | |
 |---|---|
 | `GET /access` | `{allowed, owner}` |
-| `POST /sessions` `{cardId}` | open the card's session → `{id, kind, pcId, title, state}`. One active session per PC and kind: a second gets 409. |
+| `POST /sessions` `{cardId}` | open the card's session → the session itself: `{id, kind, pcId, title, state}`, not wrapped. One active session per PC and kind: a second gets 409. |
 | `GET /sessions/:id` | `{id, kind, pcId, title, state: 'starting'\|'ready'\|'ended', width?, height?, error?, command?, runAs?}` |
 | `GET /sessions/:id/frame?after=<seq>&wait=<ms ≤ 8000>` | browser: `200 image/jpeg` + headers `X-Frame-Seq`, `X-Frame-Width`, `X-Frame-Height`; `204` if nothing newer; `410` if ended |
 | `GET /sessions/:id/output?after=<cursor>&wait=<ms ≤ 8000>` | terminal: `{cursor, data, running, exitCode}`; `data` is raw text with ANSI codes, `cursor` counts characters |

@@ -66,7 +66,7 @@ export function liveSignInRoutes(ctx: { db: Db; live: LiveSignInBroker }): { per
     if (!row || row.proposer_user_id !== req.user!.id) throw new RouteError(404, 'That sign-in card does not exist.');
     if (row.state !== 'proposed' || Date.parse(row.expires_at) <= Date.now()) throw new RouteError(409, 'This sign-in card is finished or has expired. Ask Josi for a new one.');
     const existing = live.forCard(cardId);
-    if (existing && existing.userId === req.user!.id) { live.touch(existing.id); return res.json({ session: dto(existing) }); }
+    if (existing && existing.userId === req.user!.id) { live.touch(existing.id); return res.json(dto(existing)); }
     const card = parseCard(row);
     if (!card) throw new RouteError(409, 'This sign-in card is not usable. Ask Josi for a new one.');
     // The PC service must be paired, switched on and announcing itself, like every PC action.
@@ -78,10 +78,10 @@ export function liveSignInRoutes(ctx: { db: Db; live: LiveSignInBroker }): { per
     if (made === 'busy') throw new RouteError(409, 'Someone is already signing in on that computer. Wait for them to finish.');
     await db.query(`insert into pc_control_activity(owner_user_id, pc_id, kind) values ($1, $2, $3)`,
       [pc.owner_user_id, card.pcId, `A sign-in view (${card.mode}) was opened; what is typed there is never recorded`]).catch(() => undefined);
-    return res.json({ session: dto(made) });
+    return res.json(dto(made));
   }));
 
-  person.get('/sessions/:id', handle(async (req, res) => { const s = mine(req); live.touch(s.id); return res.json({ session: dto(s) }); }));
+  person.get('/sessions/:id', handle(async (req, res) => { const s = mine(req); live.touch(s.id); return res.json(dto(s)); }));
 
   person.get('/sessions/:id/frame', handle(async (req, res) => {
     const s0 = mine(req);

@@ -119,6 +119,40 @@ try {
     return 'the card appeared on the stage, under the reply, and was declined';
   });
 
+  await step('a sign-in card opens the live view of her browser, and Done closes it', async () => {
+    const input = { mode: 'browser', title: 'UI test site', why: 'to check the live view in a real browser' };
+    await page.goto(`${BASE}/app`, { waitUntil: 'networkidle' });
+    await page.fill('[aria-label="Message Josi"]', `Please sign in for me. E2E_TOOL:request_sign_in:${JSON.stringify(input)}`);
+    await page.click('[aria-label="Send message"]');
+    const open = page.getByRole('button', { name: 'Open', exact: true }).first();
+    await open.waitFor({ timeout: 90_000 });
+    await page.waitForTimeout(1_000);
+    await page.screenshot({ path: join(out, 'sign-in-card.png') });
+    const answers = [];
+    page.on('response', (r) => { if (r.url().includes('/api/live-signin')) answers.push(`${r.request().method()} ${new URL(r.url()).pathname} ${r.status()}`); });
+    await open.click();
+    const panel = page.getByTestId('josi.live-signin');
+    try { await panel.waitFor({ timeout: 20_000 }); }
+    catch (error) {
+      await page.screenshot({ path: join(out, 'sign-in-failed.png') });
+      const alerts = await page.locator('[role=alert]').allInnerTexts().catch(() => []);
+      throw new Error(`the panel never opened. Server answers: ${JSON.stringify(answers)}; alerts: ${JSON.stringify(alerts)}; ${String(error.message).slice(0, 80)}`);
+    }
+    const picture = panel.locator('img').first();
+    await picture.waitFor({ timeout: 30_000 });
+    await page.waitForFunction(() => { const i = document.querySelector('[data-testid="josi.live-signin"] img'); return i && i.naturalWidth > 200; }, null, { timeout: 30_000 });
+    const privacy = await panel.getByTestId('josi.live-signin.privacy').innerText();
+    if (!/never sees/i.test(privacy)) throw new Error('the panel does not say Josi never sees the screen: ' + privacy);
+    await page.screenshot({ path: join(out, 'sign-in-live-view.png') });
+    // Typing into the panel reaches the page: the "Type here" box sends it.
+    await panel.getByLabel('Type here, then press Send').fill('hello');
+    await panel.getByRole('button', { name: /^send$/i }).click();
+    await page.waitForTimeout(1_000);
+    await panel.getByRole('button', { name: 'Done', exact: true }).click();
+    await panel.waitFor({ state: 'detached', timeout: 20_000 });
+    return 'card on the stage, Open showed a live picture, typing was accepted, Done closed it';
+  });
+
   for (const [name, path] of [['my-world', '/app/my-world'], ['pc-control', '/admin/pc-control'], ['network', '/admin/network'], ['setup-menu', '/app/tasks']]) {
     await step(`page ${path}`, async () => {
       await page.goto(`${BASE}${path}`, { waitUntil: 'networkidle' });

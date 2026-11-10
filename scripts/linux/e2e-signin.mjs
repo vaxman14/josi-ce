@@ -125,7 +125,7 @@ await step('1 a browser card opens a live view of Josi\'s own Chrome', async () 
   const out = await call('request_sign_in', { mode: 'browser', title: 'Local test site', why: 'to prove the live view works' });
   assert(out.ok && out.state === 'card_open', 'tool answered ' + JSON.stringify(out).slice(0, 300));
   const card = await cardFor('Local test site');
-  const opened = (await req('POST', '/live-signin/sessions', { cardId: card.id }, 200)).json.session;
+  const opened = (await req('POST', '/live-signin/sessions', { cardId: card.id }, 200)).json;
   assert(opened.kind === 'browser', 'wrong session kind');
   globalThis.SESSION = opened.id;
   const picture = await frame(opened.id, 0, 30000);
@@ -170,7 +170,7 @@ await step('4 a terminal card runs the exact command and takes the person\'s ans
   assert(out.ok, 'tool answered ' + JSON.stringify(out).slice(0, 300));
   const card = await cardFor('Local test login');
   assert(card.card.command === command && card.card.runAs, 'the card must show the exact command and who it runs as');
-  const session = (await req('POST', '/live-signin/sessions', { cardId: card.id }, 200)).json.session;
+  const session = (await req('POST', '/live-signin/sessions', { cardId: card.id }, 200)).json;
   const send = events => req('POST', `/live-signin/sessions/${session.id}/input`, { events }, 200);
   await pollOutput(session.id, t => t.includes('name: '));
   await send([{ t: 'resize', cols: 100, rows: 30 }, { t: 'data', data: 'bob\r' }]);

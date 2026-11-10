@@ -86,10 +86,10 @@ describe('a browser sign-in session', () => {
   it('relays frames and keystrokes, settles the card and writes one note, and is gone afterwards', async () => {
     await pcOnline();
     const cardId = await openCard(ownerId, ownerToken, { mode: 'browser', title: 'Amazon', why: 'to check an order', url: 'https://www.amazon.com/ap/signin' });
-    const opened = json(await call(ownerToken, 'POST', '/live-signin/sessions', { cardId })).session;
+    const opened = json(await call(ownerToken, 'POST', '/live-signin/sessions', { cardId }));
     expect(opened).toMatchObject({ kind: 'browser', pcId: PC, state: 'starting', title: 'Amazon' });
     // Opening the same card again returns the same session.
-    expect(json(await call(ownerToken, 'POST', '/live-signin/sessions', { cardId })).session.id).toBe(opened.id);
+    expect(json(await call(ownerToken, 'POST', '/live-signin/sessions', { cardId })).id).toBe(opened.id);
     // The PC service sends a picture; the person sees it.
     expect(live.pushFrame(opened.id, 1280, 800, Buffer.from('JPEGBYTES'))).toBe(true);
     const frame = await call(ownerToken, 'GET', `/live-signin/sessions/${opened.id}/frame?after=0&wait=500`);
@@ -99,7 +99,7 @@ describe('a browser sign-in session', () => {
     expect(frame.headers.get('x-frame-width')).toBe('1280');
     expect(frame.buffer.toString()).toBe('JPEGBYTES');
     expect((await call(ownerToken, 'GET', `/live-signin/sessions/${opened.id}/frame?after=1&wait=100`)).status).toBe(204);
-    expect(json(await call(ownerToken, 'GET', `/live-signin/sessions/${opened.id}`)).session).toMatchObject({ state: 'ready', width: 1280, height: 800 });
+    expect(json(await call(ownerToken, 'GET', `/live-signin/sessions/${opened.id}`))).toMatchObject({ state: 'ready', width: 1280, height: 800 });
     // The person's clicks and typing reach the PC service; junk is dropped.
     const sent = json(await call(ownerToken, 'POST', `/live-signin/sessions/${opened.id}/input`, { events: [
       { t: 'click', x: 100, y: 200 }, { t: 'text', text: 'hunter2' }, { t: 'key', key: 'Return' }, { t: 'key', key: 'rm -rf' }, { t: 'data', data: 'nope' }, { t: 'click', x: -5, y: 1 },
@@ -143,7 +143,7 @@ describe('a terminal sign-in session', () => {
   it('relays output with a cursor, takes raw input, and cancelling denies the card', async () => {
     await pcOnline();
     const cardId = await openCard(ownerId, ownerToken, { mode: 'terminal', title: 'AWS', why: 'to deploy', command: 'aws sso login' });
-    const opened = json(await call(ownerToken, 'POST', '/live-signin/sessions', { cardId })).session;
+    const opened = json(await call(ownerToken, 'POST', '/live-signin/sessions', { cardId }));
     live.pushOutput(opened.id, 'Open https://device.example/ and enter ABCD-1234\r\n', true, null);
     const first = json(await call(ownerToken, 'GET', `/live-signin/sessions/${opened.id}/output?after=0&wait=300`));
     expect(first).toMatchObject({ data: 'Open https://device.example/ and enter ABCD-1234\r\n', running: true, exitCode: null });
