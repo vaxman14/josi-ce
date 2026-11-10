@@ -90,7 +90,7 @@ function ApprovalCard({ approval, onApprove, onLater, onStage = false }: { appro
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   return (
-    <div className={`approval-card w-full max-w-md rounded-lg p-4 ${onStage ? 'flex max-h-full min-h-0 flex-col' : ''}`}>
+    <div className={`approval-card w-full max-w-md rounded-lg p-4 ${onStage ? 'flex min-h-0 shrink flex-col' : ''}`}>
       <p className="font-display text-sm font-semibold">{sentence(approval.action)}</p>
       {/* The exact action, in words, before anyone agrees to it. */}
       {/* On the stage a long email scrolls inside the card, so Approve is never pushed out of sight. */}
@@ -476,7 +476,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
               </> : lastReply ? <>
                 <span className="stage-label">Josi</span>
                 {/* The reply that asked for this approval says what the card says: the card is enough. */}
-                {stageApproval && lastReply.body.startsWith(stageApproval.summary.slice(0, 48)) ? null : <div
+                {stageApproval && lastReply.body.replace(/\s+/g, ' ').startsWith(stageApproval.summary.replace(/\s+/g, ' ').slice(0, 48)) ? null : <div
                   className="w-full cursor-pointer"
                   title="Open chat history"
                   onClick={event => { if (!(event.target as Element).closest('a')) openHistory(); }}
