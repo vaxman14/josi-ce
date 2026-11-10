@@ -72,12 +72,16 @@ try {
     const mark = fake.requests.length;
     await page.fill('[aria-label="Message Josi"]', 'E2E_CALL_TOOL What is on my task list?');
     await page.click('[aria-label="Send message"]');
-    // While Josi works, the stage shows what she is doing (the turn's live status), not just a wait.
+    // While Josi works, the stage shows what she is doing (the turn's live
+    // status), not just a wait. The reply of an earlier run may already be on
+    // screen, so the end is the model receiving this turn's tool result.
     const lines = new Set();
-    for (let i = 0; i < 50 && !(await page.getByText(RESULT_MARKER, { exact: false }).count()); i++) {
+    const finished = () => fake.requests.slice(mark).some((r) => r.seen?.toolResults?.length);
+    const started = Date.now();
+    while (!(process.env.E2E_REMOTE_MODEL === '1' ? Date.now() - started > 8_000 : finished()) && Date.now() - started < 90_000) {
       const line = (await page.locator('.stage-text').first().innerText().catch(() => '')).trim();
       if (line) lines.add(line);
-      if (lines.size === 1 && i === 8) await page.screenshot({ path: join(out, 'ghost-stage-working.png') });
+      if (lines.size >= 2 && !(await page.locator('[data-shot-working]').count())) { await page.screenshot({ path: join(out, 'ghost-stage-working.png') }); await page.evaluate(() => document.body.setAttribute('data-shot-working', '1')); }
       await page.waitForTimeout(200);
     }
     console.log('stage lines while working:', JSON.stringify([...lines]));
