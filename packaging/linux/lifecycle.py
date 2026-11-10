@@ -954,7 +954,10 @@ class Lifecycle:
         if not self.isolated and (interactive_uid is None or (interactive_uid != 0 and interactive_uid < 1000) or not pwd.getpwuid(interactive_uid).pw_dir):
             raise ValueError('Logged-in installer user required')
         if fail_at and not self.isolated: raise ValueError('Fault injection is isolated only')
-        if self.root.exists() and not (self.root/'installation.json').exists() and any(self.root.iterdir()):
+        # A first install that stopped before its receipt leaves only the lock
+        # and its own transaction records; running the command again starts over.
+        leftovers = {'lifecycle.lock','transactions'}
+        if self.root.exists() and not (self.root/'installation.json').exists() and any(p.name not in leftovers for p in self.root.iterdir()):
             raise ValueError('Existing directory has no Josi ownership receipt; preserve it')
         protect_product_root(self.root, self.isolated)
         lock_path = self.root/'lifecycle.lock'

@@ -858,10 +858,21 @@ questions() {
   [ -n "$A_EMAIL" ] || A_EMAIL=$S_EMAIL
   [ -n "$A_URL" ] || A_URL=$S_URL
   [ -n "$A_PORT" ] || A_PORT=${S_PORT:-${CUR_PORT:-8080}}
-  case $GIVEN in *' pc '*) ;; *) if [ -n "$S_PC" ]; then A_PC=$S_PC; else A_NOPC=1; fi ;; esac
+  # PC control is on by default on a first install, as the person who ran sudo
+  # (as on Windows); a saved "no" stays no, and a root shell has no such user.
+  case $GIVEN in *' pc '*) ;; *)
+    if [ -n "$S_PC" ]; then A_PC=$S_PC
+    elif [ -z "$S_MODE" ] && [ -n "${SUDO_REAL:-}" ]; then A_PC=$SUDO_REAL
+    else A_NOPC=1; fi ;;
+  esac
   # The browser defaults to yes with PC control, unless it was saved as no.
   [ -n "$A_BROWSER" ] || { [ "$S_BROWSER" = 0 ] && [ -n "$S_PC" ] && A_BROWSER=0; } || A_BROWSER=1
-  [ "$TTY" = 1 ] || return 0  # nothing asked: the flags alone go to the install command
+  if [ "$TTY" != 1 ]; then
+    # Nothing asked: the flags go to the install command, plus PC control by
+    # default for the sudo user on a first install.
+    case $GIVEN in *' pc '*) ;; *) if [ "$A_NOPC" != 1 ] && [ -n "$A_PC" ] && [ -z "$S_PC" ]; then CLI_ARGS+=(--pc-control-user "$A_PC" --browser); fi ;; esac
+    return 0
+  fi
   q_header
   while :; do
     ask_mode
