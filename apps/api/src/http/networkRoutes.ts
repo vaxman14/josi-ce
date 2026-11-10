@@ -98,6 +98,10 @@ export function networkRoutes(ctx: { db: Db }): Router {
       configuredUrl: configured,
       restartNeeded: configured !== null && configured !== appUrl,
       certificate: ca ? { fingerprint: ca.fingerprint } : null,
+      // What kind of machine answers, so the page can say "this server" on a
+      // Linux server, and whether the protected maintenance controller the
+      // Windows and Mac installers provision exists here.
+      server: { platform: process.platform, maintenanceHelper: !!process.env.JOSI_MAINTENANCE_HELPER_SOCKET },
     });
   }));
 

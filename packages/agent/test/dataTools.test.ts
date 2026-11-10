@@ -59,6 +59,9 @@ async function connectGoogle(user: string): Promise<ConnectionRow> {
     providerAccountId: 'acct-1',
     requestedCapabilities: ['google.mail.read', 'google.calendar.read', 'google.calendar.write', 'google.contacts.read'],
   });
+  // A newly connected account starts with everything on (1ede4e3); these tests are about the
+  // switches, so they begin from the state where the person has switched everything off.
+  await db.query(`update connection_capabilities set enabled = false where connection_id = $1`, [connection.id]);
   await db.query(`insert into calendar_sources(owner_user_id,connection_id,provider_calendar_id,name) values($1,$2,'selected@example.test','Selected calendar')`,[user,connection.id]);
   return connection;
 }

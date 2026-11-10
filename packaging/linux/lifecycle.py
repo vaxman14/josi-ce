@@ -7,6 +7,7 @@ create users, write systemd units or touch an installed Josi instance.
 import fcntl
 import hashlib
 import http.client
+import ipaddress
 import itertools
 import json
 import os
@@ -23,7 +24,10 @@ import subprocess
 import sys
 import time
 
-PRODUCT = Path('/var/lib/josi-ce-server')
+PRODUCT = Path('/var/lib/josi')
+# josi.service is the one unit an administrator starts, stops or enables. The
+# six isolated services below are PartOf it, so they follow it.
+PARENT_UNIT = 'josi.service'
 UNIT_DIR = Path('/etc/systemd/system')
 UNIT_PREFIX = 'josi-ce-'
 ROLES = ('database', 'voice', 'voice-control', 'web', 'worker', 'proxy')
@@ -35,6 +39,116 @@ PHASES = ('prepared','verified','quiescing','quiesced','snapshot','provisioned',
           'database-ready','migrating','migrated','activating','activated','healthy','committed')
 TRANSITIONS = {left:{right,'recovery-required'} for left,right in zip(PHASES,PHASES[1:])}
 TRANSITIONS.update({'recovery-required':{'activated','rolling-back'}, 'rolling-back':{'rolled-back','recovery-required'}})
+TERMINAL = ('committed','rolled-back')
+VERSION_PATTERN = r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?'
+
+# The installer's answers: how people reach Josi, its port and PC control.
+# Written by josi-ce-server-install (root), read here and by Runtime.mjs.
+SETTINGS = Path('/etc/josi/install.json')
+SETTINGS_KEYS = {'schemaVersion','addressMode','appUrl','lanAddress','domain','email','publicUrl','port','pcControlUser','browser'}
+# Josi's own browser (josi-browser.service): Chrome for Testing on a hidden
+# Xvfb screen, run by the launcher as the PC control account.
+BROWSER_UNIT = 'josi-browser.service'
+BROWSER_LAUNCHER = 'app/packaging/linux/pc-executor/josi-browser.mjs'
+BROWSER_EXTENSION = 'app/browser-extension/chrome'
+# PC control: josi-pc.service runs the executor as the chosen human account.
+# The web service and the executor meet only in data/pc-spool (root:josi-pc 2770).
+PC_UNIT = 'josi-pc.service'
+PC_GROUP = 'josi-pc'
+PC_EXECUTOR = 'app/packaging/linux/pc-executor/josi-pc.mjs'
+# The browser native-messaging host (browser.mjs makes the wrapper and the
+# manifests); the wrapper names the current version's node and host script.
+BROWSER_MODULE = 'app/packaging/linux/pc-executor/browser.mjs'
+BROWSER_SCRIPT = 'app/packaging/linux/pc-executor/josi-browser-host.mjs'
+BROWSER_WRAPPER = Path('/usr/lib/josi/josi-browser-host')
+BROWSER_HOST_NAME = 'com.heyjosi.browser'
+BROWSER_DIRS = ('/etc/opt/chrome/native-messaging-hosts', '/etc/chromium/native-messaging-hosts',
+                '/etc/opt/edge/native-messaging-hosts', '/usr/lib/mozilla/native-messaging-hosts')
+HOSTNAME = re.compile(r'(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?')
+DOMAIN = re.compile(r'(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]')
+EMAIL = re.compile(r'[A-Za-z0-9._%+-]{1,64}@(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}')
+USERNAME = re.compile(r'[a-z_][a-z0-9_-]{0,31}')
+
+class Stopped(BaseException):
+    """SIGTERM or SIGHUP reached the lifecycle; recorded like any failure."""
+
+def _host(value):
+    value = str(value or '').strip().lower()
+    try:
+        address = ipaddress.ip_address(value)
+        if address.version != 4 or address.is_unspecified or address.is_multicast: raise ValueError('Invalid address')
+        return value
+    except ValueError:
+        if not HOSTNAME.fullmatch(value) or value.replace('.','').isdigit(): raise ValueError('Invalid host name: '+value[:80])
+        return value
+
+def normalize_settings(value):
+    """Validate the installer's answers and derive the browser address (appUrl).
+
+    lan     http://<lanAddress>:<port>        Caddy serves plain HTTP on the port
+    domain  https://<domain>                  Caddy gets a certificate (80 and 443)
+    proxy   <publicUrl> (https)               the administrator's own reverse proxy
+    """
+    if not isinstance(value, dict): raise ValueError('Invalid install settings')
+    mode = value.get('addressMode', 'lan')
+    port = value.get('port', 8080)
+    if mode not in ('lan','domain','proxy'): raise ValueError('Invalid address mode')
+    if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535: raise ValueError('Invalid port')
+    result = {'schemaVersion':1,'addressMode':mode,'lanAddress':None,'domain':None,'email':None,'publicUrl':None,'port':port,
+              'pcControlUser':None,'browser':False}
+    browser = value.get('browser', False)
+    if not isinstance(browser, bool): raise ValueError('Invalid browser answer')
+    if mode == 'lan':
+        result['lanAddress'] = _host(value.get('lanAddress') or '127.0.0.1')
+        result['appUrl'] = f"http://{result['lanAddress']}:{port}"
+    elif mode == 'domain':
+        domain = str(value.get('domain') or '').strip().lower().rstrip('.')
+        if not DOMAIN.fullmatch(domain): raise ValueError('Invalid domain name')
+        result['domain'], result['appUrl'] = domain, 'https://' + domain
+    else:
+        from urllib.parse import urlsplit
+        url = urlsplit(str(value.get('publicUrl') or '').strip())
+        try: url_port = url.port
+        except ValueError as error: raise ValueError('Invalid public address port') from error
+        if url.scheme != 'https' or not url.hostname or url.username or url.password or url.path not in ('','/') or url.query or url.fragment:
+            raise ValueError('The public address must be https://<host> with no path')
+        origin = 'https://' + _host(url.hostname) + (f':{url_port}' if url_port and url_port != 443 else '')
+        result['publicUrl'] = result['appUrl'] = origin
+    email = value.get('email')
+    if email:
+        email = str(email).strip()
+        if len(email) > 254 or not EMAIL.fullmatch(email): raise ValueError('Invalid certificate email')
+        if mode == 'domain': result['email'] = email
+    user = value.get('pcControlUser')
+    if user:
+        if not isinstance(user, str) or not USERNAME.fullmatch(user): raise ValueError('Invalid PC control user')
+        result['pcControlUser'] = user
+        result['browser'] = browser  # only with PC control
+    return result
+
+def load_settings(path=SETTINGS):
+    """The saved answers, or the defaults when the installer saved none."""
+    if path is None or not Path(path).exists(): return normalize_settings({})
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 4096 or info.st_uid != os.getuid() or info.st_mode & 0o022:
+            raise ValueError('Unsafe install settings file')
+        value = json.loads(os.read(descriptor, 4097))
+    finally: os.close(descriptor)
+    # A file saved before the browser answer existed has no 'browser' key.
+    if not isinstance(value, dict) or set(value) not in (SETTINGS_KEYS, SETTINGS_KEYS - {'browser'}):
+        raise ValueError('Invalid install settings')
+    normal = normalize_settings(value)
+    if normal['appUrl'] != value['appUrl']: raise ValueError('Invalid install settings address')
+    return normal
+
+def pc_account(name):
+    """The human account PC control runs as: a real login account."""
+    user = pwd.getpwnam(name)
+    if user.pw_uid < 1000 or user.pw_uid == 65534 or user.pw_shell.endswith(('/nologin','/false')):
+        raise ValueError('PC control needs a normal login account: '+name)
+    return user, grp.getgrgid(user.pw_gid).gr_name
 
 def hashed(path):
     digest = hashlib.sha256()
@@ -61,7 +175,10 @@ def diagnostic(error):
     return result
 
 def emit(value):
-    print(json.dumps(value), flush=True)
+    # The installer that reads this may be gone (Ctrl-C, a dropped SSH
+    # session); the lifecycle still finishes its work or records recovery.
+    try: print(json.dumps(value), flush=True)
+    except (BrokenPipeError, OSError, ValueError): return
     try:
         if stat.S_ISREG(os.fstat(sys.stdout.fileno()).st_mode): os.fsync(sys.stdout.fileno())
     except OSError:
@@ -157,8 +274,14 @@ def available_ports(preferred=DEFAULT_PORTS):
                 if port in selected:
                     continue
                 probe = socket.socket()
+                # As the services themselves bind: a port with only closed
+                # connections in TIME_WAIT is free, a listening one is not.
+                # Without this a reinstall right after an uninstall moved
+                # every port up by one.
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 try:
                     probe.bind((address, port))
+                    probe.listen(1)
                 except OSError:
                     probe.close()
                     continue
@@ -187,7 +310,7 @@ class Journal:
             if self.identity is None: self.identity = record['identity']
             if record['identity'] != self.identity: raise ValueError('Journal identity')
             if set(self.identity) != {'from','to','manifest'} or not re.fullmatch('[a-f0-9]{64}', self.identity['manifest']): raise ValueError('Journal payload identity')
-            if any(value is not None and not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?', value) for value in (self.identity['from'], self.identity['to'])):
+            if any(value is not None and not re.fullmatch(VERSION_PATTERN, value) for value in (self.identity['from'], self.identity['to'])):
                 raise ValueError('Journal version identity')
             if self.records and record['phase'] not in TRANSITIONS.get(self.records[-1]['phase'], set()): raise ValueError('Journal transition')
             if not self.records and record['phase'] != 'prepared': raise ValueError('Journal start')
@@ -204,6 +327,51 @@ class Journal:
         self.records.append(record)
         self.previous = hashed(path)
 
+def stop_requested(signum, frame):
+    ignore_stop_signals()
+    raise Stopped(signal.Signals(signum).name)
+
+def handle_stop_signals():
+    """SIGTERM and SIGHUP become an exception the lifecycle records as
+    recovery-required. A SIGHUP the parent already ignores (the one-command
+    installer ignores it so a dropped SSH session does not stop an install)
+    stays ignored."""
+    signal.signal(signal.SIGTERM, stop_requested)
+    if signal.getsignal(signal.SIGHUP) is not signal.SIG_IGN:
+        signal.signal(signal.SIGHUP, stop_requested)
+
+def ignore_stop_signals():
+    """While a failure is being recorded, nothing interrupts the record."""
+    try:
+        for value in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT): signal.signal(value, signal.SIG_IGN)
+    except ValueError:
+        pass  # not the main thread
+
+def lock_lifecycle(root):
+    descriptor = os.open(Path(root)/'lifecycle.lock', os.O_RDWR | os.O_NOFOLLOW)
+    info = os.fstat(descriptor)
+    if info.st_nlink != 1 or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        os.close(descriptor); raise ValueError('Unsafe lifecycle lock')
+    try: fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError: os.close(descriptor); raise
+    return descriptor
+
+def port_is_free(port, address='0.0.0.0'):
+    probe = socket.socket()
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try: probe.bind((address, port)); probe.listen(1); return True
+    except OSError: return False
+    finally: probe.close()
+
+def mark_interrupted(journal):
+    """A transaction left mid-phase by a process that died (power loss, kill -9).
+
+    Only called with the lifecycle lock held, so its writer is gone; record it
+    as needing recovery so the ordinary recovery paths can close it.
+    """
+    if journal.records and journal.records[-1]['phase'] not in (*TERMINAL, 'recovery-required'):
+        journal.phase('recovery-required')
+
 class Lifecycle:
     def __init__(self, runtime, root=PRODUCT, isolated=False, progress=None):
         self.runtime, self.root, self.isolated = plain(runtime), plain(root), isolated
@@ -215,8 +383,27 @@ class Lifecycle:
             raise PermissionError('Administrator authorization required')
         self.data, self.children = self.root/'data', {}
         self.version = json.loads((runtime/'app/package.json').read_text())['version']
-        if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?', self.version): raise ValueError('Invalid version identity')
+        if not re.fullmatch(VERSION_PATTERN, self.version): raise ValueError('Invalid version identity')
         self.installed, self.journal = self.root/'versions'/self.version, None
+        self.settings_path = None if isolated else SETTINGS
+
+    def settings(self):
+        return load_settings(self.settings_path)
+
+    def ensure_pc_group(self):
+        """The group the web service and the PC executor share for the spool."""
+        if self.isolated: return
+        try: grp.getgrnam(PC_GROUP)
+        except KeyError: self.run(['/usr/sbin/groupadd','--system',PC_GROUP])
+
+    def repair_pc_spool(self):
+        path = plain(self.data/'pc-spool')
+        path.mkdir(mode=0o2770, exist_ok=True)
+        if path.is_symlink() or not path.is_dir(): raise ValueError('Unsafe PC spool')
+        if not self.isolated:
+            self.ensure_pc_group()
+            os.chown(path, 0, grp.getgrnam(PC_GROUP).gr_gid)
+        os.chmod(path, 0o2770)
 
     def run(self, args, role=None, timeout=180, **kwargs):
         env = {'PATH':'/usr/sbin:/usr/bin:/sbin:/bin', 'TMPDIR':str(self.data/'temp'/(role or 'migrate')),
@@ -382,11 +569,28 @@ class Lifecycle:
         including upgrades from candidates created before this repair.
         """
         self.repair_key_folder()
+        self.repair_pc_spool()
         if self.isolated: return
         shared_gid = grp.getgrnam('josi-ce-app').gr_gid
         for folder in ('chat-attachments','roots','versions','backups','diagnostics','codex','state'):
             path = self.data/folder; plain(path, 0)
             os.chown(path, 0, shared_gid); os.chmod(path, 0o2770)
+
+    def prune_cli_scratch(self):
+        """Remove the bundled Codex CLI's per-run trampolines before a snapshot.
+
+        Codex links helper names (apply_patch, codex-linux-sandbox, ...) to its
+        own binary in <home>/tmp/arg0/codex-arg0XXXX on every start. They are
+        scratch it recreates, they point into versions/, and the cold snapshot
+        refuses links. Only folders exactly at .../tmp/arg0 under the services'
+        homes and the shared Codex home are removed, and only with the services
+        stopped; nothing they contain is followed.
+        """
+        for home in [self.data/'codex', *(self.data/'profiles').glob('*/.codex'), *(self.data/'codex').glob('*/.codex')]:
+            scratch = home/'tmp'/'arg0'
+            if scratch.is_dir() and not scratch.is_symlink():
+                plain(scratch)
+                shutil.rmtree(scratch)
 
     def seal_traversal_permissions(self):
         if self.isolated: return
@@ -397,7 +601,10 @@ class Lifecycle:
         """Close a retained transaction without discarding reachable data."""
         for folder in sorted((self.root/'transactions').iterdir()):
             prior = Journal(folder)
-            if not prior.records or prior.records[-1]['phase'] in ('committed','rolled-back'): continue
+            if not prior.records and not any(folder.iterdir()):
+                folder.rmdir(); continue  # stopped before its first record
+            if not prior.records or prior.records[-1]['phase'] in TERMINAL: continue
+            mark_interrupted(prior)
             phases = [record['phase'] for record in prior.records]
             if prior.records[-1]['phase'] != 'recovery-required':
                 raise RuntimeError('Earlier transaction requires recovery')
@@ -456,20 +663,35 @@ class Lifecycle:
             return [program/'python/bin/python3.12','-I','-B',program/'app/native/PythonRuntime.py',role,config,*test]
         return [program/'node/bin/node',program/'app/native/Runtime.mjs',role,config,*test]
 
-    def caddyfile(self, cfg):
+    def caddyfile(self, cfg, settings=None):
+        """LAN and own-proxy: plain HTTP on the public port. Domain: Caddy's
+        automatic HTTPS for that name on 80 and 443, plus the same plain HTTP
+        port for this network and the installer's readiness check."""
+        settings = settings or self.settings()
+        proxy = f" reverse_proxy 127.0.0.1:{cfg['apiPort']}\n"
+        if settings['addressMode'] == 'domain':
+            email = f" email {settings['email']}\n" if settings.get('email') else ''
+            return (f"{{\n admin off\n{email}}}\n{settings['domain']} {{\n{proxy}}}\n"
+                f"http://:{cfg['publicPort']} {{\n bind 0.0.0.0\n{proxy}}}\n").encode()
         return (f"{{\n admin off\n auto_https off\n}}\n:{cfg['publicPort']} {{\n"
-            f" bind 0.0.0.0\n reverse_proxy 127.0.0.1:{cfg['apiPort']}\n}}\n").encode()
+            f" bind 0.0.0.0\n{proxy}}}\n").encode()
 
-    def unit(self, role, program=None):
+    def unit(self, role, program=None, legacy=False):
+        """legacy is the unit as written before PC control and domain HTTPS,
+        accepted by check_owned so an older install can still be upgraded."""
         program = program or self.installed
-        supplemental = {'web':'josi-ce-app','worker':'josi-ce-app','voice':'josi-ce-voice-shared','voice-control':'josi-ce-voice-shared'}.get(role)
+        supplemental = {'web':'josi-ce-app' if legacy else 'josi-ce-app '+PC_GROUP,'worker':'josi-ce-app',
+                        'voice':'josi-ce-voice-shared','voice-control':'josi-ce-voice-shared'}.get(role)
         if any(re.search(r'[\s"\'\\]', str(value)) for value in self.arguments(role, program)):
             raise ValueError('Unsafe systemd argument')
         command = ' '.join(str(value) for value in self.arguments(role, program))
-        lines = ['[Unit]','Description=Josi CE Server '+role,'After=network.target',
+        lines = ['[Unit]','Description=Josi CE Server '+role,'After=network.target','PartOf='+PARENT_UNIT,
                  *(['After=josi-ce-database.service','Requires=josi-ce-database.service'] if role in ('web','worker') else []),
                  '[Service]','Type=simple','User='+ACCOUNTS[role],'Group='+ACCOUNTS[role],
                  *(['SupplementaryGroups='+supplemental] if supplemental else []),
+                 # Caddy binds 80 and 443 for a public domain's certificate.
+                 *(['AmbientCapabilities=CAP_NET_BIND_SERVICE','CapabilityBoundingSet=CAP_NET_BIND_SERVICE']
+                   if role == 'proxy' and not legacy else []),
                  'ExecStart='+command,'Restart=on-failure','RestartSec=10','TimeoutStopSec=60','UMask=0077',
                  'WorkingDirectory='+str(program/'app'),'Environment=PATH=/usr/bin:/bin',
                  'Environment=LD_LIBRARY_PATH='+str(program/'python/lib')+':'+str(program/'postgresql/lib'),
@@ -480,6 +702,144 @@ class Lifecycle:
                  'ProtectControlGroups=yes','RestrictSUIDSGID=yes','LockPersonality=yes',
                  'ReadWritePaths='+str(self.data),'[Install]','WantedBy=multi-user.target','']
         return '\n'.join(lines).encode()
+
+    def pc_unit(self, user, group, cfg, program=None):
+        """The PC control executor, as the chosen human account. No
+        ProtectHome or ProtectSystem: it works on that person's own files."""
+        program = program or self.installed
+        if not USERNAME.fullmatch(user) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]{0,31}', group):
+            raise ValueError('Unsafe PC control account')
+        command = [program/'node/bin/node', program/PC_EXECUTOR]
+        if any(re.search(r'[\s"\'\\]', str(value)) for value in command): raise ValueError('Unsafe systemd argument')
+        lines = ['[Unit]','Description=Josi PC control for '+user,'PartOf='+PARENT_UNIT,
+                 'After='+UNIT_PREFIX+'web.service','[Service]','Type=simple','User='+user,'Group='+group,
+                 'SupplementaryGroups='+PC_GROUP,'StateDirectory=josi-pc','StateDirectoryMode=0700',
+                 f"Environment=JOSI_PC_API=http://127.0.0.1:{cfg['apiPort']}",
+                 'Environment=JOSI_PC_SPOOL='+str(self.data/'pc-spool'),'Environment=JOSI_PC_STATE=/var/lib/josi-pc',
+                 'ExecStart='+' '.join(str(value) for value in command),'Restart=always','RestartSec=5',
+                 '[Install]','WantedBy='+PARENT_UNIT,'']
+        return '\n'.join(lines).encode()
+
+    def apply_pc_control(self, cfg, settings=None):
+        """Write, follow the version of, or remove josi-pc.service. Returns
+        True when the executor is configured."""
+        if self.isolated: return False
+        settings = settings or self.settings()
+        path = UNIT_DIR/PC_UNIT
+        if path.is_symlink(): raise ValueError('Linked PC control unit')
+        if not settings['pcControlUser']:
+            if path.exists():
+                subprocess.run(['/usr/bin/systemctl','disable','--now',PC_UNIT], capture_output=True, timeout=70)
+                path.unlink()
+                subprocess.run(['/usr/bin/systemctl','daemon-reload'], check=True, timeout=60)
+            self.apply_browser_host(False)
+            self.apply_own_browser(None, None, settings)
+            return False
+        if not (self.installed/PC_EXECUTOR).is_file(): raise ValueError('This Josi version has no PC control executor')
+        user, group = pc_account(settings['pcControlUser'])
+        self.ensure_pc_group()
+        text = self.pc_unit(user.pw_name, group, cfg)
+        if not path.exists() or path.read_bytes() != text:
+            durable(path, text, replace=path.exists(), mode=0o644)
+            subprocess.run(['/usr/bin/systemctl','daemon-reload'], check=True, timeout=60)
+        subprocess.run(['/usr/bin/systemctl','enable',PC_UNIT], check=True, capture_output=True, timeout=60)
+        try: self.apply_own_browser(user.pw_name, group, settings)
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+            self.progress("Josi's own browser was not set up: "+str(error)[:200], 'pc-control')
+        # Browser control is a part of PC control, never a reason to fail it.
+        try: self.apply_browser_host(True)
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+            self.progress('Browser control was not set up: '+str(error)[:200], 'pc-control')
+        return True
+
+    def browser_host_files(self, program=None):
+        """(wrapper text, [(manifest path, json text)]) from browser.mjs of
+        this version, with every path checked against the known folders."""
+        program = program or self.installed
+        code = ("const b=await import(process.argv[1]);process.stdout.write(JSON.stringify({wrapper:"
+                "b.nativeHostWrapper(process.argv[2],process.argv[3],'/var/lib/josi-pc'),"
+                "manifests:b.nativeHostManifests(process.argv[4])}))")
+        from urllib.parse import quote
+        result = self.run([program/'node/bin/node','--input-type=module','-e',code,
+            'file://'+quote(str(program/BROWSER_MODULE)), program/'node/bin/node', program/BROWSER_SCRIPT, BROWSER_WRAPPER], timeout=30)
+        value = json.loads(result.stdout)
+        wrapper, manifests = value['wrapper'], value['manifests']
+        if not isinstance(wrapper, str) or not wrapper.startswith('#!/bin/sh\n') or len(wrapper) > 4096: raise ValueError('Invalid browser host wrapper')
+        allowed = {folder+'/'+BROWSER_HOST_NAME+'.json' for folder in BROWSER_DIRS}
+        files = []
+        for item in manifests:
+            if item.get('path') not in allowed or not isinstance(item.get('json'), str) or len(item['json']) > 8192:
+                raise ValueError('Unexpected browser host manifest')
+            if json.loads(item['json']).get('path') != str(BROWSER_WRAPPER): raise ValueError('Browser host manifest names another program')
+            files.append((Path(item['path']), item['json']))
+        return wrapper, files
+
+    def apply_browser_host(self, enabled):
+        """Install (root-owned wrapper 0755, manifests 0644) or remove the
+        browser native-messaging host. Rewritten on every install and upgrade."""
+        if self.isolated: return
+        targets = [Path(folder)/(BROWSER_HOST_NAME+'.json') for folder in BROWSER_DIRS]
+        if not enabled:
+            for path in [*targets, BROWSER_WRAPPER]:
+                if path.is_symlink() or path.is_file(): path.unlink()
+            return
+        if not (self.installed/BROWSER_MODULE).is_file() or not (self.installed/BROWSER_SCRIPT).is_file():
+            raise ValueError('This Josi version has no browser control host')
+        wrapper, files = self.browser_host_files()
+        def put(path, text, mode):
+            path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+            plain(path.parent)
+            if path.is_symlink(): path.unlink()
+            if path.is_file() and path.read_text() == text and stat.S_IMODE(path.stat().st_mode) == mode: return
+            durable(path, text.encode(), replace=path.exists(), mode=mode)
+            os.chown(path, 0, 0)
+        put(BROWSER_WRAPPER, wrapper, 0o755)
+        for path, text in files: put(path, text, 0o644)
+
+    def browser_unit(self, user, group, program=None):
+        """Josi's own browser, as the PC control account, from this version."""
+        program = program or self.installed
+        if not USERNAME.fullmatch(user) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]{0,31}', group):
+            raise ValueError('Unsafe PC control account')
+        command = [program/'node/bin/node', program/BROWSER_LAUNCHER]
+        if any(re.search(r'[\s"\'\\]', str(value)) for value in [*command, program/BROWSER_EXTENSION]):
+            raise ValueError('Unsafe systemd argument')
+        lines = ['[Unit]',"Description=Josi's own browser for "+user,'PartOf='+PARENT_UNIT,'After='+PC_UNIT,
+                 '[Service]','Type=simple','User='+user,'Group='+group,'StateDirectory=josi-pc','StateDirectoryMode=0700',
+                 'Environment=JOSI_PC_STATE=/var/lib/josi-pc','Environment=JOSI_BROWSER_EXTENSION='+str(program/BROWSER_EXTENSION),
+                 'ExecStart='+' '.join(str(value) for value in command),'Restart=always','RestartSec=5',
+                 '[Install]','WantedBy='+PARENT_UNIT,'']
+        return '\n'.join(lines).encode()
+
+    def apply_own_browser(self, user, group, settings):
+        """Write josi-browser.service for the current version, or remove it
+        when the browser or PC control is off."""
+        if self.isolated: return False
+        path = UNIT_DIR/BROWSER_UNIT
+        if path.is_symlink(): raise ValueError('Linked browser unit')
+        if not user or not settings.get('browser'):
+            if path.exists():
+                subprocess.run(['/usr/bin/systemctl','disable','--now',BROWSER_UNIT], capture_output=True, timeout=70)
+                path.unlink()
+                subprocess.run(['/usr/bin/systemctl','daemon-reload'], check=True, timeout=60)
+            return False
+        if not (self.installed/BROWSER_LAUNCHER).is_file() or not (self.installed/BROWSER_EXTENSION/'manifest.json').is_file():
+            raise ValueError("This Josi version has no browser launcher or extension")
+        text = self.browser_unit(user, group)
+        if not path.exists() or path.read_bytes() != text:
+            durable(path, text, replace=path.exists(), mode=0o644)
+            subprocess.run(['/usr/bin/systemctl','daemon-reload'], check=True, timeout=60)
+        subprocess.run(['/usr/bin/systemctl','enable',BROWSER_UNIT], check=True, capture_output=True, timeout=60)
+        return True
+
+    def start_pc_control(self):
+        """Restart the executor (and Josi's browser) on the current version.
+        Never fatal: Josi itself runs without them and systemd keeps retrying."""
+        if self.isolated: return
+        for unit in (PC_UNIT, BROWSER_UNIT):
+            if (UNIT_DIR/unit).exists():
+                self.progress('Starting services', unit.removesuffix('.service'))
+                subprocess.run(['/usr/bin/systemctl','restart',unit], capture_output=True, timeout=70)
 
     def check_owned(self, program):
         if self.isolated: return
@@ -492,10 +852,14 @@ class Lifecycle:
                 if not re.fullmatch(re.escape(UNIT_PREFIX+role)+r'\.[a-f0-9]{32}\.service',name):
                     raise ValueError('Invalid retained service identity')
                 path=self.root/'disabled-systemd'/name;plain(path,0)
-            if not path.is_file() or path.stat().st_mode & 0o022 or path.read_bytes() != self.unit(role, program):
+            if not path.is_file() or path.stat().st_mode & 0o022 or path.read_bytes() not in (self.unit(role, program), self.unit(role, program, legacy=True)):
                 raise ValueError('Unowned service definition')
 
     def stop(self):
+        for unit in (BROWSER_UNIT, PC_UNIT):
+            if not self.isolated and (UNIT_DIR/unit).exists():
+                self.progress('Stopping services', unit.removesuffix('.service'))
+                subprocess.run(['/usr/bin/systemctl','stop',unit], capture_output=True, timeout=70)
         for role in STOP:
             self.progress('Stopping services', role)
             if self.isolated:
@@ -585,10 +949,15 @@ class Lifecycle:
             if not path.is_symlink(): os.chmod(path,0o755 if path.is_dir() or path.stat().st_mode&0o111 else 0o644)
 
     def install(self, ports=None, fail_at=None, interactive_uid=None, repair=False):
-        if not self.isolated and (interactive_uid is None or interactive_uid < 1000 or not pwd.getpwuid(interactive_uid).pw_dir):
+        # 0 is root itself: the one-command installer run from a root shell,
+        # or the web updater. Any other account must be a real login account.
+        if not self.isolated and (interactive_uid is None or (interactive_uid != 0 and interactive_uid < 1000) or not pwd.getpwuid(interactive_uid).pw_dir):
             raise ValueError('Logged-in installer user required')
         if fail_at and not self.isolated: raise ValueError('Fault injection is isolated only')
-        if self.root.exists() and not (self.root/'installation.json').exists() and any(self.root.iterdir()):
+        # A first install that stopped before its receipt leaves only the lock
+        # and its own transaction records; running the command again starts over.
+        leftovers = {'lifecycle.lock','transactions'}
+        if self.root.exists() and not (self.root/'installation.json').exists() and any(p.name not in leftovers for p in self.root.iterdir()):
             raise ValueError('Existing directory has no Josi ownership receipt; preserve it')
         protect_product_root(self.root, self.isolated)
         lock_path = self.root/'lifecycle.lock'
@@ -623,7 +992,11 @@ class Lifecycle:
                 if not self.isolated:
                     for role in ROLES:
                         if (UNIT_DIR/(UNIT_PREFIX+role+'.service')).exists(): raise ValueError('Existing systemd unit must be preserved')
-                ports = available_ports(DEFAULT_PORTS if ports is None else ports)
+                if ports is None:
+                    ports = list(DEFAULT_PORTS); ports[2] = self.settings()['port']
+                    for index in (0,1,3,4):
+                        if ports[index] == ports[2]: ports[index] = 18083
+                ports = available_ports(tuple(ports))
             self.identities(fresh)
             protect_program_root(self.installed.parent, self.isolated)
             if self.installed.exists(): self.verify(self.installed)
@@ -633,6 +1006,7 @@ class Lifecycle:
             if not fresh: self.stop()
             phase('quiesced')
             if not fresh:
+                self.prune_cli_scratch()
                 before=self.snapshot_inventory(self.data); self.copy(self.data,folder/'snapshot')
                 if self.snapshot_inventory(folder/'snapshot') != before: raise ValueError('Cold snapshot verification failed')
                 durable(folder/'snapshot-inventory',before)
@@ -669,8 +1043,16 @@ class Lifecycle:
                 for role in ROLES: durable(UNIT_DIR/(UNIT_PREFIX+role+'.service'),self.unit(role),replace=True,mode=0o644)
                 subprocess.run(['/usr/bin/systemctl','daemon-reload'],check=True)
                 for role in ROLES: subprocess.run(['/usr/bin/systemctl','enable',UNIT_PREFIX+role+'.service'],check=True)
+                # josi-pc.service moves to this version's program with the
+                # others. PC control never fails the install itself;
+                # josi-ce-server-install checked the account beforehand.
+                try: self.apply_pc_control(cfg)
+                except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+                    self.progress('PC control was not set up: '+str(error)[:200], 'pc-control')
             for role in ROLES: self.start(role)
             phase('activated'); self.ready(); phase('healthy')
+            self.start_pc_control()
+            if not self.isolated: self.record_applied(cfg)
             if not self.isolated:
                 handoff=prepare_browser_handoff(self.root,interactive_uid)
                 durable(handoff/'bootstrap.json',{'token':(self.data/'secrets/bootstrap/browser-token').read_text(),'port':cfg['publicPort']},replace=True)
@@ -678,9 +1060,12 @@ class Lifecycle:
             phase('committed')
             durable(self.root/'status.json',{'installed':True,'version':self.version,'publicPort':cfg['publicPort']},replace=True,mode=0o644)
             return folder
-        except Exception as error:
+        except BaseException as error:
+            # Ctrl-C, SIGTERM and SIGHUP too: a transaction left mid-phase
+            # would block every later install until someone repaired it.
+            if not self.isolated: ignore_stop_signals()
             if self.journal: durable(self.journal.folder/'failure-diagnostics',diagnostic(error),replace=True)
-            if self.journal and self.journal.records[-1]['phase'] not in ('committed','rolled-back','recovery-required'):
+            if self.journal and self.journal.records and self.journal.records[-1]['phase'] not in (*TERMINAL,'recovery-required'):
                 self.journal.phase('recovery-required')
             self.progress('Recovery required; existing data retained','installer')
             raise
@@ -700,7 +1085,7 @@ class Lifecycle:
             info=os.fstat(lock)
             if info.st_nlink!=1 or info.st_uid!=os.getuid() or info.st_mode&0o077: raise ValueError('Unsafe recovery lock')
             fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            journal=Journal(folder); phases=[record['phase'] for record in journal.records]
+            journal=Journal(folder); mark_interrupted(journal); phases=[record['phase'] for record in journal.records]
             if 'activating' in phases: raise RuntimeError('Activation began; preserve current data for lossless manual recovery')
             if not phases or phases[-1]!='recovery-required': raise ValueError('Not a recoverable transaction')
             if not journal.identity['from']: raise RuntimeError('No verified previous installation; preserve provisioning evidence for review')
@@ -725,16 +1110,84 @@ class Lifecycle:
         finally:
             fcntl.flock(lock,fcntl.LOCK_UN); os.close(lock)
 
+    def applied_view(self, cfg, settings):
+        return {'appUrl':settings['appUrl'],'addressMode':settings['addressMode'],'email':settings['email'],
+                'publicPort':cfg['publicPort']}
+
+    def record_applied(self, cfg, settings=None):
+        path = self.root/'applied-settings.json'
+        durable(path, self.applied_view(cfg, settings or self.settings()), replace=path.exists())
+
+    def reconfigure(self):
+        """Apply the installer's answers to the installed version: the public
+        port, the Caddyfile (LAN, own proxy or domain HTTPS), the browser
+        address the web service is started with, and PC control. Only what
+        changed is restarted; a failed restart puts the old files back."""
+        if self.isolated: raise ValueError('Reconfiguration is for installed servers')
+        lock = lock_lifecycle(self.root)
+        try:
+            for folder in (self.root/'transactions').iterdir():
+                prior = Journal(folder)
+                if not prior.records or prior.records[-1]['phase'] not in TERMINAL:
+                    raise RuntimeError('Earlier transaction requires recovery')
+            settings = self.settings()
+            config_path = plain(self.data/'config/runtime.json', 0)
+            cfg = json.loads(config_path.read_text()); previous = dict(cfg)
+            self.installed = self.root/'versions'/cfg['version']; self.check_owned(self.installed)
+            self.repair_layout_permissions()
+            if settings['port'] != cfg['publicPort']:
+                if settings['port'] in {cfg[key] for key in ('databasePort','apiPort','voicePort','controlPort')}:
+                    raise ValueError(f"Port {settings['port']} is used by Josi's own services")
+                if not port_is_free(settings['port']): raise ValueError(f"Port {settings['port']} is in use")
+                cfg['publicPort'] = settings['port']
+            caddy_path = plain(self.data/'config/Caddyfile')
+            caddy_before = caddy_path.read_bytes() if caddy_path.exists() else None
+            caddy = self.caddyfile(cfg, settings)
+            applied_path = self.root/'applied-settings.json'
+            applied = json.loads(applied_path.read_text()) if applied_path.exists() else None
+            restart = (['proxy'] if caddy != caddy_before else []) + \
+                (['web','worker'] if applied != self.applied_view(cfg, settings) else [])
+            try:
+                if cfg != previous: durable(config_path, cfg, replace=True, mode=0o644)
+                if caddy != caddy_before: durable(caddy_path, caddy, replace=caddy_before is not None, mode=0o644)
+                for role in restart:
+                    self.progress('Starting services', role)
+                    subprocess.run(['/usr/bin/systemctl','restart',UNIT_PREFIX+role+'.service'], check=True, timeout=70)
+                if restart: self.ready()
+            except BaseException:
+                ignore_stop_signals()
+                durable(config_path, previous, replace=True, mode=0o644)
+                if caddy_before is not None: durable(caddy_path, caddy_before, replace=True, mode=0o644)
+                for role in restart:
+                    subprocess.run(['/usr/bin/systemctl','restart',UNIT_PREFIX+role+'.service'], capture_output=True, timeout=70)
+                raise
+            units = lambda: [(UNIT_DIR/unit).read_bytes() if (UNIT_DIR/unit).exists() else None for unit in (PC_UNIT, BROWSER_UNIT)]
+            pc_before = units()
+            if self.apply_pc_control(cfg, settings):
+                if units() != pc_before: self.start_pc_control()
+                else:
+                    for unit in (PC_UNIT, BROWSER_UNIT):
+                        if (UNIT_DIR/unit).exists(): subprocess.run(['/usr/bin/systemctl','start',unit], capture_output=True, timeout=70)
+            self.record_applied(cfg, settings)
+            durable(self.root/'status.json',{'installed':True,'version':cfg['version'],'publicPort':cfg['publicPort']},replace=True,mode=0o644)
+            return restart
+        finally:
+            fcntl.flock(lock,fcntl.LOCK_UN); os.close(lock)
+
 if __name__ == '__main__':
     try:
+        handle_stop_signals()
         runtime=Path(__file__).resolve().parents[2]
         if sys.argv[1:]==['verify']:
             obj=object.__new__(Lifecycle); obj.runtime=runtime
             obj.version=json.loads((runtime/'app/package.json').read_text())['version']
             emit({'verified':obj.verify(),'architecture':os.uname().machine})
-        elif len(sys.argv)==3 and sys.argv[1]=='install' and sys.argv[2].isascii() and sys.argv[2].isdecimal():
-            Lifecycle(runtime).install(interactive_uid=int(sys.argv[2]))
+        elif len(sys.argv)==3 and sys.argv[1] in ('install','repair') and sys.argv[2].isascii() and sys.argv[2].isdecimal():
+            # repair puts the same version back over data an uninstall kept.
+            Lifecycle(runtime).install(interactive_uid=int(sys.argv[2]), repair=sys.argv[1]=='repair')
+        elif sys.argv[1:]==['configure']:
+            emit({'restarted':Lifecycle(runtime).reconfigure()})
         else: raise ValueError('Unsupported lifecycle command')
-    except Exception as error:
+    except BaseException as error:
         emit({'phase':'Stopped',**diagnostic(error)})
         sys.exit(1)

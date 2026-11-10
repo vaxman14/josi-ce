@@ -9,7 +9,7 @@
 # version once, and collects the result in <build base>/releases/<version>.
 set -euo pipefail
 
-version=; publish=0; provision=1; code=1; portable=1
+version=; publish=0; provision=1; code=1; portable=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) version=${2:-}; shift 2 ;;
@@ -17,6 +17,7 @@ while [ $# -gt 0 ]; do
     --skip-provision) provision=0; shift ;;
     --skip-code) code=0; shift ;;
     --skip-portable) portable=0; shift ;;
+    --portable) portable=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -51,19 +52,24 @@ if [ "$code" = 1 ]; then
   npm --prefix apps/web run build
 fi
 
-step "Runtime staging and payload inventory ($version)"
+# stage.py also builds the browser extension (scripts/unified/build-browser-extensions.mjs)
+# into a new folder and stages its chrome/ part as app/browser-extension/chrome.
+step "Runtime staging, browser extension and payload inventory ($version)"
 rm -rf "$base/stage/runtime/app/node_modules"
 python3 -B scripts/linux/stage.py
 
-step 'Packages: Arch, Debian/Ubuntu, Fedora/RHEL'
-rm -f "$out/SHA256SUMS.txt"
+step 'Packages: Arch (pacman) and Debian/Ubuntu'
+rm -f "$out/SHA256SUMS.txt" "$out"/josi*.deb "$out"/josi*.pkg.tar.zst "$out"/josi-root-*.tar.zst
 python3 -B scripts/linux/build-arch.py
 python3 -B scripts/linux/build-deb.py
-python3 -B scripts/linux/build-rpm.py
+# The Ghost Stage needs all 14 clips in both formats and the still.
+python3 -B scripts/linux/check-ghost-assets.py
 
-step 'One-command installer'
+step 'One-command installer (linux) and update feed (linux-latest.json)'
 python3 -B scripts/linux/build-headless-installer.py
 
+# The graphical AppImage installer belongs to the earlier desktop-setup
+# layout and is not part of the headless server; it stays off unless asked.
 if [ "$portable" = 1 ]; then
   step 'Portable graphical installer (AppImage and .run)'
   python3 -B scripts/linux/build-universal-appimage.py
@@ -73,21 +79,22 @@ step 'Release folder'
 release=$base/releases/$version
 rm -rf "$release"; mkdir -p "$release"
 names=$(python3 -B -c "import sys; sys.path.insert(0,'scripts/linux'); from package_common import package_names; print(' '.join(package_names().values()))")
-for name in $names install-josi-ce-server.sh; do cp "$out/$name" "$release/"; done
+for name in $names; do [ -f "$out/$name" ] && cp "$out/$name" "$release/"; done
+cp "$out/linux" "$out/linux-latest.json" "$out/PKGBUILD" "$out/josi.install" "$out"/josi-root-*.tar.zst "$release/"
+# install.sh: run from a copy of this folder to install with no download (--from).
+install -m 755 packaging/linux/offline-install.sh "$release/install.sh"
 if [ "$portable" = 1 ]; then
   cp "$out/Josi-CE-Server-Installer-$version-x86_64.AppImage" "$out/Josi-CE-Server-Installer-$version-x86_64.run" "$release/"
 fi
 (cd "$release" && sha256sum -- * | sort -k2 > SHA256SUMS.txt)
 cat > "$release/RELEASE-NOTES.md" <<NOTES
-Josi CE $version for Linux and NAS (x86_64).
+Josi $version server for Linux (headless, systemd).
 
-One command on Debian, Ubuntu, Fedora, RHEL or Arch, from your normal account:
+One command on Arch, Debian or Ubuntu:
 
-    curl -fsSL https://get.heyjosi.com/install.sh | sh
+    curl -fsSL ${JOSI_INSTALL_HOST:-https://<install host>}/linux | sudo bash
 
-It downloads the package for your distribution, checks its SHA-256, installs it with sudo, and prints the one-time address where you finish setup in a browser. The packages are also here for a manual install: .deb, .rpm and .pkg.tar.zst, plus a portable graphical installer (.AppImage, .run). All checksums are in SHA256SUMS.txt. The packages are not signed with a distribution key.
-
-Source and help: https://github.com/vaxman14/josi-ce and https://get.heyjosi.com
+It installs what Josi needs, checks the package's SHA-256, installs it, starts josi.service and prints the address to open in a browser, where setup, sign-in, chat, settings and updates happen. The packages are here for a manual install too (.deb, .pkg.tar.zst, and a PKGBUILD for makepkg). Remove with \`sudo josi-uninstall\` (keeps the data) or \`sudo josi-uninstall --purge\`. All checksums are in SHA256SUMS.txt. The packages are not signed with a distribution key.
 NOTES
 echo "Release files in $release:"; (cd "$release" && ls -l)
 

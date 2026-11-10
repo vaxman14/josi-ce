@@ -18,6 +18,8 @@ interface Options {
   now?: () => number;
   voice?: VoiceHelper;
   workspace?: WorkspaceMountProbe;
+  /** The same read-only checks serve the native Linux server. */
+  runtime?: 'macos' | 'linux';
 }
 
 /** Only the installer's loopback listener is probed. No redirects, cookies,
@@ -60,8 +62,9 @@ export function nativeMacDoctor(options: Options): DoctorHelper {
   const data = env.JOSI_DATA_DIR ?? '';
   const version = env.JOSI_VERSION ?? '';
   const voice = options.voice ?? voiceHelper();
+  const linux = options.runtime === 'linux';
   return async (path, body) => {
-    if (path === '/update/status' && body === undefined) return { status: 200, data: {
+    if (!linux && path === '/update/status' && body === undefined) return { status: 200, data: {
       state: 'idle', currentVersion: version, targetVersion: null, startedAt: null, finishedAt: null,
       applyMode: 'installer', message: 'Mac updates use the signed Josi installer. Your data is retained.',
     } };
@@ -76,13 +79,15 @@ export function nativeMacDoctor(options: Options): DoctorHelper {
     // Keep a stable report order. Every failed probe becomes a separate check;
     // filesystem/SQL/HTTP exception text never crosses the browser boundary.
     await probe('architecture', async () => {
-      if ((options.platform ?? process.platform) !== 'darwin'
-        || (options.architecture ?? process.arch) !== 'arm64') throw new Error();
+      const platform = options.platform ?? process.platform, architecture = options.architecture ?? process.arch;
+      if (linux ? platform !== 'linux' || !['x64', 'arm64'].includes(architecture)
+        : platform !== 'darwin' || architecture !== 'arm64') throw new Error();
     });
-    await probe('native_runtime', async () => {
+    await probe(linux ? 'native_linux_runtime' : 'native_runtime', async () => {
       const meta = JSON.parse(await readFile(join(app, 'package.json'), 'utf8'));
       const cfg = JSON.parse(await readFile(join(data, 'config/runtime.json'), 'utf8'));
-      if (!/^\d+\.\d+\.\d+-macos\.\d+$/.test(version) || version !== meta.version
+      const shape = linux ? /^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$/ : /^\d+\.\d+\.\d+-macos\.\d+$/;
+      if (!shape.test(version) || version !== meta.version
         || cfg.version !== version || cfg.schemaVersion !== 1) throw new Error();
       for (const file of ['apps/api/dist/server.js', 'apps/worker/dist/main.js', 'apps/web/dist/index.html']) {
         if (!(await lstat(join(app, file))).isFile()) throw new Error();
@@ -146,7 +151,7 @@ export function nativeMacDoctor(options: Options): DoctorHelper {
       const [row] = await options.db.query<{ count: string }>("select count(*)::text as count from push_deliveries where status in ('failed','retry')");
       return Number(row?.count ?? 0) === 0 ? 'pass' : 'warn';
     });
-    return { status: 200, data: { runtime: 'macos', checkedAt: new Date(now()).toISOString(),
+    return { status: 200, data: { runtime: linux ? 'linux' : 'macos', checkedAt: new Date(now()).toISOString(),
       safeRepairAvailable: false, checks } };
   };
 }

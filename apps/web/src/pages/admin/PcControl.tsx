@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { Button, ErrorNote } from '@/components/ui';
 
 type Scope={kind:string;target:string;application?:string;profile?:string};
@@ -11,6 +11,60 @@ type Activity={id:string;at:string;kind:string;description?:string;requirements?
 type State={enabled:boolean;pcId:string;catalog:Catalog[];policies:Policy[];requests:Pending[];activity:Activity[];tasks:{id:string;name:string;created_at:string}[];executorAvailable:boolean;availability:string;uac:string};
 const MODES=[['never','Never allow'],['ask','Ask every time'],['task','Allow for this task'],['temporary','Allow temporarily'],['always','Always allow for this exact scope']];
 const endpoint='/admin/pc-control';
+/** A Linux executor running on this server for one of its accounts
+ * (GET /admin/pc-control/local). */
+type LocalExecutor={pcId:string;user:string;host:string;paired:boolean;connected:boolean};
+type Local={available:boolean;executors:LocalExecutor[]};
+/** A pcId Josi's Linux executor reports starts with "linux-". */
+const isLinuxPc=(pcId:string|null|undefined)=>!!pcId&&pcId.startsWith('linux-');
+
+/** Who may sign in for Josi (docs/LIVE_SIGN_IN.md): the owner always can; a
+ * grant lets another person see Josi's whole browser. */
+function SignInGrants(){
+  const [users,setUsers]=useState<{id:string;name:string;granted:boolean}[]|null>(null),[missing,setMissing]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState<string|null>(null);
+  async function load(){try{setUsers((await api.get<{users:{id:string;name:string;granted:boolean}[]}>('/admin/live-signin/grants')).users);}catch(e){if(e instanceof ApiError&&e.status===404){setMissing(true);return;}setError(e instanceof Error?e.message:'Could not read who may sign in.');}}
+  useEffect(()=>{void load();},[]);
+  async function set(id:string,granted:boolean){setBusy(id);setError('');try{await api.put('/admin/live-signin/grants/'+encodeURIComponent(id),{granted});await load();}catch(e){setError(e instanceof Error?e.message:'Could not change that.');}finally{setBusy(null);}}
+  if(missing)return null;
+  return <section className="space-y-3 rounded-lg border p-4" aria-label="Who can sign in for Josi" data-testid="josi.pc.signin-grants">
+    <h2 className="font-semibold">Who can sign in for Josi</h2>
+    <p className="text-sm text-muted-foreground">The owner always can. When Josi needs a login she cannot do, a person who is allowed opens a card and signs in themselves on a live view of her screen or in a terminal. A grant lets that person see Josi&rsquo;s whole browser, which can include your logins. Off by default.</p>
+    {error?<ErrorNote>{error}</ErrorNote>:null}
+    {!users?<p className="text-sm">Loading…</p>:!users.length?<p className="text-sm">There are no other people on this Josi.</p>:
+      <ul className="space-y-1">{users.map(u=><li key={u.id}><label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={u.granted} disabled={busy===u.id} onChange={e=>void set(u.id,e.target.checked)}/>{u.name}</label></li>)}</ul>}
+  </section>;
+}
+
+/** "This server": the Linux executors on the machine Josi runs on, paired to
+ * this account with the account password. */
+function ThisServer(){
+  const [local,setLocal]=useState<Local|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  const [pairing,setPairing]=useState<string|null>(null),[password,setPassword]=useState('');
+  const [missing,setMissing]=useState(false);
+  // A server without the route (a Windows or Mac host) has no section to show.
+  async function load(){try{setLocal(await api.get<Local>(endpoint+'/local'));}catch(e){setLocal(null);if(e instanceof ApiError&&e.status===404){setMissing(true);return;}setError(e instanceof Error?e.message:'Could not read this server\'s executors.');}}
+  useEffect(()=>{void load();const timer=setInterval(()=>{void load();},15000);return()=>clearInterval(timer);},[]);
+  async function act(work:()=>Promise<unknown>){setBusy(true);setError('');try{await work();await load();}catch(e){setError(e instanceof Error?e.message:'Could not change that.');}finally{setBusy(false);}}
+  const inputClass='min-h-11 w-full rounded-md border border-border bg-background px-3';
+  if(missing)return null;
+  return <section className="space-y-3 rounded-lg border p-4" aria-label="This server" data-testid="josi.pc.this-server">
+    <h2 className="font-semibold">This server</h2>
+    <p className="text-sm text-muted-foreground">Josi can work on the Linux server she runs on, as one of its user accounts. Pair an account here with your Josi password; unpair it any time. Every action still follows the permissions on this page.</p>
+    {error?<ErrorNote>{error}</ErrorNote>:null}
+    {!local?<p className="text-sm">{error?'':'Loading…'}</p>:!local.available?<p className="text-sm">No local executor is installed on this server.</p>:!local.executors.length?<p className="text-sm">No local executor is running on this server yet.</p>:
+      <ul className="space-y-2">{local.executors.map(x=><li key={x.pcId} className="space-y-2 rounded-md border p-3">
+        <p className="font-medium break-all">{x.user}@{x.host}</p>
+        <p className="text-sm text-muted-foreground">{x.paired?'Paired with your account':'Not paired'} · {x.connected?'connected':'not connected'}</p>
+        {pairing===x.pcId?<form className="flex flex-wrap items-end gap-2" onSubmit={e=>{e.preventDefault();const secret=password;setPassword('');void act(async()=>{await api.post(endpoint+'/local/'+encodeURIComponent(x.pcId)+'/pair',{password:secret});setPairing(null);});}}>
+          <label className="flex min-w-0 flex-1 flex-col gap-1 text-sm">Your Josi password<input className={inputClass} type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} disabled={busy} required/></label>
+          <Button type="submit" disabled={busy||!password}>Pair</Button><Button type="button" variant="secondary" disabled={busy} onClick={()=>{setPairing(null);setPassword('');}}>Cancel</Button>
+        </form>:<div className="flex flex-wrap gap-2">
+          {x.paired?<Button variant="secondary" disabled={busy} onClick={()=>void act(()=>api.del(endpoint+'/local/'+encodeURIComponent(x.pcId)))}>Unpair</Button>
+            :<Button disabled={busy} onClick={()=>{setPairing(x.pcId);setPassword('');setError('');}}>Pair</Button>}
+        </div>}
+      </li>)}</ul>}
+  </section>;
+}
 function ScopeText({scope}:{scope:Scope}){return <span className="break-all">{scope.application?`${scope.application} · `:''}{scope.profile?`Profile ${scope.profile} · `:''}{scope.target}</span>;}
 
 export function AdminPcControl(){
@@ -19,6 +73,8 @@ export function AdminPcControl(){
   const [mode,setMode]=useState('ask'),[taskId,setTaskId]=useState(''),[expires,setExpires]=useState('');
   const [passwords,setPasswords]=useState<Record<string,string>>({}),[savePassword,setSavePassword]=useState('');
   const spec=state?.catalog.find(s=>s.action===action);
+  const linux=isLinuxPc(state?.pcId);
+  const machine=linux?'this server':'this PC';
   async function refresh(){setState(await api.get<State>(endpoint));}
   useEffect(()=>{void refresh().catch(e=>setError(e instanceof Error?e.message:'Could not load PC permissions.'));},[]);
   // Refresh pending requests and expiry displays, including while this tab is
@@ -38,23 +94,25 @@ export function AdminPcControl(){
     <section className="space-y-3 rounded-lg border p-4">
       <p role="status">{state?.availability??'Loading PC permissions…'}</p>
       <label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={state?.enabled??false} disabled={!state||busy}
-        onChange={e=>void change(()=>api.put(endpoint+'/enabled',{enabled:e.target.checked}))}/>Allow Josi to control this PC</label>
-      <p className="text-sm text-muted-foreground">Off by default. Turning this on does not grant any browser, folder or application access. These permissions apply only to this hosting PC and your account.</p>
+        onChange={e=>void change(()=>api.put(endpoint+'/enabled',{enabled:e.target.checked}))}/>Allow Josi to control {machine}</label>
+      <p className="text-sm text-muted-foreground">Off by default. Turning this on does not grant any browser, folder or application access. These permissions apply only to {linux?'this server':'this hosting PC'} and your account.</p>
       <Button variant="danger" onClick={()=>void change(()=>api.post(endpoint+'/stop',{}))}>Stop control and revoke temporary access</Button>
       <p className="text-sm">Emergency stop disables control, cancels active broker actions and revokes pending approvals and task/temporary grants. Completed changes cannot be undone. Permanent scope choices remain saved.</p>
-      <p className="text-sm">{state?.uac}</p>
+      {state?.uac&&!(linux&&/\bUAC\b|Windows/.test(state.uac))?<p className="text-sm">{state.uac}</p>:null}
     </section>
+    <ThisServer/>
+    <SignInGrants/>
     {state?<>
       <section className="space-y-3 rounded-lg border p-4">
         <h2 className="font-semibold">Choose one exact scope</h2>
-        <p className="text-sm">Each browser executable, browser profile and origin needs its own permission. Folder choices apply to that exact folder; application choices apply to that exact executable. No wildcard or inherited grants.</p>
+        <p className="text-sm">Each browser executable, browser profile and origin needs its own permission. Folder choices apply to that exact folder; application choices apply to that exact {linux?'program':'executable'}. No wildcard or inherited grants.</p>
         <div><label className="block" htmlFor="pc-action">Action</label><select id="pc-action" className={inputClass} value={action} onChange={e=>{setAction(e.target.value);setTarget('');setApplication('');setProfile('');}}>{state.catalog.map(c=><option key={c.action} value={c.action}>{c.label}</option>)}</select></div>
         {spec?<p>{spec.access}{spec.highRisk&&!spec.grantable?' · Separate approval for each exact action is required in every mode.':spec.kind==='command'?' · High risk. Allowing a shell here lets Josi run commands in this folder and every folder under it without asking; your password confirms it.':''}</p>:null}
-        <label className="block">{spec?.kind==='browser'?'Exact website origin (for example, https://example.com)':spec?.kind==='application'?'Exact application .exe path':spec?.kind==='command'?'Folder Josi may run commands in (and its subfolders)':spec?.kind==='folder'?'Exact local folder path':spec?.kind==='secret'?'Exact credential/item identifier':'Exact software or settings scope'}
+        <label className="block">{spec?.kind==='browser'?'Exact website origin (for example, https://example.com)':spec?.kind==='application'?(linux?'Exact application path (for example, /usr/bin/firefox)':'Exact application .exe path'):spec?.kind==='command'?'Folder Josi may run commands in (and its subfolders)':spec?.kind==='folder'?'Exact local folder path':spec?.kind==='secret'?'Exact credential/item identifier':'Exact software or settings scope'}
           <input className={inputClass} value={target} onChange={e=>setTarget(e.target.value)} autoComplete="off"/></label>
-        {spec?.kind==='browser'?<label className="block">Exact browser .exe path<input className={inputClass} value={application} onChange={e=>setApplication(e.target.value)} autoComplete="off"/></label>:null}
+        {spec?.kind==='browser'?<label className="block">{linux?'Exact browser program path':'Exact browser .exe path'}<input className={inputClass} value={application} onChange={e=>setApplication(e.target.value)} autoComplete="off"/></label>:null}
         {spec?.kind==='command'?<label className="block">Shell<select className={inputClass} value={application} onChange={e=>setApplication(e.target.value)}><option value="">Choose the shell</option>
-          <option value="C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe">PowerShell</option><option value="C:\Windows\System32\cmd.exe">Command Prompt</option></select></label>:null}
+          {linux?<><option value="/bin/bash">Bash</option><option value="/bin/sh">sh</option></>:<><option value="C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe">PowerShell</option><option value="C:\Windows\System32\cmd.exe">Command Prompt</option></>}</select></label>:null}
         {needsPassword?<label className="block">Confirm your account password<input className={inputClass} type="password" autoComplete="current-password" value={savePassword} onChange={e=>setSavePassword(e.target.value)}/></label>:null}
         {spec?.kind==='browser'?<label className="block">Exact browser profile<input className={inputClass} value={profile} onChange={e=>setProfile(e.target.value)} autoComplete="off"/></label>:null}
         <div><label className="block" htmlFor="pc-mode">Approval mode</label><select id="pc-mode" className={inputClass} value={mode} onChange={e=>setMode(e.target.value)}>{MODES.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></div>

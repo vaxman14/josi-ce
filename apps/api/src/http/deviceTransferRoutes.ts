@@ -16,7 +16,8 @@ export const TRANSFER_MAX_BYTES = 25 * 1024 * 1024;
 export const TRANSFER_MAX_WAITING = 20;
 const DEVICE = /^[a-z]{2,8}-[0-9a-f]{8,64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const PLATFORMS = new Set(['windows', 'macos', 'android', 'ios', 'web']);
+// 'linux' is a Josi server's own PC service, which receives into the Linux user's Downloads folder.
+const PLATFORMS = new Set(['windows', 'macos', 'android', 'ios', 'web', 'linux']);
 
 class RouteError extends Error { constructor(readonly status: number, message: string) { super(message); } }
 const handle = (fn: (req: Request, res: Response) => Promise<unknown>) => asyncRoute(async (req, res) => {

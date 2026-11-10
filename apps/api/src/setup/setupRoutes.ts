@@ -31,7 +31,8 @@ import { reconcileWorkspaceMount } from '@josi-ce/storage';
 import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
 import { claudeSubscriptionRouter, claudeSubscriptionStatus } from '../http/claudeSubscriptionRoutes.js';
 import { codexSubscriptionRouter, codexSubscriptionStatus } from '../http/codexSubscriptionRoutes.js';
-import { hasCapability } from '@josi-ce/core';
+import { hasCapability, readLocalExecutors } from '@josi-ce/core';
+import { pairLocalExecutor } from '../http/pcLocalPairing.js';
 import {
   providerCatalog, readCredentials, revealForDiscovery, savableProviders, subscriptionOptions,
 } from '../http/llmRoutes.js';
@@ -144,6 +145,20 @@ const bool = (v: unknown): boolean => v === true;
  * simply leaves the normal Address step in place. This is idempotent so both
  * GET and POST routes can enforce the same state-machine boundary. */
 async function applyInstallerDeployment(db: Db): Promise<void> {
+  if (process.env.JOSI_LINUX_SERVER === '1') {
+    // The headless Linux server. Its installer asked how people reach it and
+    // started it with APP_URL and JOSI_ACCESS_MODE; server startup already
+    // recorded that domain and HTTPS mode (reconcilePublicAddress). Add the
+    // certificate email, and leave the Address step open so the owner sees
+    // the address, prefilled from linuxInstallerAddress().
+    const email = str(process.env.JOSI_ACME_EMAIL, 320);
+    if (process.env.JOSI_ACCESS_MODE === 'domain' && email.includes('@')) {
+      await db.query(`update deployment_config set acme_email=$1
+        where id=true and acme_email is null
+          and exists(select 1 from setup_state where id=true and completed=false)`, [email]);
+    }
+    return;
+  }
   if (process.env.JOSI_NATIVE_RUNTIME === '1' && process.env.APP_URL === 'http://localhost:8080') {
     // Import the already-installed local address. Never overwrite a previously
     // chosen address or alter proxy/firewall configuration during onboarding.
@@ -182,6 +197,25 @@ async function applyInstallerDeployment(db: Db): Promise<void> {
      set completed_steps = array_append(completed_steps, 'domain'), current_step = 'domain'
      where id = true and completed = false and not ('domain' = any(completed_steps))`,
   );
+}
+
+/** What the Linux installer chose, for prefilling the Address step: the
+ * domain field, the HTTPS select and the certificate email. Null elsewhere. */
+async function linuxInstallerAddress(db: Db): Promise<Record<string, unknown> | null> {
+  if (process.env.JOSI_LINUX_SERVER !== '1') return null;
+  const mode = process.env.JOSI_ACCESS_MODE;
+  let url: URL;
+  try { url = new URL(process.env.APP_URL ?? ''); } catch { return null; }
+  if (!['lan', 'domain', 'proxy'].includes(mode ?? '')) return null;
+  const [deployment] = await db.query<{ acme_email: string | null }>(
+    'select acme_email from deployment_config where id = true');
+  return {
+    mode,
+    origin: url.origin,
+    domain: url.hostname.toLowerCase(),
+    tlsMode: mode === 'proxy' ? 'external_proxy' : 'bundled_caddy',
+    acmeEmail: deployment?.acme_email ?? null,
+  };
 }
 
 /** Saving a model is not completing the model step. The five-part probe is the
@@ -265,6 +299,10 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         // the server had long since accepted twenty, so a provider was
         // reachable after installation but not during it.
         providerCatalog: providerCatalog(),
+        // Linux: the address chosen in the installer, to prefill the Address step.
+        installerAddress: await linuxInstallerAddress(db),
+        // The Linux server's own PC service, so the step can pair it here.
+        localPc: readLocalExecutors().map(({ pcId, user, host }) => ({ pcId, user, host }))[0] ?? null,
       });
     }),
   );
@@ -986,6 +1024,22 @@ async function applyStep(
       // Skipping writes nothing; PC Control stays off and unpaired, and the
       // owner can pair later from the app or from chat.
       if (body.skip === true) return;
+      // A Linux server pairs its own PC service (josi-pc.service) right here:
+      // the account password is the approval, as on the PC Control page.
+      if (typeof body.localPcId === 'string') {
+        const local = readLocalExecutors().find(h => h.pcId === body.localPcId);
+        if (!local) throw new SetupError(400, 'The PC service on this server is not running. Skip this step; run the installer again later and choose PC control.');
+        const [owner] = await db.query<{ id: string; password_hash: string | null }>("select id, password_hash from users where role='super_admin' limit 1");
+        if (!owner) throw new SetupError(409, 'Create your account first.');
+        if (!await verifyPassword(owner.password_hash, typeof body.password === 'string' ? body.password : ''))
+          throw new SetupError(401, 'That password did not match your account.');
+        await pairLocalExecutor(db, owner.id, local.pcId);
+        if (body.enable === true) {
+          await db.query('update pc_control_settings set enabled=true, full_control=true where owner_user_id=$1 and pc_id=$2', [owner.id, local.pcId]);
+          await db.query('insert into pc_control_activity(owner_user_id,pc_id,kind) values($1,$2,$3)', [owner.id, local.pcId, 'Control and everyday allowances enabled during setup; commands and high-risk actions still ask']);
+        }
+        return;
+      }
       const pcId = typeof body.pcId === 'string' && /^[a-z0-9-]{1,80}$/.test(body.pcId) ? body.pcId : null;
       const key = typeof body.publicKey === 'string' && body.publicKey.length <= 100 ? body.publicKey : null;
       if (!pcId || !key) throw new SetupError(400, 'Approve this PC from the Josi app on that computer, or skip this step for now.');

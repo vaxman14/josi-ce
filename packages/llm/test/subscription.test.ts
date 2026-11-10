@@ -68,6 +68,9 @@ describe('it delegates to the documented CLI and nothing else (L3.2)', () => {
     expect(codexArgs('gpt-5-codex')).toEqual([
       'exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check',
       '-c', 'features.shell_tool=false', '-c', 'features.view_image=false', '-c', 'features.multi_agent=false',
+      // No ChatGPT apps or plugins as a second tool channel, on any turn.
+      '-c', 'features.apps=false', '-c', 'features.plugins=false',
+      '-c', 'tools.experimental_request_user_input.enabled=false',
       '--model', 'gpt-5-codex', '-',
     ]);
     expect(codexArgs('')).not.toContain('--model');

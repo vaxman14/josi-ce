@@ -1,0 +1,46 @@
+[
+  {
+    "id": "codex-x86_64",
+    "name": "@openai/codex",
+    "version": "0.152.0-linux-x64",
+    "filename": "codex-0.152.0-linux-x64.tgz",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.152.0-linux-x64.tgz",
+    "sha256": "9e4c4a25b88d9c93ce0ee4f64fba23fc55949f66d9ecb79e419c541b64b80997",
+    "integrity": "sha512-Isn/g5EZTaNbwZtaIuz67U1FNDEVVeMpS4xiR+c1dpOPL2xxrGNtdAothOW2YKsb96OsS+QfClziFb4qxesWDA==",
+    "triple": "x86_64-unknown-linux-musl",
+    "note": "Same Codex version as packaging/macos and packaging/windows",
+    "license": "Apache-2.0"
+  },
+  {
+    "id": "codex-aarch64",
+    "name": "@openai/codex",
+    "version": "0.152.0-linux-arm64",
+    "filename": "codex-0.152.0-linux-arm64.tgz",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.152.0-linux-arm64.tgz",
+    "sha256": "245f75c9cdbcef4bccf04d1f77e389a9a66eecaa39591f67832b9261e4edc5bb",
+    "integrity": "sha512-OTmO6y5gCpcjzybwzgK/nSM8VI68Pw+T2ohBK+8cwVM+7PCRqSqtNo7qTLG0bgv9ff6QtwiZ9sl0KtY42H0Wqg==",
+    "triple": "aarch64-unknown-linux-musl",
+    "license": "Apache-2.0"
+  },
+  {
+    "id": "claude-x86_64",
+    "name": "@anthropic-ai/claude-code-linux-x64",
+    "version": "2.1.258",
+    "filename": "claude-code-linux-x64-2.1.258.tgz",
+    "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-x64/-/claude-code-linux-x64-2.1.258.tgz",
+    "sha256": "037f8a21ae74a29b613f02cd3986cefb0b00fcb14f957a8dab98dc2e3f3fd753",
+    "integrity": "sha512-y1O9xbBzr/2J3cojc5aecHmJzpihx3BMBXnFTHdYU+4gpDkjpEvn4xXSfoKe3UzdUrMCSMdkPD0Ru6byQ3vojA==",
+    "note": "Same Claude Code version as packaging/macos and packaging/windows",
+    "license": "SEE LICENSE IN LICENSE.md"
+  },
+  {
+    "id": "claude-aarch64",
+    "name": "@anthropic-ai/claude-code-linux-arm64",
+    "version": "2.1.258",
+    "filename": "claude-code-linux-arm64-2.1.258.tgz",
+    "url": "https://registry.npmjs.org/@anthropic-ai/claude-code-linux-arm64/-/claude-code-linux-arm64-2.1.258.tgz",
+    "sha256": "2f0ad50cd3efd5707323f48b43af22c5cbc045e74cdfc16d25c5a73581f3b196",
+    "integrity": "sha512-cbzsJZ4gMDp30eOlhA6qM+s0plv0TTKLhWX/y4CwNRspSQI8wPO5T1UafhimU4fTeznpPxH38m3k3vYkA9ypHw==",
+    "license": "SEE LICENSE IN LICENSE.md"
+  }
+]

@@ -50,6 +50,8 @@ import { CONNECTOR_REQUEST_PROMPT, announceConnectorRequests } from './connector
 import { MY_WORLD_PROMPT } from './myWorldTools.js';
 import { worldContext } from '@josi-ce/core';
 import { pcDesktopToolAvailability, PC_DESKTOP_PROMPT } from './pcDesktopTools.js';
+import { signInToolAvailability, SIGN_IN_PROMPT } from './signInTools.js';
+import { sendFileToolAvailability, SEND_FILE_PROMPT } from './sendFileTools.js';
 import { loadGuidance, announceProposals } from './improvementEngine.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
@@ -284,7 +286,7 @@ function toolActivity(name: string): string {
     draft_calendar_event: 'Drafting the event', search_documents: 'Searching your files', workspace_list: 'Looking in the folder', workspace_read: 'Reading the file',
     browser_open_page: 'Opening the page', browser_read_page: 'Reading the page', browser_click: 'Clicking in the browser', browser_fill: 'Typing in the browser',
     browser_view_photo: 'Looking at the photo', browser_attach_tab: 'Attaching the tab', browser_list_tabs: 'Looking at your tabs',
-    browser_select_option: 'Choosing an option', browser_drag: 'Dragging in the browser', browser_scroll: 'Scrolling the page', browser_download: 'Downloading', browser_upload_file: 'Uploading the file', desktop_list_windows: 'Looking at the open windows', desktop_read_window: 'Reading the window',
+    request_sign_in: 'Opening a sign-in for you', send_file_to_my_devices: 'Sending a file to your device', browser_select_option: 'Choosing an option', browser_drag: 'Dragging in the browser', browser_scroll: 'Scrolling the page', browser_download: 'Downloading', browser_upload_file: 'Uploading the file', desktop_list_windows: 'Looking at the open windows', desktop_read_window: 'Reading the window',
     desktop_screenshot: 'Taking a screenshot', desktop_click: 'Clicking', desktop_click_point: 'Clicking', desktop_type: 'Typing', desktop_keys: 'Pressing keys',
     desktop_launch: 'Opening the program', desktop_close_window: 'Closing the window', pc_environment: 'Looking at this PC', pc_find_app: 'Looking for the program',
     pc_run_command: 'Running a command on this PC', pc_get_permissions: 'Checking PC permissions', pc_list_folder: 'Looking in the folder', pc_read_file: 'Reading the file', pc_write_file: 'Writing the file',
@@ -480,6 +482,11 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   const callerSubscription = stored.provider === 'openai_subscription' && (!!args.automationRuntime || computerTools.length > 0)
     && !!args.durableTurnId && !!args.durableLeaseToken;
   const pcDesktopTools = capabilities.toolCalling ? await pcDesktopToolAvailability(db, userId, args.registry.masterKey) : [];
+  // A card for the person to sign in for her (a site in her browser, or a command line login).
+  const signInTools = capabilities.toolCalling ? await signInToolAvailability(db, userId) : [];
+  const [workspaceRow] = await db.query<{ settings: Record<string, unknown> | null }>('select settings from workspace where id = true').catch(() => []);
+  const lightThinking = !args.workGoalId && workspaceRow?.settings?.chatReasoning !== 'model_default';
+  const sendFileTools = capabilities.toolCalling ? await sendFileToolAvailability(db, userId) : [];
   // `approve_task` is only meaningful when this owner already has a generic
   // task waiting on them. Offering it on an ordinary request lets a model
   // confuse "please create this calendar event" with approval of an unrelated
@@ -494,7 +501,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     && (t.def.name !== 'approve_task' || !!approvableTask)
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
   let tools = capabilities.toolCalling
-    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools, ...pcBrowserTools, ...pcDesktopTools, ...computerTools].map((t) => t.def)
+    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools, ...pcBrowserTools, ...pcDesktopTools, ...signInTools, ...sendFileTools, ...computerTools].map((t) => t.def)
     : undefined;
   // On a PC where Josi's own PC Control is live, the browser and the desktop
   // are reached through those tools. The automation-workspace tools describe
@@ -540,6 +547,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     + (pcBrowserTools.length ? `\n\n${pcBrowserPrompt(pcBrowserTools)}` : pcDesktopTools.some(t=>t.def.name!=='pc_get_permissions') ? `\n\n${PC_BROWSER_ABSENT_PROMPT}` : '')
     + (computerTools.length ? `\n\n${COMPUTER_PROMPT}` : '')
     + (pcDesktopTools.length ? `\n\n${PC_DESKTOP_PROMPT}` : '')
+    + (signInTools.length ? `\n\n${SIGN_IN_PROMPT}` : '')
+    + (sendFileTools.length ? `\n\n${SEND_FILE_PROMPT}` : '')
     + (capabilities.toolCalling ? `\n\n${SETUP_STATUS_PROMPT}\n\n${CREDENTIAL_CARD_PROMPT}\n\n${CONNECTOR_REQUEST_PROMPT}\n\n${MY_WORLD_PROMPT}\n\n${SETTINGS_CHANGE_PROMPT}`
       // Honest about the gap: without tool calling nothing can act, and the
       // owner needs to hear which model to change, not a generic refusal.
@@ -733,6 +742,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
           messages: providerMessages, system: system + workContext + (callerSubscription
             ? `\nThis run has ${hopLimit - hop} model responses left. Each response can carry one tool call, so spend them on the work: describe the attached photo in reply and propose the next view in the same response. Save verified progress and the next step with checkpoint_goal before ending. When only two responses remain, finish the current description if its photo is attached, then checkpoint; do not begin another photo. Unfinished work is not complete.` : ''), tools, maxTokens: 1024,
           ...(callerSubscription ? { toolExecution: 'caller' as const } : {}),
+          // Quick replies for ordinary chat; a long job (a work goal) keeps the model's own level.
+          ...(lightThinking ? { reasoningEffort: 'low' as const } : {}),
           // For providers that execute tools OUT of process (the subscription
           // CLI harness): who is asking travels with the request, so the MCP
           // server enforces the same step-up gate this loop enforces below.

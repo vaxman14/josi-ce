@@ -1,0 +1,14 @@
+[Unit]
+Description=Configure and start Josi in this container
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/josi-firstboot
+TimeoutStartSec=900
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

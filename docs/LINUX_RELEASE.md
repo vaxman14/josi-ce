@@ -1,96 +1,173 @@
-# Releasing Josi CE for Linux
+# Releasing the Josi server for Linux
 
-One command builds the Linux release from a checkout: the three native
-packages, the one-command installer, the portable graphical installer, a
-checksum file, and the upload to the GitHub release that the Windows and Mac
-installers share. This page is for the person who runs it.
+The Linux server is headless. It runs under systemd as `josi.service`, keeps its
+data in `/var/lib/josi` and its settings in `/etc/josi`, and does everything
+else in the browser: first-run setup, sign-in with the authenticator code, chat
+on the Ghost Stage, settings and one-click updates. Relay is off; people reach
+it at `http://<machine-ip>:<port>`.
+
+One command builds the release from a checkout:
 
 ```bash
-scripts/linux/build-release.sh --version 1.0.0 --publish
+scripts/linux/build-release.sh --version 1.1.4
 ```
 
-Leave out `--publish` to keep the result local. Add `--skip-provision` when
-the pinned inputs were already built on this machine (second and later runs),
-`--skip-code` when the server was just built, and `--skip-portable` to leave
-out the AppImage and `.run` files. The output lands in
+Add `--skip-provision` when the pinned inputs were already built on this
+machine, `--skip-code` when the server was just built, and `--publish` only
+when the release should go to the shared GitHub release. The output lands in
 `<build base>/releases/<version>/`:
 
-- `josi-ce-server-setup_<version>_amd64.deb`, `josi-ce-server-setup-<version>.x86_64.rpm`
-  and `josi-ce-server-setup-<version>-1-x86_64.pkg.tar.zst`: the server for
-  Debian/Ubuntu, Fedora/RHEL and Arch, each about 500 MB (PostgreSQL, Node,
-  the private Python with the voice packages, the voice models, Caddy and the
-  Josi server inside).
-- `install-josi-ce-server.sh`: the one-command installer. It carries the
-  version, the release address and the SHA-256 of each package, picks the
-  package for the machine's package manager, verifies it and installs it.
-  `https://get.heyjosi.com/install.sh` redirects to this file on the latest
-  release.
-- `Josi-CE-Server-Installer-<version>-x86_64.AppImage` and `.run`: the portable
-  graphical installer for people who prefer a window to a terminal.
+- `josi_<version>_amd64.deb` and `josi-<version>-1-x86_64.pkg.tar.zst`: the
+  server for Debian/Ubuntu and Arch, about 650 MB each. Inside: PostgreSQL,
+  Node, the private Python with the speech packages and models, Caddy, the
+  pinned Codex and Claude Code CLIs, and the Josi server and web app.
+- `PKGBUILD`, `josi.install` and `josi-root-<version>-x86_64.tar.zst`: the same
+  Arch package for `makepkg`.
+- `linux`: the one-command installer, served as `https://<install host>/linux`.
+- `linux-latest.json`: the feed the web updater reads. Attach it to the latest
+  release so `releases/latest/download/linux-latest.json` finds it.
 - `SHA256SUMS.txt` and `RELEASE-NOTES.md`.
+
+## Installing, updating and removing
+
+```bash
+curl -fsSL https://<install host>/linux | sudo bash
+# A minimal Debian (netinst) has no curl or sudo; as root this works too:
+wget -qO- https://<install host>/linux | bash
+```
+
+First it asks, on the terminal, with the ghost in Plum & Gold:
+
+1. **How people reach Josi:** this network only (`http://<LAN IP>:<port>`, the
+   detected address prefilled), a public domain with HTTPS from the bundled
+   Caddy (domain and certificate email; Caddy takes ports 80 and 443 and gets
+   the certificate itself), or behind your own reverse proxy (its public
+   `https://` address; point it at `http://<LAN IP>:<port>`).
+2. **The port** (default 8080; a port in use is refused, with a free one offered).
+3. **Let Josi control this computer?** If yes, Josi runs commands, works with
+   files and starts programs as the Linux user you name (default: the user
+   who ran sudo), through `josi-pc.service`.
+4. With PC control: **Give Josi her own browser?** (default yes; `--browser` /
+   `--no-browser`). Then the installer adds Xvfb, xauth, openbox, the desktop
+   tools, fonts and Chrome's libraries (each under the name this Debian or
+   Ubuntu release uses, such as `libasound2t64` or `libasound2`), and
+   `josi-browser.service` runs `pc-executor/josi-browser.mjs` as the PC
+   control user. It downloads a pinned Chrome for Testing into
+   `/var/lib/josi-pc/browser` (about 600 MB) and starts it on a hidden screen
+   with the Josi extension (`app/browser-extension/chrome`, built by
+   `scripts/unified/build-browser-extensions.mjs` during staging).
+5. A summary to confirm.
+
+The answers are saved in `/etc/josi/install.json` and are the defaults the next
+time. Nothing is asked with `--yes`, `JOSI_YES=1` or without a terminal; then
+flags, the saved answers or the defaults are used, so automation works:
+
+```bash
+curl -fsSL https://<install host>/linux | sudo bash -s -- --yes \
+  --address-mode lan|domain|proxy [--lan-address IP] [--domain NAME --email ADDRESS] \
+  [--public-url https://HOST] --port 8080 [--pc-control-user USER | --no-pc-control]
+```
+
+The same flags work on `josi-ce-server-install` directly. Then the script finds
+pacman or apt, installs what Josi needs, downloads the package for this
+distribution and processor, checks its SHA-256 against itself, installs it,
+enables `josi.service` and prints one line on stdout: the address to open
+(the chosen one; for a domain or proxy it also names the LAN address on
+stderr, for before DNS or the certificate is ready). Before setup is finished
+that address carries a one-use handoff that expires after ten minutes, because
+the setup page refuses visitors without one; running the command again prints
+a fresh one. The same command also repairs a broken install, reinstalls after
+an uninstall that kept the data, upgrades, and applies changed answers
+(port, address, PC control on or off) to the running install.
+
+The web service is started with `JOSI_LINUX_SERVER=1`, `APP_URL` (the chosen
+address) and `JOSI_ACCESS_MODE`, so setup records that address and HTTPS mode
+and shows the Address step instead of saving `localhost`; `/api/setup/state`
+returns it as `installerAddress` for prefilling.
+
+Interruptions: the script ignores a hangup (a dropped SSH session) and so do
+dpkg and the lifecycle it starts; Ctrl-C stops the step, and the lifecycle
+records the transaction as needing recovery. The next run first finishes dpkg
+(`dpkg --configure -a`), rolls an interrupted upgrade back to its snapshot
+(`maintenance.py recover`), and then installs again. Every `apt-get` waits up
+to ten minutes for another apt (`DPkg::Lock::Timeout=600`). An install from
+before the rename (`/var/lib/josi-ce-server`) is refused with the steps to
+remove it.
+
+- **Updates:** a root updater (`josi-update.timer`, twice a day) reads the feed
+  in `/etc/josi/update.json`. Admin → Overview shows a new version, and System
+  checkup has one **Update to X** button. The web service can only leave a
+  request file in `data/state`; root checks the package hash, installs it,
+  snapshots the data and moves it to the new version. A check and an update
+  share one lock (`/var/lib/josi/update.lock`). If the update fails, the
+  snapshot is put back (`josi-ce-server-install --recover`) before the old
+  version starts again. Prereleases are packaged as `1.2.8~beta.1` so dpkg
+  sees the release `1.2.8` as an upgrade.
+- **Remove:** `sudo josi-uninstall` keeps `/var/lib/josi`;
+  `sudo josi-uninstall --purge` deletes it, `/etc/josi`, `/var/lib/josi-pc`
+  and Josi's accounts. Both remove `josi-pc.service` and the `josi-pc` group.
+  `apt remove josi` stops and disables every Josi unit.
+
+## Layout on the machine
+
+| Path | What |
+|---|---|
+| `josi.service` | the unit to start, stop and enable; the six isolated services below are `PartOf` it |
+| `josi-ce-{database,voice,voice-control,web,worker,proxy}.service` | one system account each; restart on failure. The web unit is also in group `josi-pc`; the proxy may bind 80 and 443 |
+| `josi-pc.service` | only with PC control: `packaging/linux/pc-executor/josi-pc.mjs` on the current version's Node, as the chosen user (no ProtectHome/ProtectSystem), state in `/var/lib/josi-pc`, `PartOf=josi.service` |
+| `/usr/lib/josi/josi-browser-host` and `com.heyjosi.browser.json` in the Chrome/Brave, Chromium, Edge and Firefox system native-messaging folders | only with PC control: the browser host, made by `pc-executor/browser.mjs` and rewritten for the current version on every install and upgrade |
+| `/var/lib/josi/data/pc-spool` | `root:josi-pc 2770`: where the web service and the executor meet |
+| `/etc/josi/install.json` | the installer's answers (address mode, address, port, PC control user) |
+| `josi-update.path`, `josi-update.service`, `josi-update.timer`, `josi-update-check.service` | the root updater |
+| `/usr/lib/josi` | the package: runtime, inventory, `josi_update.py` |
+| `/var/lib/josi/versions/<version>` | the verified program each version runs from |
+| `/var/lib/josi/data` | database, secrets, settings, uploads, the CLIs' sign-ins |
+| `/etc/josi` | `update.json`, `README` and a link to `data/config/runtime.json` |
 
 ## The build machine
 
-An x86_64 Linux machine with Docker, Node 24, npm, Python 3 and `zstd`
-(Bananana, the Ubuntu test host, fits). Native parts are compiled inside a
-digest-pinned Debian 12 image so the result runs on Debian 12+, Ubuntu 22.04+,
-RHEL 9+/Fedora and Arch (glibc 2.34 and newer).
-
-The build uses two folders outside the checkout, both settable:
+An x86_64 Linux machine with Docker, Node, npm, Python 3 and `zstd`. Native
+parts are compiled inside a digest-pinned Debian 12 image (glibc 2.34+).
 
 | Variable | Default | Holds |
 |---|---|---|
-| `JOSI_LINUX_BUILD_BASE` | `~/JosiDrive/BuildTemp/josi-ce-native-linux-20261010` | compiled PostgreSQL, Python, staged runtime, package roots, `artifacts/`, `releases/` |
-| `JOSI_LINUX_BUILD_CACHE` | `~/JosiDrive/Caches/codex-linux-native-20261010` | the pinned downloads (Node, PostgreSQL source, Python, Caddy, OpenBLAS, voice models, npm cache) |
+| `JOSI_LINUX_BUILD_BASE` | `~/JosiDrive/BuildTemp/josi-ce-native-linux-20261010` | compiled PostgreSQL and Python, staged runtime, package roots, `artifacts/`, `releases/` |
+| `JOSI_LINUX_BUILD_CACHE` | `~/JosiDrive/Caches/codex-linux-native-20261010` | pinned downloads, including `subscription-cli/` |
+| `JOSI_INSTALLER_BASE_URL` | the GitHub release download folder | where the installer downloads packages |
+| `JOSI_UPDATE_FEED_URL` | `.../releases/latest/download/linux-latest.json` | the feed baked into `/etc/josi/update.json` on first install |
 
-The portable installer also needs `linuxdeploy-x86_64.AppImage` and
-`appimagetool-x86_64.AppImage` in `JOSI_LINUX_APPIMAGE_TOOLS` (default: a
-`linux-appimage-tools` folder beside the cache).
-
-## What the script runs, in order
-
-Every step is an existing script under `scripts/linux`; the release script
-only orders them and names the version once (`JOSI_LINUX_VERSION`).
-
-1. **Pinned inputs** (`acquire.py`): every download is checked against
-   `packaging/linux/build-inputs.lock.json` and
-   `services/voice-box/models.lock.json` by SHA-256.
-2. **Private Python, PostgreSQL, the setup helper and the voice packages**
-   (`build-base.sh python`, `build-base.sh portable`): compiled in the Debian
-   12 image so the glibc floor stays at 2.34.
-3. **Server and web build**: `npm ci`, `tsc -b`, the web app.
-4. **Runtime staging** (`stage.py`): the offline runtime with a fresh
-   `npm ci --omit=dev` and the exact payload inventory (`inventory.py`).
-5. **Packages** (`build-arch.py`, `build-deb.py`, `build-rpm.py`): the same
-   root, reproducibly packaged three ways (`SOURCE_DATE_EPOCH` is fixed).
-6. **One-command installer** (`build-headless-installer.py`): the template
-   `packaging/linux/install-josi-ce-server.sh` filled with the package hashes.
-7. **Portable installer** (`build-universal-appimage.py`).
-8. **Release folder**, `SHA256SUMS.txt`, `RELEASE-NOTES.md`.
-9. With `--publish`: the draft GitHub release `v<version>` is created, or, when
-   the Windows or Mac build created it first, the files are attached and the
-   checksum lines merged into the shared `SHA256SUMS.txt`.
-
-The release is published by hand on GitHub once all three platforms are
-attached; the download page fills its Linux door from the latest final release.
+For a LAN test, point both URLs at a local web server (`http://` is allowed
+only when the feed itself is `http://`).
 
 ## Checks before publishing
 
-- `python3 -m unittest discover -s packaging/linux -p 'test_*.py'` passes on
-  the build machine.
-- `scripts/linux/test-isolated-install.py <staged runtime> <disposable root>`
-  runs the bundled lifecycle (all six services, migrations, readiness) without
-  touching the host's systemd.
-- A clean VM per family (Debian or Ubuntu, Fedora, Arch): run the one
-  command, finish setup in the browser, reboot, `systemctl status 'josi-ce-*'`.
+- `python3 -m unittest discover -s packaging/linux -p 'test_*.py'` on the build machine.
+- `scripts/linux/e2e-fake.mjs` on an installed test machine: first-run setup
+  with a generated test account, password plus authenticator login, a fake
+  OpenAI-compatible model with the tool check, a chat turn with a real Josi
+  tool call, and both bundled CLIs driven through Josi's providers against the
+  fake backend. `scripts/linux/e2e-screens.mjs <dir> [--update]` then signs in
+  through the browser, chats on the Ghost Stage, takes screenshots and can
+  press the one-click update. Both run on the machine itself, on loopback.
 
-## Known gaps in 1.0
+## Known gaps
 
+- x86_64 only. arm64 needs an arm64 private Python, PostgreSQL and speech
+  build and arm64 pins for Python and OpenBLAS; Node, Caddy and both CLIs are
+  already pinned for arm64, and the installer and updater already pick an
+  aarch64 package when one is listed.
 - The packages are not signed with a distribution key; the installer verifies
-  them by SHA-256 against the script it was downloaded with, and that script
-  is served over HTTPS from GitHub.
-- x86_64 only. The input lock has arm64 entries for Node and Caddy but not for
-  Python and OpenBLAS, so there is no arm64 package yet.
-- No malware scanner is required or bundled, the same as the Windows and Mac
-  installers: uploads, indexing and OCR use the bundled parsers. The stored
-  ClamAV policy still applies to Docker installs.
+  them by SHA-256 and should be served over HTTPS.
+- Old program versions in `/var/lib/josi/versions` and upgrade snapshots in
+  `/var/lib/josi/transactions` are kept and not yet pruned.
+- No passkeys or Face ID on a plain `http://` address; browsers allow them only
+  over HTTPS (choose the domain or proxy answer for them).
+- The setup Address step is shown on Linux and the server returns the chosen
+  address as `installerAddress`, but `apps/web/src/pages/Setup.tsx` does not
+  yet use it to prefill its fields.
+- A domain answer keeps the LAN port open over plain HTTP as well.
+- The optional desktop helpers for PC control (xdotool, wmctrl, scrot) are
+  installed only when the machine boots to a graphical target or has an X11
+  or Wayland session.
+- The graphical AppImage installer (`--portable`) and `build-rpm.py` belong to
+  the earlier desktop-setup layout and were not updated.

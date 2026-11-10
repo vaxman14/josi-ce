@@ -1,8 +1,8 @@
-// The frame around every signed-out page: gold stars, the J on the left and the
-// panel on the right, both level in the middle of the screen. Below 860px it is
-// one column, the J above the panel.
+// The frame around every signed-out page: gold stars, the ghost on the left and
+// the panel on the right, both level in the middle of the screen. Below 860px it
+// is one column, the ghost above the panel.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { JosiMark } from '@/components/brand/JosiMark';
+import { GreetingGhost } from '@/components/ghost/Ghost';
 
 /** A seeded scatter, so the stars hold still between renders. */
 function starField() {
@@ -27,7 +27,7 @@ export function AuthStage({ success = false, children, footer }: { success?: boo
   const narrow = useNarrow();
   const size = narrow ? 96 : 160;
   const stage = useRef<HTMLDivElement>(null);
-  // On a phone the button is below the J, and the check is the whole point.
+  // On a phone the button is below the ghost, and the check is the whole point.
   useEffect(() => { if (success) stage.current?.scrollIntoView({ block: 'start' }); }, [success]);
   return (
     <div ref={stage} className="relative min-h-dvh overflow-x-clip">
@@ -40,10 +40,10 @@ export function AuthStage({ success = false, children, footer }: { success?: boo
           <div className="relative grid place-items-center" style={{ width: size * 1.1, height: size * 1.1 }}>
             <span aria-hidden className="josi-glow" />
             {success ? null : <span aria-hidden className="josi-halo" />}
-            <JosiMark variant="bare" size={size} state={success ? 'success' : 'idle'} />
+            <GreetingGhost size={size} success={success} />
           </div>
         </div>
-        {/* Equal rows above and below hold the panel level with the J, whatever
+        {/* Equal rows above and below hold the panel level with the ghost, whatever
             sits under it. */}
         <div className="flex min-w-0 flex-col items-center min-[860px]:grid min-[860px]:min-h-[calc(100dvh-4rem)] min-[860px]:grid-rows-[1fr_auto_1fr] min-[860px]:justify-items-center">
           <span aria-hidden className="hidden min-[860px]:block" />

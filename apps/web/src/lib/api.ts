@@ -28,7 +28,7 @@ export function consumeSetupHandoff(): Promise<void> {
     await primeCsrf();
     const res = await fetch('/api/onboarding/consume', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/json', 'x-josi-csrf': csrfToken() ?? '' }, body: JSON.stringify({ token }) });
-    if (!res.ok) throw new ApiError(res.status, 'This setup link could not be used. Reopen Josi to resume setup safely.');
+    if (!res.ok) throw new ApiError(res.status, res.status === 410 ? 'This setup link expired or was already used. Reopen Josi, or on a Linux server run the install command again, for a fresh link.' : 'This setup link could not be used. Reopen Josi to resume setup safely.');
   })();
   return handoffConsumption;
 }

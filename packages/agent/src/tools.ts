@@ -20,6 +20,8 @@ import { CREDENTIAL_CARD_TOOLS } from './credentialCardTools.js';
 import { CONNECTOR_REQUEST_TOOLS } from './connectorRequestTools.js';
 import { MY_WORLD_TOOLS } from './myWorldTools.js';
 import { PC_DESKTOP_TOOLS } from './pcDesktopTools.js';
+import { SIGN_IN_TOOLS } from './signInTools.js';
+import { SEND_FILE_TOOLS } from './sendFileTools.js';
 import { COMPUTER_TOOLS } from './computerControlTools.js';
 
 /** Everything the assistant can do that changes something.
@@ -245,6 +247,8 @@ export const ALL_TOOLS: ToolSpec[] = [
   ...PC_BROWSER_LINK_TOOLS,
   ...PC_BROWSER_TOOLS,
   ...PC_DESKTOP_TOOLS,
+  ...SIGN_IN_TOOLS,
+  ...SEND_FILE_TOOLS,
   ...COMPUTER_TOOLS,
 ];
 

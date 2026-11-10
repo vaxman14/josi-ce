@@ -1,5 +1,6 @@
 export * from './db.js';
 export * from './pcControl.js';
+export * from './pcLocalExecutors.js';
 export * from './connect.js';
 // Phase 13 — the edition capability boundary. First in the list because it is
 // the thing everything capability-gated has to consult.
@@ -87,3 +88,4 @@ export * from './automationBlockers.js';
 export { readLinuxSecret, readProtectedLinuxFile } from './linuxSecrets.js';
 
 export * from './computerControl.js';
+export * from './liveSignIn.js';

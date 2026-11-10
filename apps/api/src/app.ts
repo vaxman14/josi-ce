@@ -44,6 +44,8 @@ import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRo
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
 import { myWorldRoutes } from './http/myWorldRoutes.js';
 import { deviceTransferRoutes } from './http/deviceTransferRoutes.js';
+import { liveSignInRoutes } from './http/liveSignInRoutes.js';
+import { LiveSignInBroker } from '@josi-ce/core';
 import { automationSettingsRoutes } from './http/automationSettingsRoutes.js';
 import { nasController } from './http/nasController.js';
 import { windowsNasController } from './http/nasWindows.js';
@@ -58,6 +60,8 @@ import { adminRelayRoutes, relayRoutes } from './relay/relayRoutes.js';
 import type { RelayService } from './relay/relayService.js';
 
 export interface AppConfig {
+  /** Injected only by tests, to play the PC service's side of a sign-in session. */
+  liveSignIn?: LiveSignInBroker;
   /** Injected only by tests; production derives the native Windows boundary. */
   nativeWindowsPermissions?: boolean;
   /** Production enables a real persistent-volume readiness probe. */
@@ -326,7 +330,13 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     api.use('/hey-josi', relayRoutes({ db, relay: cfg.relay, masterKey: cfg.masterKeyCheck }));
   }
   api.use('/computer-control', computerControlRoutes({db,masterKey:cfg.masterKeyCheck}));
-  api.use('/admin/pc-control', pcControlRoutes({db,masterKey:cfg.masterKeyCheck,
+  // Signing in for Josi: one in-memory broker relays the person's browser and the PC service.
+  const live = cfg.liveSignIn ?? new LiveSignInBroker();
+  setInterval(() => live.reap(), 30_000).unref();
+  const signIn = liveSignInRoutes({ db, live });
+  api.use('/live-signin', signIn.person);
+  api.use('/admin/live-signin', signIn.admin);
+  api.use('/admin/pc-control', pcControlRoutes({db,live,masterKey:cfg.masterKeyCheck,
     windows:cfg.nativeWindowsPermissions ?? (process.platform==='win32' && process.env.JOSI_NATIVE_RUNTIME==='1')}));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
   // Same mount point, so the super-admin guard above covers it too.

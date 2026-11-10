@@ -1,0 +1,29 @@
+# Maintainer: SOCAL RECEPTIONIST LLC <vaxman14@users.noreply.github.com>
+#
+# Josi server for Arch Linux. scripts/linux/build-arch.py fills in the version
+# and checksum and writes this file beside the staged tree it packages:
+#
+#   makepkg            (in a folder holding this PKGBUILD, josi.install and the tree)
+#   sudo pacman -U josi-@PKGVER@-1-@ARCH@.pkg.tar.zst
+#
+# The tree is Josi's prebuilt private runtime (PostgreSQL, Node, Python, Caddy,
+# the speech models) plus the server, so nothing is compiled here.
+pkgname=josi
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc='Josi server, headless, run by systemd as josi.service'
+arch=('@ARCH@')
+url='https://github.com/vaxman14/josi-ce'
+license=('AGPL-3.0-or-later')
+depends=('python' 'systemd' 'rsync' 'acl' 'iproute2' 'gcc-libs' 'curl')
+conflicts=('josi-ce-server-setup')
+replaces=('josi-ce-server-setup')
+install=josi.install
+options=('!strip' '!debug')
+source=("josi-root-@VERSION@-@ARCH@.tar.zst")
+noextract=("josi-root-@VERSION@-@ARCH@.tar.zst")
+sha256sums=('@SHA256@')
+
+package() {
+  tar -xf "$srcdir/josi-root-@VERSION@-@ARCH@.tar.zst" -C "$pkgdir"
+}

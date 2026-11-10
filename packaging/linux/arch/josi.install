@@ -1,0 +1,14 @@
+# Removing the package stops Josi first. Its data in /var/lib/josi stays;
+# `sudo josi-uninstall --purge` deletes it.
+pre_remove() {
+  if [ -d /run/systemd/system ]; then
+    systemctl stop josi.service josi-update.path josi-update.timer >/dev/null 2>&1 || true
+  fi
+}
+
+# Python caches are never part of the program (the payload check counts every
+# file), so one left by an older version must not survive an upgrade.
+post_install() {
+  find /usr/lib/josi/runtime -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+}
+post_upgrade() { post_install; }

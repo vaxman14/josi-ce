@@ -2,12 +2,14 @@ import { Router, type Request, type Response } from 'express';
 import { verifyPassword, checkLoginRate, recordLoginAttempt } from '@josi-ce/auth';
 import { verifyPcExecutor } from './pcExecutorIdentity.js';
 import { clientIp } from './cookies.js';
-import { disablePcControl, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
+import { type LiveSignInBroker } from '@josi-ce/core';
+import { pairLocalExecutor, localExecutorPaired, revokeExecutorSessions } from './pcLocalPairing.js';
+import { disablePcControl, localExecutorSpool, readLocalExecutors, syncLocalExecutors, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
 import { pcControlReadiness } from '@josi-ce/agent';
 import { requireAuth } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
-interface Ctx { db:Db; windows?:boolean; masterKey?:LoadOptions|false }
+interface Ctx { db:Db; windows?:boolean; masterKey?:LoadOptions|false; live?:LiveSignInBroker }
 // Item 36: each Josi app names its PC in the x-josi-pc header (win-<id>); an
 // app without one is the hosting PC of the single-PC form. Permissions,
 // requests and presence are kept per PC. No execution/proposal endpoint is
@@ -27,7 +29,13 @@ export function pcControlRoutes(ctx:Ctx):Router {
   r.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
   function targetPc(req:Request){
     if(req.query.ownerId!==undefined&&req.query.ownerId!==req.user!.id)throw new PcControlError(403,'This PC permission change belongs to another account.');
-    if(req.query.pcId===undefined)return pcIdFrom(req.get('x-josi-pc'));
+    if(req.query.pcId===undefined){
+      // A browser names no PC. On a Linux server the PC it means is the
+      // server's own PC service, not the Windows hosting-PC placeholder.
+      const header=req.get('x-josi-pc');
+      if(!header){const local=readLocalExecutors();if(local.length===1)return local[0].pcId;}
+      return pcIdFrom(header);
+    }
     if(req.path.startsWith('/executor')||typeof req.query.pcId!=='string'||!/^[a-z0-9-]{1,80}$/.test(req.query.pcId))
       throw new PcControlError(400,'Choose a valid target PC.');
     return req.query.pcId;
@@ -53,7 +61,10 @@ export function pcControlRoutes(ctx:Ctx):Router {
     }
   });
   r.get('/',handle(async(req,res)=>{
-    const browser=await control(req).presence(req.user!.id);
+    const browser=await control(req).presence(req.user!.id),linux=control(req).pcId.startsWith('linux-');
+    if(linux)return res.json({...await control(req).snapshot(req.user!.id),pcId:control(req).pcId,executorAvailable:!!browser,browser,
+      availability:browser?'The PC service on this Linux server is connected and working as its chosen Linux user.':'Permissions can be saved here. Josi works on this server once its PC service is paired (ask Josi to control this server) and running.',
+      uac:'Administrator commands are not available on a Linux server.'});
     return res.json({...await control(req).snapshot(req.user!.id),pcId:control(req).pcId,executorAvailable:!!browser,browser,
       availability:browser?'The Josi app on this PC is connected'+(browser.origin?' with a '+browser.family+' browser in use ('+browser.origin+').':browser.family==='desktop'?'. No browser is linked.':', and its '+browser.family+' browser is linked.')
         :'Permissions can be saved here. Browser control starts when the Josi app is open and the Josi browser extension is installed.',
@@ -90,6 +101,37 @@ export function pcControlRoutes(ctx:Ctx):Router {
   r.delete('/identity',handle(async(req,res)=>{
     const pc=targetPc(req);await control(req).stop(req.user!.id);
     await ctx.db.query('delete from pc_executor_identity where owner_user_id=$1 and pc_id=$2',[req.user!.id,pc]);
+    return res.json({ok:true});
+  }));
+  // The Linux server's own PC service (josi-pc.service). It cannot sign in by
+  // itself, so the owner pairs it here, or by approving the chat card that
+  // turns control on for it; packages/core/src/pcLocalExecutors.ts.
+  r.get('/local',handle(async(req,res)=>{
+    const owner=req.user!.id,hellos=await syncLocalExecutors(ctx.db,owner);
+    const executors=[];
+    for(const hello of hellos){
+      const [live]=await ctx.db.query('select 1 from pc_control_presence where owner_user_id=$1 and pc_id=$2 and expires_at>now()',[owner,hello.pcId]);
+      executors.push({pcId:hello.pcId,user:hello.user,host:hello.host,paired:await localExecutorPaired(ctx.db,owner,hello.pcId),connected:!!live});
+    }
+    return res.json({available:localExecutorSpool()!==null,executors});
+  }));
+  r.post('/local/:pcId/pair',handle(async(req,res)=>{
+    const owner=req.user!.id,pcId=param(req,'pcId'),identifier='pc-identity:'+owner,ip=clientIp(req);
+    if(!/^linux-[a-f0-9]{32}$/.test(pcId))throw new PcControlError(400,'Choose a PC service on this server.');
+    if((await checkLoginRate(ctx.db,identifier,ip)).blocked)throw new PcControlError(429,'Wait before another password attempt.');
+    const [user]=await ctx.db.query<{password_hash:string|null}>('select password_hash from users where id=$1',[owner]);
+    const matched=await verifyPassword(user?.password_hash??null,typeof req.body?.password==='string'?req.body.password:'');
+    await recordLoginAttempt(ctx.db,{identifier,ip,success:matched});
+    if(!matched)throw new PcControlError(401,'Confirm your account password to pair this server.');
+    if(!await pairLocalExecutor(ctx.db,owner,pcId))throw new PcControlError(404,'That PC service has not started on this server. Run the installer again and choose PC control.');
+    return res.json({ok:true});
+  }));
+  r.delete('/local/:pcId',handle(async(req,res)=>{
+    const owner=req.user!.id,pcId=param(req,'pcId');
+    if(!/^linux-[a-f0-9]{32}$/.test(pcId))throw new PcControlError(400,'Choose a PC service on this server.');
+    await disablePcControl(ctx.db,owner,pcId).catch(()=>undefined);
+    await ctx.db.query('delete from pc_executor_identity where owner_user_id=$1 and pc_id=$2',[owner,pcId]);
+    await revokeExecutorSessions(ctx.db,owner,pcId);
     return res.json({ok:true});
   }));
   r.put('/enabled',handle(async(req,res)=>{
@@ -199,6 +241,25 @@ export function pcControlRoutes(ctx:Ctx):Router {
   }));
   r.get('/executor/terminals/:id/lease',handle(async(req,res)=>{
     return res.json(await control(req).terminalAuthorization(req.user!.id,param(req,'id')));
+  }));
+  // Signing in for Josi (docs/LIVE_SIGN_IN.md): the PC service relays the
+  // person's live session. Frames and keystrokes pass through memory only.
+  r.get('/executor/live',handle(async(req,res)=>{
+    const pcId=targetPc(req);
+    return res.json({sessions:(ctx.live?.active(pcId)??[]).map(s=>({id:s.id,kind:s.kind,state:s.state,title:s.title,url:s.url,command:s.command,runAs:s.runAs}))});
+  }));
+  r.post('/executor/live/:id/sync',handle(async(req,res)=>{
+    const live=ctx.live,pcId=targetPc(req),s=live?.get(param(req,'id'));
+    if(!live||!s||s.pcId!==pcId)throw new PcControlError(404,'No such sign-in on this PC.');
+    const b=(req.body??{}) as {ready?:unknown;error?:unknown;frame?:{width?:unknown;height?:unknown;jpegBase64?:unknown};output?:{data?:unknown;running?:unknown;exitCode?:unknown}};
+    if(typeof b.error==='string'&&b.error)live.fail(s.id,b.error);
+    else{
+      if(b.ready===true)live.ready(s.id);
+      if(b.frame&&typeof b.frame.jpegBase64==='string')live.pushFrame(s.id,Number(b.frame.width),Number(b.frame.height),Buffer.from(b.frame.jpegBase64,'base64'));
+      if(b.output)live.pushOutput(s.id,typeof b.output.data==='string'?b.output.data:'',b.output.running!==false,Number.isInteger(b.output.exitCode)?Number(b.output.exitCode):null);
+    }
+    const ended=s.state==='ended';
+    return res.json({input:ended?[]:live.takeInput(s.id),ended});
   }));
   r.post('/executor/:id/result',handle(async(req,res)=>{
     const active=running.get(param(req,'id'));

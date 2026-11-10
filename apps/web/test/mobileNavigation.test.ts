@@ -1,23 +1,44 @@
 import { describe, expect, it } from 'vitest';
-import { ADMIN_MENU, WORKSPACE_MENU, itemIsCurrent, pageTitleFor, routeMatches } from '../src/components/layout/mobileNavigation.js';
+import { ADMIN_MENU, ALL_ADMIN_MENU, ALL_WORKSPACE_MENU, WORKSPACE_MENU, itemIsCurrent, pageTitleFor, routeMatches } from '../src/components/layout/mobileNavigation.js';
+import { Flags, shows } from '../src/lib/flags.js';
 
 const labels = (items: typeof WORKSPACE_MENU) => items.map(item => item.label);
 
 describe('the one menu', () => {
   it('keeps every Workspace destination in the requested order', () => {
-    expect(labels(WORKSPACE_MENU)).toEqual([
-      'Tasks', 'Approvals', 'Conversations', 'Calendar', 'Email / Templates', 'Contacts', 'Connections', 'Local Workspace',
+    expect(labels(ALL_WORKSPACE_MENU)).toEqual([
+      'My World', 'Tasks', 'Approvals', 'Conversations', 'Calendar', 'Email / Templates', 'Contacts', 'Connections', 'Local Workspace',
       'Workflows', 'Vault', 'Usage', 'Personalization', 'Channels', 'Settings', 'Apps', 'Family',
       'Devices',
     ]);
   });
 
   it('keeps every Admin destination in the requested order, with the pages the list left out after it', () => {
-    expect(labels(ADMIN_MENU)).toEqual([
+    expect(labels(ALL_ADMIN_MENU)).toEqual([
       'Overview', 'System checkup', 'Getting started', 'People', 'Model', 'Voice Box', 'Policy', 'Storage', 'Connectors', 'Workflows',
-      'Channels', 'Backups', 'Master Vault', 'Integrations', 'Network & address', 'Parental controls', 'Workspace',
+      'Channels', 'Backups', 'Master Vault', 'Integrations', 'Custom APIs', 'Network & address', 'Parental controls', 'Workspace',
       'PC control permissions', 'Automation & Cardinal Rules', 'Hey Josi',
     ]);
+  });
+
+  it('shows what the Windows lean beta shows (Flags.cs), plus Conversations, Devices and Master Vault', () => {
+    expect(labels(WORKSPACE_MENU)).toEqual([
+      'My World', 'Tasks', 'Approvals', 'Conversations', 'Calendar', 'Contacts', 'Connections', 'Vault', 'Settings', 'Devices',
+    ]);
+    expect(labels(ADMIN_MENU)).toEqual([
+      'Overview', 'System checkup', 'People', 'Model', 'Connectors', 'Backups', 'Master Vault', 'Integrations', 'Custom APIs',
+      'Network & address', 'PC control permissions', 'Automation & Cardinal Rules',
+    ]);
+  });
+
+  it('mirrors the Flags.cs values', () => {
+    expect(Flags).toEqual({
+      Relay: false, Talk: false, Workflows: false, LocalWorkspace: true, Channels: false, Apps: false, VoiceBox: false, Policy: false,
+      Integrations: true, Storage: false, WorkspaceAdmin: false, Family: false, ParentalControls: false, ExtraSections: false,
+    });
+    expect(shows('pc-control')).toBe(true);
+    expect(shows('channels')).toBe(false);
+    expect(shows('anything-unlisted')).toBe(true);
   });
 
   it('has no Home or Talk: chat is home', () => {
@@ -27,7 +48,7 @@ describe('the one menu', () => {
   });
 
   it('marks what is coming soon and which tiles carry a count', () => {
-    expect([...WORKSPACE_MENU, ...ADMIN_MENU].filter(item => item.soon).map(item => item.label)).toEqual(['Family', 'Parental controls']);
+    expect([...ALL_WORKSPACE_MENU, ...ALL_ADMIN_MENU].filter(item => item.soon).map(item => item.label)).toEqual(['Family', 'Parental controls']);
     expect(WORKSPACE_MENU.filter(item => item.badge).map(item => item.label)).toEqual(['Tasks', 'Approvals']);
   });
 

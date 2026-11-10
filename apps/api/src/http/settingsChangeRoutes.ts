@@ -19,6 +19,7 @@ import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { clientIp } from './cookies.js';
+import { localExecutorPaired, pairLocalExecutor } from './pcLocalPairing.js';
 
 interface Ctx { db: Db; masterKey?: LoadOptions | false; mailTransport?: SmtpTransport; appUrl?:string }
 type Policy = 'self' | 'super_admin';
@@ -78,7 +79,8 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
   const isPcChange = (row: Row) => row.area.startsWith('pc_control_');
   // A credential card: the body holds the card's fields and fixed values, never
   // a secret; the app fills the typed values in and performs the route itself.
-  const isCredentialCard = (row: Row) => row.area === 'credential_card';
+  // A sign-in card is the same kind of thing: the body holds the card, the person acts on it in the app (docs/LIVE_SIGN_IN.md).
+  const isCredentialCard = (row: Row) => row.area === 'credential_card' || row.area === 'sign_in_card';
   const cardOf = (row: Row): unknown => (change(row) as { card?: unknown }).card ?? null;
   function checkPcChange(row: Row, user: { id: string }) {
     if (!isPcChange(row)) return;
@@ -174,7 +176,11 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     const [claimed]=await db.query('update settings_change_proposals set state=\'approved\',approved_by=$2,approved_at=now() where id=$1 and state=\'proposed\' and expires_at>now() returning id',[row.id,owner]);
     if(!claimed)throw fail(409,'This permission was already decided.');
     try{
-      if(row.area==='pc_control_enabled'){await service.setEnabled(owner,body.enabled as boolean,revision);if(body.enabled===true&&body.everyday===true)await service.setFullControl(owner,true);}
+      if(row.area==='pc_control_enabled'){
+        // The Linux server's own PC service is paired by this same approval:
+        // the password was just confirmed, so there is no second step.
+        if(body.enabled===true&&pc.startsWith('linux-')&&!await localExecutorPaired(db,owner,pc))await pairLocalExecutor(db,owner,pc);
+        await service.setEnabled(owner,body.enabled as boolean,revision);if(body.enabled===true&&body.everyday===true)await service.setFullControl(owner,true);}
       else if(row.area==='pc_control_full_control')await service.setFullControl(owner,body.enabled as boolean,revision);
       else if(row.area==='pc_control_preset')await service.applyPreset(owner,body as PcPreset,revision);
       else if(row.area==='pc_control_scope'){const {approveRequestId,...policy}=body;await service.savePolicy(owner,policy as PcPolicy,{expectedRevision:revision,approveRequestId:approveRequestId as string|undefined});}
@@ -246,6 +252,13 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     if (value !== 'self' && value !== 'super_admin') throw fail(400, 'Choose "self" or "super_admin".');
     await db.query(`update workspace set settings = settings || $1::jsonb where id = true`, [json({ memberSettingsChanges: value })]);
     return res.json({ ok: true, policy: value });
+  }));
+  // How hard the model thinks on ordinary chat: "light" (quick replies, the default) or "model_default".
+  r.put('/reasoning', requireSuperAdmin, handle(async (req, res) => {
+    const value = req.body?.chatReasoning;
+    if (value !== 'light' && value !== 'model_default') throw fail(400, 'Choose "light" or "model_default".');
+    await db.query(`update workspace set settings = settings || $1::jsonb where id = true`, [json({ chatReasoning: value })]);
+    return res.json({ ok: true, chatReasoning: value });
   }));
   return r;
 }

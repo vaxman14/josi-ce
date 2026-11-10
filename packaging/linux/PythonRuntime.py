@@ -19,7 +19,7 @@ def main():
     if isolated:
         if os.getuid() == 0 or not str(data).startswith('/home/roman/JosiDrive/') or json.loads((data / 'isolated-test.json').read_text())['purpose'] != 'disposable-native-acceptance':
             raise ValueError('Invalid disposable context')
-    elif str(data) != '/var/lib/josi-ce-server/data':
+    elif str(data) != '/var/lib/josi/data':
         raise ValueError('Invalid installation')
     if config != data / 'config/runtime.json' or any(path.is_symlink() for path in (config, *config.parents)):
         raise ValueError('Invalid configuration')

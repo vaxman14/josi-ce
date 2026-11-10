@@ -96,9 +96,9 @@ export function CloudFolders({
   if (!capabilityOn) {
     return (
       <p className="mt-3 text-sm text-muted-foreground">
-        To let Josi read folders from {STORAGE_LABEL[provider]}, switch on
-        “Read files” above. It is off until you turn it on, and it is read-only —
-        Josi cannot change or delete anything in your account.
+        Josi reads folders from {STORAGE_LABEL[provider]} only while
+        “Read files” above is on. It is read-only — Josi cannot change or
+        delete anything in your account.
       </p>
     );
   }
