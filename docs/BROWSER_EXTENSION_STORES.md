@@ -18,7 +18,7 @@ Submit are the owner's; everything else is prepared here.
 | Chrome small promo tile 440×280 | `apps/browser-extension/store/promo-tile-440x280.png` |
 | Screenshots 1280×800 | `apps/browser-extension/store/screenshot-1-uses-your-browser.png`, `screenshot-2-you-stay-in-charge.png` (re-render: `node scripts/unified/make-store-screenshots.mjs <repo> apps/browser-extension/store`) |
 | Privacy policy URL | https://heyjosi.com/browser-extension/privacy/ (text: `docs/BROWSER_EXTENSION_PRIVACY.md`) |
-| Homepage / support | https://heyjosi.com, support@heyjosi.com |
+| Homepage / support | https://heyjosi.com, help site https://help.heyjosi.com, support@heyjosi.com |
 
 The Firefox package passes Mozilla's `web-ext lint` with no errors, warnings or
 notices. Every store refuses a version it has already seen: raise `VERSION` in
@@ -79,7 +79,7 @@ Requires the Josi desktop app (free, https://heyjosi.com) on the same computer; 
    account that will own the listing (one-time 5 USD registration). Use the
    publisher name SOCAL RECEPTIONIST LLC and verify the contact email.
 2. "New item", upload `josi-browser-control-chrome-1.0.0.zip`.
-3. Store listing: text above, icon, the two screenshots, the 440×280 tile; support URL `https://heyjosi.com` (Chrome refuses `mailto:`). Set and verify the publisher contact email under Settings first.
+3. Store listing: text above, icon, the two screenshots, the 440×280 tile; support URL `https://help.heyjosi.com` (Chrome refuses `mailto:`). Set and verify the publisher contact email under Settings first.
    Privacy: single purpose, the permission table, "no remote code", data use,
    privacy policy URL. Distribution: "Unlisted" first if you want to try the
    store copy before the public; "Public" otherwise.
