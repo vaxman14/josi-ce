@@ -1,10 +1,35 @@
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 @MainActor final class JosiAppDelegate: NSObject, NSApplicationDelegate {
     weak var model: JosiModel?
-    func applicationWillFinishLaunching(_ notification: Notification) { JosiFont.register() }
-    func applicationDidFinishLaunching(_ notification: Notification) { NSApp.activate(ignoringOtherApps: true) }
+    /// macOS opened Josi at login: she starts in the menu bar only, with no window.
+    static var launchedAtLogin = false
+    static let openAtLoginKey = "josi.openAtLogin"
+    /// On unless the person turns it off: Josi opens at login, in the menu bar, so
+    /// she can work on this Mac and reach your server without her window open.
+    static var openAtLogin: Bool {
+        get { UserDefaults.standard.object(forKey: openAtLoginKey) as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: openAtLoginKey)
+            if newValue { try? SMAppService.mainApp.register() } else { try? SMAppService.mainApp.unregister() }
+        }
+    }
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        JosiFont.register()
+        if let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == AEEventID(kAEOpenApplication),
+           event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue == OSType(keyAELaunchedAsLogInItem) {
+            Self.launchedAtLogin = true
+        }
+    }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if !Self.launchedAtLogin { NSApp.activate(ignoringOtherApps: true) }
+        #if !DEBUG
+        if Self.openAtLogin, SMAppService.mainApp.status == .notRegistered { try? SMAppService.mainApp.register() }
+        #endif
+    }
+    func applicationWillTerminate(_ notification: Notification) { PcOwnBrowser.shared.stop() }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if let model, model.vaultRecovery != .null || model.recovery != .null || model.mfaRecovery != .null {
             let alert = NSAlert(); alert.messageText = "Save your recovery information before quitting."
@@ -46,6 +71,12 @@ import SwiftUI
                 .task {
                     delegate.model = model; model.refreshLocal(); await model.resume()
                     PcExecutor.shared.start(model)
+                    if JosiAppDelegate.launchedAtLogin {
+                        // Opened at login: menu bar only. The executor keeps running; the Dock or menu bar reopens the window.
+                        JosiAppDelegate.launchedAtLogin = false
+                        NSApp.windows.filter { $0.canBecomeMain }.forEach { $0.close() }
+                        return
+                    }
                     model.ghost.set(.hello)
 #if !DEBUG
                     await model.checkForUpdate()

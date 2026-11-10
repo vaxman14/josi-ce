@@ -81,6 +81,7 @@ import Darwin
     }
     private static func peer(parent: pid_t) throws -> Data {
         let boot = try GuestBrowserBoundary.isolatedBoot()
+        if let own = try ownBrowser(parent: parent, boot: boot) { return own }
         guard parent > 1, let app = NSRunningApplication(processIdentifier: parent),
               !app.isTerminated, let bundle = app.bundleIdentifier, let launched = app.launchDate,
               let path = app.bundleURL?.resolvingSymlinksInPath().path else { throw GuestBrowserError.unavailable }
@@ -120,6 +121,40 @@ import Darwin
             "profilePath": NSNull(), "processId": parent, "launchedAtMs": Int64(launched.timeIntervalSince1970 * 1000),
             "bundleId": bundle, "bundlePath": path, "signingId": signing, "teamId": team,
             "codeHash": hash.map { String(format: "%02x", $0) }.joined(),
+        ], options: [.sortedKeys, .withoutEscapingSlashes])
+    }
+}
+
+extension JosiGuestBrowserHost {
+    /// Josi's own browser (JosiOwnBrowser): accepted only at its exact place in this
+    /// user's Josi folder and with its pinned code hash, as Chrome with the
+    /// development extension Josi loads into it.
+    fileprivate static func ownBrowser(parent: pid_t, boot: (guest: String, host: String)) throws -> Data? {
+        guard parent > 1, let password = getpwuid(geteuid()), let rawHome = password.pointee.pw_dir else { return nil }
+        let home = String(cString: rawHome)
+        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(parent, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        let executable = String(cString: buffer)
+        guard executable == JosiOwnBrowser.executable(home: home) else { return nil }
+        var code: SecCode?, information: CFDictionary?, source: SecStaticCode?
+        guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: parent] as CFDictionary, [], &code) == errSecSuccess, let code,
+              SecCodeCopyStaticCode(code, [], &source) == errSecSuccess, let source,
+              SecCodeCopySigningInformation(source, SecCSFlags(rawValue: kSecCSSigningInformation), &information) == errSecSuccess,
+              let info = information as? [String: Any], let hash = info[kSecCodeInfoUnique as String] as? Data,
+              hash.map({ String(format: "%02x", $0) }).joined() == JosiOwnBrowser.codeHash else { throw GuestBrowserError.unavailable }
+        let configData = try Data(contentsOf: URL(fileURLWithPath: configuration))
+        guard configData.count <= 4096, let config = try JSONSerialization.jsonObject(with: configData) as? [String: Any],
+              let development = config["chrome"] as? String, !development.isEmpty,
+              CommandLine.arguments.count == 2, CommandLine.arguments[1] == "chrome-extension://\(development)/" else { throw GuestBrowserError.invalid }
+        var task = proc_bsdinfo()
+        let started = proc_pidinfo(parent, PROC_PIDTBSDINFO, 0, &task, Int32(MemoryLayout<proc_bsdinfo>.size)) > 0
+            ? Int64(task.pbi_start_tvsec) * 1000 + Int64(task.pbi_start_tvusec) / 1000 : 0
+        return try JSONSerialization.data(withJSONObject: [
+            "kind": "browser-process", "family": "chrome", "extensionId": development, "ownBrowser": true,
+            "guestBootId": boot.guest, "hostBootId": boot.host,
+            "profilePath": NSNull(), "processId": parent, "launchedAtMs": started,
+            "bundleId": JosiOwnBrowser.bundleId, "bundlePath": JosiOwnBrowser.app(home: home), "signingId": "Google Chrome for Testing", "teamId": "",
+            "codeHash": JosiOwnBrowser.codeHash,
         ], options: [.sortedKeys, .withoutEscapingSlashes])
     }
 }

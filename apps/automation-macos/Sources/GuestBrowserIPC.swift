@@ -120,3 +120,20 @@ private final class GuestBrowserReply: @unchecked Sendable {
         callback?(data)
     }
 }
+
+/// Josi's own browser on a Mac: Chrome for Testing, pinned by version, download
+/// hash and the code hash of its executable. Google signs it ad hoc only, so the
+/// native host accepts it by this exact path and code hash, never by name.
+enum JosiOwnBrowser {
+    static let version = "157.0.8103.50"
+    static let zipURL = "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.50/mac-arm64/chrome-mac-arm64.zip"
+    static let zipSHA256 = "aceb0578a1cc3631358b164dbbef04bf8936f96c690fb78c3ac25b7655e795e8"
+    static let zipBytes = 196_583_703
+    static let codeHash = "abb727f063b1e21286799eff19b711eade09cbb0"
+    static let bundleId = "com.google.chrome.for.testing"
+    /// ~/Library/Application Support/Josi/Browser, for the signed-in user.
+    static func folder(home: String) -> String { home + "/Library/Application Support/Josi/Browser" }
+    static func app(home: String) -> String { folder(home: home) + "/\(version)/chrome-mac-arm64/Google Chrome for Testing.app" }
+    static func executable(home: String) -> String { app(home: home) + "/Contents/MacOS/Google Chrome for Testing" }
+    static func profile(home: String) -> String { folder(home: home) + "/Profile" }
+}

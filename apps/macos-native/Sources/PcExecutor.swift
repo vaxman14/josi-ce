@@ -33,6 +33,7 @@ import Foundation
     private var presenceAt = Date.distantPast
     private var checkedAt = Date.distantPast
     private var running = false
+    private var reconnectAt = Date()
     private var monitor: Any?
     private var lastMouse: CGPoint?
     private let stateFile = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -126,6 +127,11 @@ import Foundation
         Task { @MainActor in
             while true {
                 try? await Task.sleep(for: .seconds(1))
+                // Hidden in the menu bar, Josi keeps trying the last server every 30 s
+                // (at login it may start before the server does).
+                if model.api == nil, model.screen == .connect, !model.busy, Date().timeIntervalSince(reconnectAt) >= 30 {
+                    reconnectAt = Date(); await model.resume()
+                }
                 await tick(model)
                 syncBrowser()
                 PcControlBar.shared.update()
@@ -150,6 +156,8 @@ import Foundation
             guard try await ensure(api, owner: owner) else { return }
             // Paired: the browser broker may start, so Safari's extension can reach Josi.
             PcBrowserBridge.shared.start()
+            // Sign-in cards: the live view of Josi's own browser and the login terminal.
+            if !paused { PcLiveSignIn.shared.start(api) { [weak model] in model?.api === api && !PcExecutor.shared.paused } }
             // Paused here means paused for the server too: no presence, so a PC tool
             // answers at once that Josi is paused instead of leaving work waiting.
             if paused { return }

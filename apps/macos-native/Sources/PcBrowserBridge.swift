@@ -195,10 +195,16 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
         if peer["kind"].text == "safari-profile", family == "safari", peer["extensionId"].text == safariExtension {
             return ("safari", "Safari", FileManager.default.fileExists(atPath: "/Applications/Safari.app") ? "/Applications/Safari.app" : "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app")
         }
+        // Josi's own browser: the native host vouched for its exact path and code hash.
+        if isOwnBrowser(peer) { return ("chrome", "Josi's browser", peer["bundlePath"].text) }
         if peer["kind"].text == "browser-process", ["chrome", "brave", "firefox"].contains(family), peer["bundlePath"].text.hasPrefix("/") {
             return (family, family.prefix(1).uppercased() + family.dropFirst(), peer["bundlePath"].text)
         }
         return nil
+    }
+    static func isOwnBrowser(_ peer: Wire) -> Bool {
+        peer["kind"].text == "browser-process" && peer["ownBrowser"].flag && peer["codeHash"].text == JosiOwnBrowser.codeHash
+            && peer["bundlePath"].text == JosiOwnBrowser.app(home: FileManager.default.homeDirectoryForCurrentUser.path)
     }
     private func process(_ peer: Wire, _ request: Wire) -> Wire {
         let id = request["requestId"].text, payload = request["payload"], operation = request["operation"].text
@@ -212,6 +218,10 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
             let extensionOk = browser.family == "safari" ? payload["extensionId"].text == Self.safariExtension : payload["extensionId"].text == peer["extensionId"].text
             guard extensionOk, UUID(uuidString: nativeProfileId) != nil, withTab || payload["attachedTabId"] == .null,
                   !withTab || (payload["attachedTabId"].integer >= 0 && Self.originOf(payload["url"].text) != nil) else { return Self.reply(id, false) }
+            // Josi's own browser needs no "Allow": it is Josi's, started by Josi.
+            if Self.isOwnBrowser(peer), !allowedBrowsers.contains(where: { $0.nativeProfileId == nativeProfileId && $0.application == browser.application }) {
+                saveAllowed(allowedBrowsers + [Allowed(nativeProfileId: nativeProfileId, profileId: UUID().uuidString.lowercased(), browser: browser.browser, family: "chrome", application: browser.application)])
+            }
             guard let known = allowedBrowsers.first(where: { $0.nativeProfileId == nativeProfileId && $0.application == browser.application }) else {
                 let found = Discovery(nativeProfileId: nativeProfileId, browser: browser.browser, family: browser.family, application: browser.application, origin: Self.originOf(payload["url"].text))
                 if discovered != found { discovered = found; didChange = true }
@@ -341,6 +351,12 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
               allowedBrowsers.contains(where: { $0.application == last.application }), FileManager.default.fileExists(atPath: last.application) else { return nil }
         return last
     }
+    /// With no browser of the person's linked or remembered: Josi's own browser,
+    /// started on demand (downloaded the first time it is needed).
+    private var ownFallback: Allowed? {
+        guard PcOwnBrowser.enabled else { return nil }
+        return Allowed(nativeProfileId: "own", profileId: "own", browser: "Josi's browser", family: "chrome", application: PcOwnBrowser.shared.appPath)
+    }
     private var linked: Bool { lock.lock(); defer { lock.unlock() }; return live() }
     private func showing(_ target: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
@@ -351,15 +367,22 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
     /// 40 seconds for the extension to link and show it. A refusal, or nil when ready.
     private func launch(_ scope: Wire, url: String, cancel: PcCancel) async -> PcOutcome? {
         let target = scope["target"].text
-        guard let last = lastBrowser, scope["application"].text == last.application else { return pcRefuse("browser_not_linked") }
+        guard let last = lastBrowser ?? ownFallback, scope["application"].text == last.application else { return pcRefuse("browser_not_linked") }
         guard Self.originOf(url) == target, url.hasPrefix("https://"), let page = URL(string: url), let host = page.host else { return pcRefuse("invalid_page") }
         await MainActor.run { PcExecutor.shared.beginExternal("Opening \(host)") }
         defer { Task { @MainActor in PcExecutor.shared.endExternal() } }
+        let own = last.application == PcOwnBrowser.shared.appPath
         do {
-            let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = true
-            _ = try await NSWorkspace.shared.open([page], withApplicationAt: URL(fileURLWithPath: last.application), configuration: configuration)
-        } catch { return pcRefuse("browser_did_not_start") }
-        let deadline = Date().addingTimeInterval(40)
+            if own {
+                // Josi's own browser starts hidden, through its private pipe; never as an app window.
+                _ = try await PcOwnBrowser.shared.page(url: url)
+            } else {
+                let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = true
+                _ = try await NSWorkspace.shared.open([page], withApplicationAt: URL(fileURLWithPath: last.application), configuration: configuration)
+            }
+        } catch { return pcRefuse("browser_did_not_start", own ? error.localizedDescription : nil) }
+        // The first start of Josi's own browser may download it, so it gets longer.
+        let deadline = Date().addingTimeInterval(own ? 120 : 40)
         while Date() < deadline {
             try? await Task.sleep(for: .milliseconds(500))
             if cancel.isCancelled || blocked { return pcRefuse("paused") }
@@ -390,7 +413,7 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
         guard live(), let link else {
             // No browser running: name the last one used, with no tabs, so
             // "open mercari.com" can start it. Without one, desktop work only.
-            guard let last = lastBrowser else { return nil }
+            guard let last = lastBrowser ?? ownFallback else { return nil }
             return ["connected": .bool(true), "browser": ["family": .string(last.family), "application": .string(last.application), "profile": "Default",
                                                           "origin": .null, "title": .null, "tabs": .array([])]]
         }

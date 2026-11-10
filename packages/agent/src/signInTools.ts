@@ -28,15 +28,16 @@ export const SIGN_IN_TOOL_NAMES = new Set(SIGN_IN_TOOLS.map((t) => t.def.name));
 
 export const SIGN_IN_PROMPT = 'When you need the person to sign in somewhere for you (a website, or a computer-wide login like a command line tool), call request_sign_in: a card opens for them, they sign in themselves, and you never see the screen, the keys or the terminal output. Never ask for a password, code or token in chat. After the note says they finished, verify with ordinary tools before you carry on.';
 
-/** A computer running Josi's own PC service for Linux that is connected and switched on. */
+/** A computer with Josi's own browser and PC service, connected and switched on:
+ * a Linux server's PC service, or the Josi app on a Mac (both serve the live view). */
 async function signInPc(db: Db): Promise<string | null> {
   const [row] = await db.query<{ pc_id: string }>(
     `select s.pc_id from pc_control_settings s join pc_control_presence p on p.owner_user_id = s.owner_user_id and p.pc_id = s.pc_id
-     where s.enabled and p.expires_at > now() and s.pc_id like 'linux-%' order by p.expires_at desc limit 1`);
+     where s.enabled and p.expires_at > now() and (s.pc_id like 'linux-%' or s.pc_id like 'mac-%') order by p.expires_at desc limit 1`);
   return row?.pc_id ?? null;
 }
 
-/** Offered only where it can work: a person allowed to sign in, and a connected Linux server with PC control on. */
+/** Offered only where it can work: a person allowed to sign in, and a connected Linux server or Mac with PC control on. */
 export async function signInToolAvailability(db: Db, userId: string): Promise<ToolSpec[]> {
   try {
     const [user] = await db.query<{ id: string; role: string }>('select id, role from users where id = $1', [userId]);
