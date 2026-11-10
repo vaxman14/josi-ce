@@ -37,7 +37,8 @@ function manifestFor(family, { store }) {
     manifest_version: 3, name: 'Josi Browser Control', version: VERSION,
     description: 'Lets the Josi app on your computer use your browser, only with your permissions. Never touches passwords or payment details.',
     icons: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png', 128: 'icons/icon-128.png' },
-    permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage', 'alarms', 'downloads'],
+    // Safari has no downloads API: the worker hands downloads to Josi instead.
+    permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage', 'alarms', ...(family === 'safari' ? [] : ['downloads'])],
     // Site access once, at install (as other assistant extensions do), so no
     // site needs a click in the browser. Each site and action is still
     // decided in Josi's PC Control: saved permissions or the owner's approval.

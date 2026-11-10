@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import ServiceManagement
 import SwiftUI
 
 /// What Josi may do on this Mac, for the owner: on or off, everyday things
@@ -131,7 +132,14 @@ struct NativePcControlView: View {
     private var browserCard: some View {
         JosiCard {
             Text("Browsers").font(JosiFont.headline)
-            NativeLeanNote(text: pc.browserLinked.map { "\($0) is linked." } ?? "No browser is linked right now. In Safari, turn on the Josi extension in Safari > Settings > Extensions.")
+            NativeLeanNote(text: pc.browserLinked.map { "\($0) is linked. Josi uses the tab you're looking at, or one she opens." }
+                ?? "No browser is linked right now. Safari: turn on \"Josi Browser Control\", then click Josi in Safari's toolbar and allow it on every website.")
+            HStack {
+                Button("Turn On Josi in Safari") { PcBrowserBridge.openSafariExtensionSettings() }.buttonStyle(JosiOutlineButtonStyle())
+                if PcBrowserBridge.brokerNeedsApproval {
+                    Button("Allow Josi's Browser Helper") { SMAppService.openSystemSettingsLoginItems() }.buttonStyle(JosiOutlineButtonStyle())
+                }
+            }
             ForEach(browsers, id: \.nativeProfileId) { browser in
                 HStack {
                     Text(browser.browser).font(JosiFont.callout)

@@ -13,7 +13,8 @@ const config = globalThis.JOSI_BROWSER_CONFIG;
 // standing link (a link with no tab attached).
 // Josi on Windows and on a Mac keeps a standing link and reads the tab list.
 const windowsHost = /^(Win|Mac)/.test(globalThis.navigator?.platform ?? '');
-const LINK_ALARM = 'josi-link', TABS_REPORTED = 30, PHOTO_BASE64_LIMIT = 98304, UPLOAD_LIMIT = 8 * 1024 * 1024;
+const LINK_ALARM = 'josi-link', TABS_REPORTED = 30, PHOTO_BASE64_LIMIT = 98304, UPLOAD_LIMIT = 8 * 1024 * 1024, SAVE_CHUNK = 120 * 1024;
+const ALL_SITES = ['https://*/*', 'http://*/*'];
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const bounded = (value, limit = 192 * 1024) => new TextEncoder().encode(JSON.stringify(value)).length <= limit;
 const clip = value => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 300);
@@ -38,6 +39,8 @@ const STATUS = {
   stopped: 'You have control. Josi will not use this browser until you resume.',
   standby: 'Josi is using another browser right now. Click "Use this browser" to switch Josi here.',
   site: 'Josi asked to use this tab. Click "Attach this tab" once to let Josi use this site.',
+  // Safari grants no site access at install: one click, once, for every site.
+  sites: 'In Safari, allow Josi on every website. Josi still asks you in Josi before each new kind of action.',
   unsupported: 'Josi cannot use this kind of tab. Open a website to attach it.',
 };
 let channel = null, workspace = null, phase = 'off', hostPaused = false;
@@ -402,7 +405,7 @@ async function openTab(command, epoch) {
 /** Downloads into the browser's own Downloads folder; reports how it ended
  * (file name only, never the folder). */
 async function download(command, epoch) {
-  if (!browserApi.downloads) throw new Error('downloads_unavailable');
+  if (!browserApi.downloads) return saveThroughHost(command, epoch);
   const id = await browserApi.downloads.download({ url: command.url, conflictAction: 'uniquify', saveAs: false });
   while (live() && epoch === generation && Date.now() < command.expiresAt - 1000) {
     const [item] = await browserApi.downloads.search({ id });
@@ -411,6 +414,49 @@ async function download(command, epoch) {
     await new Promise(resolve => setTimeout(resolve, 250));
   }
   return { kind: 'download', state: 'in_progress', verificationRequired: true };
+}
+/** Safari has no downloads API. The worker fetches the approved file itself
+ * (https, the site in use, at most 8 MB) and hands it to Josi in 120 KB
+ * chunks, the reverse of an upload; Josi saves it in Downloads under a name
+ * no other file has. Only the file name comes back, never the folder. */
+async function saveThroughHost(command, epoch) {
+  const target = webUrl(command.url);
+  if (!target || target.protocol !== 'https:') throw new Error('invalid_download');
+  const response = await fetch(target.href, { credentials: 'include', redirect: 'follow' });
+  const final = webUrl(response.url || target.href);
+  if (!final || final.protocol !== 'https:') throw new Error('invalid_download');
+  if (!response.ok) return { kind: 'download', state: 'interrupted', reason: 'http_' + response.status, verificationRequired: true };
+  if (Number(response.headers.get('content-length')) > UPLOAD_LIMIT) throw new Error('file_too_large');
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.length) throw new Error('empty_download');
+  if (bytes.length > UPLOAD_LIMIT) throw new Error('file_too_large');
+  if (!live() || epoch !== generation || Date.now() >= command.expiresAt) throw new Error('authority_changed');
+  const disposition = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(response.headers.get('content-disposition') ?? '');
+  let name = disposition ? disposition[1] : decodeURIComponent(final.pathname.split('/').pop() || '');
+  name = clip(name).replace(/[\\/:]/g, '_').replace(/^\.+/, '').slice(0, 200) || 'download';
+  const mediaType = clip(response.headers.get('content-type') ?? 'application/octet-stream').split(';')[0].slice(0, 100);
+  const chunks = Math.ceil(bytes.length / SAVE_CHUNK);
+  let reply = null;
+  for (let index = 0; index < chunks; index++) {
+    if (!live() || epoch !== generation || Date.now() >= command.expiresAt) throw new Error('authority_changed');
+    const piece = bytes.subarray(index * SAVE_CHUNK, Math.min(bytes.length, (index + 1) * SAVE_CHUNK));
+    let binary = '';
+    for (let i = 0; i < piece.length; i += 0x8000) binary += String.fromCharCode(...piece.subarray(i, i + 0x8000));
+    reply = await native('browser.save', { commandId: command.id, index, chunks, size: bytes.length, name, mediaType, base64: btoa(binary), last: index === chunks - 1 });
+    if (reply?.index !== index) throw new Error('save_failed');
+  }
+  if (typeof reply?.file !== 'string') throw new Error('save_failed');
+  return { kind: 'download', state: 'complete', file: reply.file.slice(0, 200), bytes: bytes.length };
+}
+/** A canvas the worker can draw on: OffscreenCanvas where the browser has it,
+ * otherwise a canvas in this background page (Safari's is a page). */
+function makeCanvas(width, height) {
+  if (typeof OffscreenCanvas === 'function') return new OffscreenCanvas(width, height);
+  const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height; return canvas;
+}
+function jpegBlob(canvas, quality) {
+  if (typeof canvas.convertToBlob === 'function') return canvas.convertToBlob({ type: 'image/jpeg', quality });
+  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('photo_unavailable')), 'image/jpeg', quality));
 }
 /** An approved upload's file, in the host's 120 KB chunks. The bytes go to
  * the page agent once and are not kept. */
@@ -442,12 +488,12 @@ async function downloadPhoto(shown, epoch, command) {
   try {
     for (const longest of [768, 512]) {
       const scale = Math.min(1, longest / Math.max(bitmap.width, bitmap.height));
-      const canvas = new OffscreenCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
+      const canvas = makeCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
       const context = canvas.getContext('2d');
       context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
       context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
       for (const quality of [0.8, 0.6, 0.4, 0.25]) {
-        const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg', quality })).arrayBuffer());
+        const bytes = new Uint8Array(await (await jpegBlob(canvas, quality)).arrayBuffer());
         let binary = '';
         for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
         const base64 = btoa(binary);
@@ -476,12 +522,12 @@ async function screenshot(tab, shown, epoch, command) {
   if (width < 8 || height < 8) throw new Error('photo_not_visible');
   for (const longest of [768, 512]) {
     const scale = Math.min(1, longest / Math.max(width, height));
-    const canvas = new OffscreenCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
+    const canvas = makeCanvas(Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale)));
     const context = canvas.getContext('2d');
     context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(bitmap, left, top, width, height, 0, 0, canvas.width, canvas.height);
     for (const quality of [0.8, 0.6, 0.4, 0.25]) {
-      const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg', quality })).arrayBuffer());
+      const bytes = new Uint8Array(await (await jpegBlob(canvas, quality)).arrayBuffer());
       let binary = '';
       for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
       const base64 = btoa(binary);
@@ -519,7 +565,10 @@ async function popupState() {
     : phase === 'off' && attachedTabId !== null ? STATUS.offAttached
     : !here && ['linked', 'attached'].includes(phase) ? STATUS.unsupported + ' ' + STATUS[phase]
     : STATUS[phase] ?? STATUS.off;
-  return { phase, status: sentence, family: config.family, origin: here ? webUrl(here.url).origin : null, tabId: here?.id ?? null,
+  // Safari starts with no site access; until every site is allowed, say so first.
+  let needsSites = false;
+  if (config.family === 'safari') { try { needsSites = !await browserApi.permissions.contains({ origins: ALL_SITES }); } catch { needsSites = true; } }
+  return { phase, status: needsSites ? STATUS.sites : sentence, needsSites, family: config.family, origin: here ? webUrl(here.url).origin : null, tabId: here?.id ?? null,
     attachedHere: !!attachedHere, attached: attachedTabId !== null, asked: !!asked,
     // Only for a site this browser has not opened to Josi, or to switch browsers.
     canAttach: !!here && !attachedHere && (!!asked || phase === 'standby' || (!windowsHost && phase !== 'unknown')),

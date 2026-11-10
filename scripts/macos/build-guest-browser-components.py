@@ -49,7 +49,7 @@ def build(output, node):
         "Firefox-signing-submission.zip is unsigned. Submit it to Mozilla for "
         "unlisted/self-distributed signing, then install the returned signed XPI "
         "through Firefox's add-on manager in your existing Firefox profile. "
-        "The extension attaches only the tab explicitly selected by its user. "
+        "The extension uses the tab you are looking at, or one Josi opens, and only as Josi's PC Control allows. "
         "Rebuild/sign a matching version after extension code changes. "
         "No Mozilla signing or browser installation was performed by this builder.\n"
     )
