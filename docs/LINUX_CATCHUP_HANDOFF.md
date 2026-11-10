@@ -38,7 +38,9 @@ Three files changed on both sides since `e6628da`; expect to resolve by hand:
 
 Migrations arrive with the merge: `0121_device_transfers.sql` and
 `0122_capabilities_start_on.sql`. Linux stops at 0120, so there is no number
-clash; do not add a Linux migration under 0123.
+clash. Windows has since added `0123_member_pc_control.sql` (members may
+control their own PCs, see `docs/WINDOWS_CLIENT_NODE_SPEC.md`); do not add a
+Linux migration under 0124.
 
 ## What arrives with the merge and needs no Linux work
 

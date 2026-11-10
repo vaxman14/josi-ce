@@ -4,7 +4,7 @@ import { verifyPcExecutor } from './pcExecutorIdentity.js';
 import { clientIp } from './cookies.js';
 import { disablePcControl, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
 import { pcControlReadiness } from '@josi-ce/agent';
-import { requireSuperAdmin } from './authz.js';
+import { requireAuth } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
 interface Ctx { db:Db; windows?:boolean; masterKey?:LoadOptions|false }
@@ -12,10 +12,18 @@ interface Ctx { db:Db; windows?:boolean; masterKey?:LoadOptions|false }
 // app without one is the hosting PC of the single-PC form. Permissions,
 // requests and presence are kept per PC. No execution/proposal endpoint is
 // exposed to the browser.
+const FRESH_SIGN_IN=10*60_000;
 const EXECUTOR_WAIT=60_000, EXECUTOR_WAIT_MAX=660_000;
 export function pcControlRoutes(ctx:Ctx):Router {
   const r=Router();const services=new Map<string,PcControl>();
-  r.use(requireSuperAdmin);
+  // A signed-in person controls the PCs enrolled under their own account and
+  // no one else's: every row below is keyed by req.user.id. The owner can
+  // switch PC control off for a member; the owner is never gated.
+  r.use(requireAuth);
+  r.use((req,res,next)=>{
+    if(req.user!.role==='super_admin'||req.user!.pc_control_allowed)return next();
+    res.status(403).json({error:'PC control is switched off for your account. The owner of this Josi can switch it on.'});
+  });
   r.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
   function targetPc(req:Request){
     if(req.query.ownerId!==undefined&&req.query.ownerId!==req.user!.id)throw new PcControlError(403,'This PC permission change belongs to another account.');
@@ -60,12 +68,19 @@ export function pcControlRoutes(ctx:Ctx):Router {
     return res.json({publicKey:identity?.public_key??null,enabled:(await control(req).snapshot(req.user!.id)).enabled});
   }));
   r.post('/identity',handle(async(req,res)=>{
-    const identifier='pc-identity:'+req.user!.id,ip=clientIp(req);
-    if((await checkLoginRate(ctx.db,identifier,ip)).blocked)throw new PcControlError(429,'Wait before another password attempt.');
-    const [user]=await ctx.db.query<{password_hash:string|null}>('select password_hash from users where id=$1',[req.user!.id]);
-    const matched=await verifyPassword(user?.password_hash??null,typeof req.body?.password==='string'?req.body.password:'');
-    await recordLoginAttempt(ctx.db,{identifier,ip,success:matched});
-    if(!matched)throw new PcControlError(401,'Confirm your account password in the protected native form.');
+    // Two ways to prove the person: the password again, or a sign-in made in
+    // the last ten minutes on a PC whose Windows administrator just approved
+    // the app (the app asks for elevation before it sends elevated:true).
+    if(req.body?.elevated===true&&typeof req.body?.password!=='string'){
+      if(Date.now()-Date.parse(req.user!.session_created_at)>FRESH_SIGN_IN)throw new PcControlError(401,'Confirm your account password in the protected native form.');
+    }else{
+      const identifier='pc-identity:'+req.user!.id,ip=clientIp(req);
+      if((await checkLoginRate(ctx.db,identifier,ip)).blocked)throw new PcControlError(429,'Wait before another password attempt.');
+      const [user]=await ctx.db.query<{password_hash:string|null}>('select password_hash from users where id=$1',[req.user!.id]);
+      const matched=await verifyPassword(user?.password_hash??null,typeof req.body?.password==='string'?req.body.password:'');
+      await recordLoginAttempt(ctx.db,{identifier,ip,success:matched});
+      if(!matched)throw new PcControlError(401,'Confirm your account password in the protected native form.');
+    }
     const key=req.body?.publicKey;
     if(typeof key!=='string'||key.length>100)throw new PcControlError(400,'Invalid PC identity.');
     const pc=targetPc(req);await verifyPcExecutor(ctx.db,req,pc,key);

@@ -102,6 +102,11 @@ export function adminRoutes(ctx: AdminRoutesCtx): Router {
     '/users/:userId',
     asyncRoute(async (req, res) => {
       const { email, username, displayName, status } = (req.body ?? {}) as Record<string, string>;
+      // Whether this person may let Josi control the PCs they sign in on.
+      const pcControlAllowed = (req.body ?? {}).pcControlAllowed;
+      if (pcControlAllowed !== undefined && typeof pcControlAllowed !== 'boolean') {
+        return res.status(400).json({ error: 'pcControlAllowed must be true or false' });
+      }
       // The super admin cannot disable themselves and lock the installation.
       if (param(req, 'userId') === req.user!.id && status === 'disabled') {
         return res.status(409).json({ error: 'you cannot disable your own account' });
@@ -110,6 +115,7 @@ export function adminRoutes(ctx: AdminRoutesCtx): Router {
         const user = await updateUser(db, param(req, 'userId'), {
           email, username, displayName,
           status: status as 'active' | 'disabled' | undefined,
+          pcControlAllowed,
         });
         await appendEvent(db, {
           actorUserId: req.user!.id,

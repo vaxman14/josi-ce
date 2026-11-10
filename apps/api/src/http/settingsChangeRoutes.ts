@@ -96,8 +96,11 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     try { await addMessage(db, { threadId: row.thread_id, direction: 'out', body, meta: { settings_change: row.id } }); }
     catch { /* the thread may be gone */ }
   };
-  const applier = (row: Row, user: { id: string; role: string }) =>
-    isPcChange(row) ? row.proposer_user_id === user.id && user.role === 'super_admin'
+  // A PC permission belongs to the person whose PC it is, owner or member.
+  const pcOwner = (row: Row, user: { id: string; role: string; pc_control_allowed?: boolean }) =>
+    row.proposer_user_id === user.id && (user.role === 'super_admin' || user.pc_control_allowed === true);
+  const applier = (row: Row, user: { id: string; role: string; pc_control_allowed?: boolean }) =>
+    isPcChange(row) ? pcOwner(row, user)
       : row.scope === 'administrator' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
   // The stored body is JSON text; the app sends it on as the request body, so
   // it must travel as an object. As text it would arrive double-encoded and
@@ -113,13 +116,13 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     }
     return { method: row.method, path: row.path, body };
   };
-  const dto = (row: Row, user: { id: string; role: string }, rule: Policy) => ({
+  const dto = (row: Row, user: { id: string; role: string; pc_control_allowed?: boolean }, rule: Policy) => ({
     id: row.id, threadId:row.thread_id, proposer: row.proposer, mine: row.proposer_user_id === user.id, scope: row.scope, area: row.area, sensitive: row.sensitive,
     title: row.title, summary: row.summary, state: row.state, createdAt: row.created_at, expiresAt: row.expires_at,
     approvedAt: row.approved_at, appliedAt: row.applied_at, error: row.error,
     card: isCredentialCard(row) ? cardOf(row) : undefined,
     // What this viewer can do with it right now.
-    canApprove: row.state === 'proposed' && (!isPcChange(row) || row.proposer_user_id === user.id) && (row.scope === 'administrator' ? user.role === 'super_admin'
+    canApprove: row.state === 'proposed' && (isPcChange(row) ? pcOwner(row, user) : row.scope === 'administrator' ? user.role === 'super_admin'
       : isCredentialCard(row) ? row.proposer_user_id === user.id
       : rule === 'super_admin' ? user.role === 'super_admin' : row.proposer_user_id === user.id),
     canDeny: ['proposed', 'approved'].includes(row.state) && visible(row, user),
@@ -149,7 +152,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
   const pcDigest=(row:Row)=>createHash('sha256').update(JSON.stringify([row.id,row.proposer_user_id,row.method,row.path,row.body,row.expires_at])).digest('hex');
   async function pcProposal(req:Request){
     const row=await load(param(req,'id'));checkPcChange(row,req.user!);
-    if(!isPcChange(row)||req.user!.role!=='super_admin'||row.proposer_user_id!==req.user!.id||row.state!=='proposed'||Date.parse(row.expires_at)<=Date.now())throw fail(409,'This PC permission is no longer awaiting your approval.');
+    if(!isPcChange(row)||!pcOwner(row,req.user!)||row.state!=='proposed'||Date.parse(row.expires_at)<=Date.now())throw fail(409,'This PC permission is no longer awaiting your approval.');
     return row;
   }
   r.post('/:id/pc-passkey/options',handle(async(req,res)=>{
@@ -204,7 +207,7 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     }
     if (row.state !== 'proposed') throw fail(409, `That proposal is already ${row.state}.`);
     checkPcChange(row, user);
-    const allowed = row.scope === 'administrator' ? user.role === 'super_admin'
+    const allowed = isPcChange(row) ? pcOwner(row, user) : row.scope === 'administrator' ? user.role === 'super_admin'
       : isCredentialCard(row) ? row.proposer_user_id === user.id
       : rule === 'super_admin' ? user.role === 'super_admin' : row.proposer_user_id === user.id;
     if (!allowed) throw fail(403, row.scope === 'administrator' ? 'Only the super-admin can approve an administrator setting.'

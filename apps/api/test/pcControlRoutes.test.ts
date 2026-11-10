@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
+import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { chromium } from 'playwright';
@@ -8,15 +9,15 @@ import { MasterKey, PcControl, type Db, type PcPlan } from '@josi-ce/core';
 import { testDb } from '../../../packages/core/test/helpers.js';
 import { createApp } from '../src/app.js';
 
-let db:Db,server:Server,base:string,owner:string,ownerJar:string,memberJar:string;
+let db:Db,server:Server,base:string,owner:string,member:string,ownerJar:string,memberJar:string;
 const rawKey=Buffer.alloc(32,31),key=new MasterKey(rawKey),password='pc-control-test-password';
 const scope={kind:'folder' as const,target:'C:\\Acceptance\\Reports'};
 const input:PcPlan={requirements:[{action:'file.delete',scope}],description:'Delete only the disposable report.txt in C:\\Acceptance\\Reports',payload:{path:'report.txt'}};
 const endpoint='/api/admin/pc-control';
 beforeAll(async()=>{
   db=await testDb();owner=(await createUser(db,{email:'pc-admin@example.test',username:'pc-admin',role:'super_admin'})).id;
-  const member=(await createUser(db,{email:'pc-member@example.test',username:'pc-member',role:'member'})).id;
-  await setPassword(db,owner,password);await db.query(`update setup_state set completed=true where id=true`);
+  member=(await createUser(db,{email:'pc-member@example.test',username:'pc-member',role:'member'})).id;
+  await setPassword(db,owner,password);await setPassword(db,member,password);await db.query(`update setup_state set completed=true where id=true`);
   ownerJar=`josi_session=${(await createSession(db,{userId:owner})).token}; josi_csrf=pc-fixture`;
   memberJar=`josi_session=${(await createSession(db,{userId:member})).token}; josi_csrf=pc-fixture`;
   server=createApp(db,{cookieSecure:false,appUrl:'http://localhost',nativeWindowsPermissions:true,
@@ -29,8 +30,8 @@ async function call(path='',method='GET',body?:unknown,jar=ownerJar,csrf=true){
   return {status:r.status,body:await r.json(),cache:r.headers.get('cache-control')};
 }
 describe('PC permissions over the real authenticated HTTP surface',()=>{
-  it('requires installation owner and CSRF on any server (item 36); never exposes a browser executor',async()=>{
-    expect((await call('','GET',undefined,'')).status).toBe(401);expect((await call('','GET',undefined,memberJar)).status).toBe(403);
+  it('requires a signed-in person and CSRF on any server (item 36); never exposes a browser executor',async()=>{
+    expect((await call('','GET',undefined,'')).status).toBe(401);
     expect((await call('/enabled','PUT',{enabled:true},ownerJar,false)).status).toBe(403);
     for(const route of ['/execute','/propose','/register-pc'])expect((await call(route,'POST',{})).status).toBe(404);
     const state=await call();expect(state.status).toBe(200);expect(state.cache).toBe('no-store');expect(state.body.enabled).toBe(false);expect(state.body.executorAvailable).toBe(false);
@@ -42,7 +43,7 @@ describe('PC permissions over the real authenticated HTTP surface',()=>{
     expect(saved.status).toBe(200);const state=(await call()).body;expect(state.pcId).toBe('local-windows-host');expect(state.policies[0].access).toBeUndefined();expect(state.policies[0].active).toBe(true);
     expect((await call('/policies','PUT',{action:'file.delete',scope,mode:'invalid'})).status).toBe(400);
     expect((await call('/enabled','PUT',{enabled:'yes'})).status).toBe(400);
-    expect((await call('/policies/'+saved.body.id,'DELETE',undefined,memberJar)).status).toBe(403);
+    expect((await call('/policies/'+saved.body.id,'DELETE',undefined,memberJar)).status).toBe(404);
     expect((await call('/policies/'+saved.body.id,'DELETE')).status).toBe(200);
   });
   it('high-risk scope choices never approve actions; approving once requires current owner password',async()=>{
@@ -55,6 +56,40 @@ describe('PC permissions over the real authenticated HTTP surface',()=>{
     // No filesystem executor is invoked: this just verifies durable approval.
     expect((await db.query<{state:string}>(`select state from pc_control_requests where id=$1`,[q.id]))[0].state).toBe('approved');
     expect(JSON.stringify((await call()).body)).not.toContain(password);await call('/stop','POST',{});
+  });
+  it('a member controls only the PCs under their own account, and the owner can switch that off',async()=>{
+    const mine=await call('/policies','PUT',{action:'folder.read',scope,mode:'always'},memberJar);expect(mine.status).toBe(200);
+    expect((await call('','GET',undefined,memberJar)).body.policies.map((p:{id:string})=>p.id)).toEqual([mine.body.id]);
+    expect((await call()).body.policies.some((p:{id:string})=>p.id===mine.body.id)).toBe(false);
+    expect((await call('/policies/'+mine.body.id,'DELETE')).status).toBe(404);
+    expect((await call('?ownerId='+owner,'GET',undefined,memberJar)).status).toBe(403);
+    await db.query('update users set pc_control_allowed=false where id=$1',[member]);
+    expect((await call('','GET',undefined,memberJar)).status).toBe(403);
+    expect((await call('/register','PUT',{},memberJar)).status).toBe(403);
+    await db.query('update users set pc_control_allowed=false where id=$1',[owner]);expect((await call()).status).toBe(200);
+    await db.query('update users set pc_control_allowed=true');
+    expect((await call('/policies/'+mine.body.id,'DELETE',undefined,memberJar)).status).toBe(200);
+  });
+  it('approves a PC on a fresh sign-in after elevation, or with the password, never on an old sign-in',async()=>{
+    const pair=generateKeyPairSync('ec',{namedCurve:'prime256v1'}),jwk=pair.publicKey.export({format:'jwk'});
+    const publicKey=Buffer.concat([Buffer.from([4]),Buffer.from(jwk.x!,'base64url'),Buffer.from(jwk.y!,'base64url')]).toString('base64');
+    const enrol=async(pc:string,body:Record<string,unknown>,signer=pair.privateKey)=>{
+      const text=JSON.stringify(body),time=Date.now(),nonce=randomUUID(),hash=createHash('sha256').update(text).digest('hex');
+      const proof=sign('sha256',Buffer.from('pc-executor.1\n'+JSON.stringify([member,pc,'POST','/api/admin/pc-control/identity',time,nonce,hash])),signer).toString('base64');
+      const r=await fetch(base+endpoint+'/identity',{method:'POST',body:text,headers:{'content-type':'application/json',cookie:memberJar,'x-josi-csrf':'pc-fixture',
+        'x-josi-pc':pc,'x-josi-pc-time':String(time),'x-josi-pc-nonce':nonce,'x-josi-pc-proof':proof}});
+      return r.status;
+    };
+    const stored=async(pc:string)=>(await db.query('select 1 from pc_executor_identity where owner_user_id=$1 and pc_id=$2',[member,pc])).length;
+    // A key the app does not hold cannot be enrolled, elevated or not.
+    expect(await enrol('win-desk',{publicKey,elevated:true},generateKeyPairSync('ec',{namedCurve:'prime256v1'}).privateKey)).toBe(403);
+    expect(await enrol('win-desk',{publicKey,password:'incorrect'})).toBe(401);expect(await stored('win-desk')).toBe(0);
+    expect(await enrol('win-desk',{publicKey,elevated:true})).toBe(200);expect(await stored('win-desk')).toBe(1);
+    expect((await db.query('select 1 from pc_executor_identity where owner_user_id=$1',[owner])).length).toBe(0);
+    await db.query(`update sessions set created_at=now()-interval '11 minutes' where user_id=$1`,[member]);
+    expect(await enrol('win-attic',{publicKey,elevated:true})).toBe(401);expect(await stored('win-attic')).toBe(0);
+    expect(await enrol('win-attic',{publicKey,elevated:true,password:'incorrect'})).toBe(401);
+    expect(await enrol('win-attic',{publicKey,password})).toBe(200);expect(await stored('win-attic')).toBe(1);
   });
   it('fails closed without an encryption key while emergency stop still revokes',async()=>{
     const broken=createApp(db,{cookieSecure:false,appUrl:'http://localhost',nativeWindowsPermissions:true,masterKeyCheck:false}).listen(0,'127.0.0.1');
