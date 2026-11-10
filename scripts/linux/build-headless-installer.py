@@ -10,7 +10,7 @@ import json
 import re
 import time
 
-from package_common import OUT, RELEASE_BASE_URL, REPO, VERSION, digest, package_names, record_checksum
+from package_common import OUT, RELEASE_BASE_URL, REPO, VERSION, VERSION_PATTERN, digest, package_names, record_checksum
 
 TEMPLATE = REPO / 'packaging/linux/install-josi-ce-server.sh'
 NAME = 'linux'
@@ -30,7 +30,7 @@ def render(version: str, base_url: str, packages: dict) -> str:
         rows.append(f'{family} {processor} {name} {sha256}')
     if not rows:
         raise ValueError('No packages to install')
-    if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?', version) or not re.fullmatch(r'https?://[^\s\'"]+', base_url):
+    if not re.fullmatch(VERSION_PATTERN, version) or not re.fullmatch(r'https?://[^\s\'"]+', base_url):
         raise ValueError('Unexpected version or address')
     values = {'VERSION': version, 'BASE_URL': base_url.rstrip('/'), 'PACKAGES': '\n'.join(rows)}
     for key, value in values.items():

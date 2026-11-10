@@ -47,6 +47,8 @@ import { AdminNetwork } from '@/pages/admin/Network';
 import { AdminHeyJosi } from '@/pages/admin/HeyJosi';
 import { Devices } from '@/pages/Devices';
 import { api } from '@/lib/api';
+import { shows } from '@/lib/flags';
+import { MyWorld } from '@/pages/MyWorld';
 
 /** Routing is convenience, not security.
  *
@@ -64,6 +66,12 @@ function RequireAuth({ children, admin = false }: { children: React.ReactNode; a
 
 /** Chat is /app now. Anything pointing at the old address, a bookmark or a link
  * in an old email, lands there with the conversation it asked for. */
+/** A section this build hides (lib/flags.ts, mirroring Flags.cs) lands on
+ * chat. The page stays in the source and comes back with its flag. */
+function shown(section: string, page: React.ReactNode): React.ReactNode {
+  return shows(section) ? page : <Navigate to="/app" replace />;
+}
+
 function TalkRedirect() {
   const { search } = useLocation();
   return <Navigate to={`/app${search}`} replace />;
@@ -95,7 +103,8 @@ function useFirstRunRedirect(): void {
   const redirected = useRef(false);
 
   useEffect(() => {
-    if (loading || user?.role !== 'super_admin' || redirected.current) return;
+    // A build without the checklist (lib/flags.ts) has nowhere to send them.
+    if (!shows('checklist') || loading || user?.role !== 'super_admin' || redirected.current) return;
     // Already there, or deliberately somewhere else in the admin section.
     if (window.location.pathname.startsWith('/admin')) return;
     void fetch('/api/admin/launch-checklist', { credentials: 'same-origin', cache: 'no-store' })
@@ -148,30 +157,31 @@ export function App() {
 
       <Route path="/app" element={<RequireAuth><Shell /></RequireAuth>}>
         <Route index element={<Talk />} />
+        <Route path="my-world" element={<MyWorld />} />
         <Route path="talk" element={<TalkRedirect />} />
         <Route path="tasks" element={<Tasks />} />
         <Route path="approvals" element={<Approvals />} />
         <Route path="conversations" element={<Conversations />} />
         <Route path="contacts" element={<Contacts />} />
         <Route path="connections" element={<Connections />} />
-        <Route path="workflows" element={<Workflows />} />
+        <Route path="workflows" element={shown('workflows', <Workflows />)} />
         <Route path="calendar" element={<Calendar />} />
-        <Route path="email/templates" element={<EmailTemplates />} />
-        <Route path="workspace" element={<LocalWorkspace />} />
+        <Route path="email/templates" element={shown('templates', <EmailTemplates />)} />
+        <Route path="workspace" element={shown('workspace', <LocalWorkspace />)} />
         <Route path="vault" element={<Vault />} />
-        <Route path="usage" element={<Usage />} />
+        <Route path="usage" element={shown('usage', <Usage />)} />
         <Route path="devices" element={<Devices />} />
-        <Route path="personalization" element={<Personalization />} />
+        <Route path="personalization" element={shown('personalization', <Personalization />)} />
         <Route path="settings" element={<Settings />} />
-        <Route path="channels" element={<Channels />} />
-        <Route path="channels/telegram" element={<Telegram />} />
+        <Route path="channels" element={shown('channels', <Channels />)} />
+        <Route path="channels/telegram" element={shown('channels', <Telegram />)} />
         {/* Telegram was a top-level item before it was a channel. Anything
             already pointing at the old path — a bookmark, a link in an old
             email — lands where the page lives now rather than on the
             catch-all redirect to chat. */}
         <Route path="telegram" element={<Navigate to="/app/channels/telegram" replace />} />
-        <Route path="apps" element={<Apps />} />
-        <Route path="family" element={<Family />} />
+        <Route path="apps" element={shown('apps', <Apps />)} />
+        <Route path="family" element={shown('family', <Family />)} />
       </Route>
 
       <Route path="/admin" element={<RequireAuth admin><Shell /></RequireAuth>}>
@@ -179,26 +189,26 @@ export function App() {
         <Route path="diagnostics" element={<AdminDiagnostics />} />
         <Route path="people" element={<AdminPeople />} />
         <Route path="model" element={<AdminModel />} />
-        <Route path="voice-box" element={<AdminVoiceBox />} />
-        <Route path="policy" element={<AdminPolicy />} />
-        <Route path="pc-control" element={<AdminPcControl />} />
-        <Route path="storage" element={<AdminStorage />} />
-        <Route path="connectors" element={<AdminConnectorsHub />} />
-        <Route path="workflows" element={<AdminWorkflows />} />
-        <Route path="channels" element={<AdminChannels />} />
-        <Route path="workspace" element={<AdminWorkspace />} />
-        <Route path="telegram" element={<AdminTelegram />} />
+        <Route path="voice-box" element={shown('voice-box', <AdminVoiceBox />)} />
+        <Route path="policy" element={shown('policy', <AdminPolicy />)} />
+        <Route path="pc-control" element={shown('pc-control', <AdminPcControl />)} />
+        <Route path="storage" element={shown('storage', <AdminStorage />)} />
+        <Route path="connectors" element={shown('connectors', <AdminConnectorsHub />)} />
+        <Route path="workflows" element={shown('workflow-providers', <AdminWorkflows />)} />
+        <Route path="channels" element={shown('channels', <AdminChannels />)} />
+        <Route path="workspace" element={shown('workspace', <AdminWorkspace />)} />
+        <Route path="telegram" element={shown('channels', <AdminTelegram />)} />
         <Route path="backups" element={<AdminBackups />} />
         <Route path="vault" element={<AdminVault />} />
-        <Route path="automation" element={<AdminAutomation />} />
+        <Route path="automation" element={shown('automation', <AdminAutomation />)} />
         <Route path="network" element={<AdminNetwork />} />
-        <Route path="hey-josi" element={<AdminHeyJosi />} />
+        <Route path="hey-josi" element={shown('relay', <AdminHeyJosi />)} />
         {/* Connectors and Integrations are one page since October 2026 (item 41). */}
         <Route path="developer-services" element={<Navigate to="/admin/connectors?view=developer" replace />} />
         <Route path="integrations" element={<Navigate to="/admin/connectors?view=developer" replace />} />
-        <Route path="custom-apis" element={<AdminCustomApis />} />
-        <Route path="parental-controls" element={<AdminParentalControls />} />
-        <Route path="launch" element={<AdminLaunchChecklist />} />
+        <Route path="custom-apis" element={shown('custom-apis', <AdminCustomApis />)} />
+        <Route path="parental-controls" element={shown('parental', <AdminParentalControls />)} />
+        <Route path="launch" element={shown('checklist', <AdminLaunchChecklist />)} />
       </Route>
 
       <Route path="*" element={<Navigate to="/app" replace />} />

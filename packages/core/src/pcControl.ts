@@ -52,7 +52,7 @@ const text = (value:unknown,max=1024):string => typeof value==='string' && value
 function macPath(path:string):string {
   if(path.length>1&&path.endsWith('/'))path=path.slice(0,-1);
   if(!path.startsWith('/')||/[*?\u0000]/.test(path)||path.includes('//')||
-    path.slice(1).split('/').some(part=>part===''&&path!=='/'||part==='.'||part==='..'))fail('Choose an exact absolute path on this Mac.');
+    path.slice(1).split('/').some(part=>part===''&&path!=='/'||part==='.'||part==='..'))fail('Choose an exact absolute path on this computer.');
   return posix.normalize(path);
 }
 function localPath(value:unknown):string {
@@ -345,7 +345,10 @@ export class PcControl {
     if(plan.requirements.some(r=>r.action==='command.run')&&saved.some(p=>p.mode==='never'&&p.action!=='administrator.elevate'&&p.action!=='command.run'))return 'denied';
     for(const requirement of plan.requirements){
       const matches=saved.filter(p=>p.action===requirement.action&&p.scope.kind===requirement.scope.kind
-        &&(p.scope.target==='*'||p.scope.target===requirement.scope.target||['folder','command'].includes(p.scope.kind)&&requirement.scope.target.startsWith(p.scope.target.replace(/\\$/,'')+'\\'))
+        &&(p.scope.target==='*'||p.scope.target===requirement.scope.target||['folder','command'].includes(p.scope.kind)&&(p.scope.target.startsWith('/')
+          // A Mac or Linux grant covers its subfolders by exact spelling too.
+          ?requirement.scope.target.startsWith((p.scope.target==='/'?'':p.scope.target)+'/')
+          :requirement.scope.target.startsWith(p.scope.target.replace(/\\$/,'')+'\\')))
         &&(p.scope.application==='*'||p.scope.application===requirement.scope.application)&&(p.scope.profile==='*'||p.scope.profile===requirement.scope.profile));
       if(matches.some(p=>p.mode==='never'))return 'denied';
       if(matches.some(p=>p.mode==='ask')){ask=true;continue;}
@@ -512,7 +515,7 @@ export type PcBrowserTab={tabId:number;origin:string;title:string|null;active:bo
  * (origins only, never paths or page content) so chat can attach one. */
 export type PcBrowserPresence={family:string;application:string;profile:string;origin:string|null;title:string|null;
   activeTabId?:number|null;activeOrigin?:string|null;activeTitle?:string|null;tabs?:PcBrowserTab[]};
-export const PC_BROWSER_FAMILIES:readonly string[]=['chrome','brave','edge','firefox','safari'];
+export const PC_BROWSER_FAMILIES:readonly string[]=['chrome','chromium','brave','edge','firefox','safari'];
 const PRESENCE_TABS=30;
 function webOrigin(value:unknown,message:string):string{
   try{const url=new URL(text(value,2048));if(!['http:','https:'].includes(url.protocol)||url.username||url.password)fail('');return url.origin;}

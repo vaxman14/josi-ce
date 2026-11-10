@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 
 
@@ -22,6 +23,11 @@ CACHE = Path(os.environ.get('JOSI_LINUX_BUILD_CACHE', '/home/roman/JosiDrive/Cac
 OUT = BASE / 'artifacts'
 RUNTIME = BASE / 'stage/runtime'
 VERSION = os.environ.get('JOSI_LINUX_VERSION', '1.0.0')
+# The one version shape every part accepts: lifecycle.py, Runtime.mjs and the
+# updater all refuse anything else, so the build does too.
+VERSION_PATTERN = r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?'
+if not re.fullmatch(VERSION_PATTERN, VERSION):
+    raise SystemExit('Invalid JOSI_LINUX_VERSION: ' + VERSION)
 ARCH = os.environ.get('JOSI_LINUX_ARCH', {'x86_64': 'x86_64', 'aarch64': 'aarch64'}.get(platform.machine(), 'x86_64'))
 SOURCE_DATE_EPOCH = '1735689600'
 PACKAGE = 'josi'
@@ -45,6 +51,14 @@ def package_names(version: str = VERSION) -> dict:
         names['arch-' + processor] = f'{PACKAGE}-{pkgver}-1-{processor}.pkg.tar.zst'
         names['debian-' + processor] = f'{PACKAGE}_{version}_{DEBIAN_ARCH[processor]}.deb'
     return names
+
+
+def debian_version(version: str = VERSION) -> str:
+    """The Version field dpkg compares. A prerelease takes `~` (1.2.8~beta.1),
+    which sorts before 1.2.8; with `-` dpkg would read beta.1 as a Debian
+    revision, sort it after 1.2.8 and make the release look like a downgrade.
+    The file name keeps Josi's own version."""
+    return version.replace('-', '~', 1)
 
 
 def rpm_version_release(version: str = VERSION) -> tuple:

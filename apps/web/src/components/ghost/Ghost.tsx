@@ -7,7 +7,7 @@
 // reduced motion, or if a clip will not play, the still pose stands in.
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  clipSource, glowFor, GHOST_STILL, inlineTokens, isLoopClip, plainText, prefersHevc, replyParts, revealStepMs, splitWords,
+  CLIP_MS, clipSource, glowFor, GHOST_STILL, inlineTokens, isLoopClip, plainText, prefersHevc, replyParts, revealStepMs, splitWords,
   type GhostClip,
 } from '@/lib/ghost';
 
@@ -24,7 +24,9 @@ export function useReducedMotion(): boolean {
   return reduced;
 }
 
-export function GhostFigure({ clip, beat, reduced }: { clip: GhostClip; beat: number; reduced: boolean }) {
+/** `size` in pixels pins the figure for pages other than the stage (setup,
+ * sign-in); without it the stage CSS sizes it to the screen. */
+export function GhostFigure({ clip, beat, reduced, size }: { clip: GhostClip; beat: number; reduced: boolean; size?: number }) {
   const figure = useRef<HTMLDivElement>(null);
   const first = useRef<HTMLVideoElement>(null);
   const second = useRef<HTMLVideoElement>(null);
@@ -73,7 +75,7 @@ export function GhostFigure({ clip, beat, reduced }: { clip: GhostClip; beat: nu
   const glow = glowFor(clip);
   const onError = () => { if (wanted.current) setFailed(true); };
   return (
-    <div ref={figure} className="ghost-figure" aria-hidden>
+    <div ref={figure} className="ghost-figure" aria-hidden style={size ? { width: size, height: size } : undefined}>
       <div className={`ghost-glow ${glow === 'calm' ? '' : `ghost-glow-${glow}`}`} />
       {still ? <img src={GHOST_STILL} alt="" className="ghost-layer ghost-layer-on" draggable={false} /> : <>
         <video ref={first} className="ghost-layer" muted playsInline preload="auto" disablePictureInPicture onError={onError} />
@@ -84,6 +86,20 @@ export function GhostFigure({ clip, beat, reduced }: { clip: GhostClip; beat: nu
 }
 
 /** Inline markdown as words, each its own span so it can fade in. */
+/** The ghost off the stage: a wave hello that settles into the idle wiggle,
+ * or a celebration once something has worked (setup and sign-in pages). */
+export function GreetingGhost({ size, success = false }: { size: number; success?: boolean }) {
+  const reduced = useReducedMotion();
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    setSettled(false);
+    const timer = window.setTimeout(() => setSettled(true), CLIP_MS[success ? 'celebrate' : 'wave-hello']);
+    return () => window.clearTimeout(timer);
+  }, [success]);
+  const clip: GhostClip = success ? (settled ? 'gentle-float' : 'celebrate') : settled ? 'idle-wiggle' : 'wave-hello';
+  return <GhostFigure clip={clip} beat={0} reduced={reduced} size={size} />;
+}
+
 function renderInline(source: string, next: () => number, step: number, animate: boolean): ReactNode[] {
   const words = (text: string) => text.split(/(\s+)/).map((chunk, index) => {
     if (!chunk) return null;

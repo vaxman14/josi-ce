@@ -12,6 +12,7 @@
 // warning travels with the download rather than living somewhere else.
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
 
 interface BackupRow {
@@ -366,7 +367,7 @@ function BackupDestination() {
           <p className="mt-1 text-xs text-muted-foreground">This is the only visible copy. Keep it somewhere other than the backup destination.</p>
           <code className="mt-2 block break-all text-sm">••••••••••••{recoveryKey.slice(-4)}</code>
           <div className="mt-2 flex gap-2">
-            <Button type="button" variant="secondary" onClick={() => void navigator.clipboard.writeText(recoveryKey)}>Copy</Button>
+            <Button type="button" variant="secondary" onClick={() => { setError(''); void copyText(recoveryKey).catch(e => setError(e instanceof Error ? e.message : 'The key could not be copied. Use Download instead.')); }}>Copy</Button>
             <Button type="button" variant="secondary" onClick={() => { const blob = new Blob([`${recoveryKey}\n`], { type: 'text/plain' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'josi-backup-recovery-key.txt'; a.click(); URL.revokeObjectURL(a.href); }}>Download</Button>
           </div>
         </div>

@@ -3,7 +3,7 @@ import json
 import os
 import subprocess
 
-from package_common import (BASE, DEBIAN_ARCH, OUT, PACKAGE, SOURCE_DATE_EPOCH, VERSION, package_names,
+from package_common import (BASE, DEBIAN_ARCH, OUT, PACKAGE, SOURCE_DATE_EPOCH, debian_version, package_names,
     populate_root, record_checksum, staged_architecture)
 
 
@@ -19,7 +19,7 @@ def main() -> None:
     control.mkdir(mode=0o755)
     control.joinpath('control').write_text(
         f"Package: {PACKAGE}\n"
-        f"Version: {VERSION}\nArchitecture: {DEBIAN_ARCH[processor]}\n"
+        f"Version: {debian_version()}\nArchitecture: {DEBIAN_ARCH[processor]}\n"
         "Maintainer: SOCAL RECEPTIONIST LLC <vaxman14@users.noreply.github.com>\n"
         "Depends: python3 (>= 3.10), systemd, rsync, acl, iproute2, libstdc++6, ca-certificates\n"
         "Conflicts: josi-ce-server-setup\nReplaces: josi-ce-server-setup\n"
@@ -29,11 +29,22 @@ def main() -> None:
         " Josi's private PostgreSQL, Node, Python, Caddy and CPU speech runtime. Setup,\n"
         " sign-in, chat, settings and updates all happen in the browser.\n"
     )
-    # A removal stops Josi first; its data stays unless josi-uninstall --purge is used.
+    # A removal (apt remove josi) stops and disables Josi first: its units live
+    # in /etc/systemd/system and run the program kept in /var/lib/josi, so
+    # left enabled they would start again at the next boot. Its data stays
+    # unless josi-uninstall --purge is used. An upgrade leaves them alone.
+    units = ('josi.service josi-update.path josi-update.timer josi-pc.service '
+        + ' '.join(f'josi-ce-{role}.service' for role in ('database', 'voice', 'voice-control', 'web', 'worker', 'proxy')))
     prerm = control / 'prerm'
     prerm.write_text('#!/bin/sh\nset -e\nif [ "$1" = remove ] && [ -d /run/systemd/system ]; then\n'
-        '  systemctl stop josi.service josi-update.path josi-update.timer >/dev/null 2>&1 || true\nfi\n')
+        f'  systemctl disable --now {units} >/dev/null 2>&1 || true\nfi\n')
     prerm.chmod(0o755)
+    postrm = control / 'postrm'
+    postrm.write_text('#!/bin/sh\nset -e\ncase "$1" in remove|purge)\n'
+        '  if [ -d /run/systemd/system ]; then\n'
+        f'    systemctl disable {units} >/dev/null 2>&1 || true\n'
+        '    systemctl daemon-reload >/dev/null 2>&1 || true\n  fi ;;\nesac\n')
+    postrm.chmod(0o755)
     package = OUT / package_names()['debian-' + processor]
     package.unlink(missing_ok=True)
     environment = {**os.environ, 'SOURCE_DATE_EPOCH': SOURCE_DATE_EPOCH}

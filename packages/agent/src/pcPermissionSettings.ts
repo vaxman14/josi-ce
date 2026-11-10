@@ -1,7 +1,7 @@
 // Chat reads the actual device policy, then prepares a human-approved change.
 // The target, owner and policy revision are fixed before any client applies it.
 import { existsSync } from 'node:fs';
-import { normalizePcPolicy, normalizePcPreset, PcControl, PcControlError, type Db, type MasterKey, type PcPolicy, type PcPreset } from '@josi-ce/core';
+import { normalizePcPolicy, normalizePcPreset, PcControl, PcControlError, syncLocalExecutors, type Db, type MasterKey, type PcPolicy, type PcPreset } from '@josi-ce/core';
 
 export const PC_CHAT_PERMISSION_SEMANTICS = 'pc-control-chat.2';
 export const PC_SETTING_AREAS = new Set(['pc_control_enabled', 'pc_control_full_control', 'pc_control_preset', 'pc_control_scope', 'pc_control_revoke', 'pc_control_decide']);
@@ -9,6 +9,8 @@ export const PC_SETTING_AREAS = new Set(['pc_control_enabled', 'pc_control_full_
 export async function pcPermissionState(db:Db,owner:string,key:MasterKey,requested?:unknown) {
   const [user]=await db.query<{role:string}>(`select role from users where id=$1`,[owner]);
   if(user?.role!=='super_admin')throw new PcControlError(403,'Only the owner can manage PC permissions.');
+  // A Linux server's own executor cannot sign in by itself: it is listed from its hello.
+  await syncLocalExecutors(db,owner).catch(()=>[]);
   const devices=await db.query<{pcId:string;enabled:boolean;connected:boolean;paired:boolean}>(
     `select s.pc_id as "pcId",s.enabled,coalesce(p.expires_at>now(),false) as connected,(i.public_key is not null) as paired
      from pc_control_settings s left join pc_control_presence p on p.owner_user_id=s.owner_user_id and p.pc_id=s.pc_id
@@ -40,7 +42,7 @@ export async function preparePcPermissionChange(db:Db,owner:string,key:MasterKey
     const device=state.devices.find(d=>d.pcId===current.pcId);
     detail=area==='pc_control_enabled'
       ? body.enabled?(everyday?'Let Josi work on this PC: open and use programs, read and write files and use windows without asking each time. Commands in a shell ask once per folder; deleting, purchases, credentials, installs, security changes and administrator prompts always ask.'
-          :'Enable PC control. This alone does not grant access to applications, files, or commands.')+(device&&!device.paired?' Josi on this PC will then ask you once to approve the PC with your password.':'')
+          :'Enable PC control. This alone does not grant access to applications, files, or commands.')+(device&&!device.paired?(current.pcId.startsWith('linux-')?' Approving this also pairs the PC service of this Linux server with your account.':' Josi on this PC will then ask you once to approve the PC with your password.'):'')
         :'Disable PC control and revoke temporary and task grants. Completed work is not undone.'
       : body.enabled?'Enable everyday control for browsers, folders and applications. Commands, deletion, purchases, credentials, installs, security changes and elevation still ask. Existing Never rules remain blocked.'
         :'Disable everyday full control. Exact saved permissions still apply.';
@@ -49,8 +51,9 @@ export async function preparePcPermissionChange(db:Db,owner:string,key:MasterKey
     if(preset.mode==='task'&&!current.tasks.some(t=>t.id===preset.taskId))throw new PcControlError(400,'Choose an active task belonging to you.');
     normalized={...preset};
     const duration=preset.mode==='always'?'until revoked':preset.mode==='task'?`for task ${preset.taskId}, until ${preset.expiresAt}`:`until ${preset.expiresAt}`;
-    detail=`Allow ${preset.access==='apps'?'all applications':preset.access==='terminal'?'all supported terminals in any starting folder':'all supported application, file, browser and terminal operations'} ${duration}.\nAdministrator commands: ${preset.administrator?'allowed for this duration, with Windows UAC still required':'blocked until you change this administrator rule'}.\nExisting exact permissions and Never/Ask rules remain. Protected credentials are excluded.`;
-    if(preset.access!=='apps')detail+='\nHost commands can access files and launch programs with your Windows account authority. Starting folders do not sandbox commands; incompatible Never rules block host commands.';
+    const linux=current.pcId.startsWith('linux-');
+    detail=`Allow ${preset.access==='apps'?'all applications':preset.access==='terminal'?'all supported terminals in any starting folder':'all supported application, file, browser and terminal operations'} ${duration}.\nAdministrator commands: ${linux?'not available on a Linux server':preset.administrator?'allowed for this duration, with Windows UAC still required':'blocked until you change this administrator rule'}.\nExisting exact permissions and Never/Ask rules remain. Protected credentials are excluded.`;
+    if(preset.access!=='apps')detail+=`\nHost commands can access files and launch programs with your ${linux?'Linux user':'Windows account'} authority. Starting folders do not sandbox commands; incompatible Never rules block host commands.`;
     if(preset.access==='full')detail+='\nThe older everyday-control toggle is disabled so it cannot outlive this duration. Other existing exact grants keep their own durations.';
   } else if(area==='pc_control_decide'){
     if(typeof body.approve!=='boolean')throw new PcControlError(400,'Choose approve or deny.');
@@ -102,6 +105,7 @@ export async function preparePcPermissionChange(db:Db,owner:string,key:MasterKey
 export type ReadinessFact={ok:boolean|null;detail:string};
 export async function pcControlReadiness(db:Db,owner:string,requested?:unknown):Promise<{facts:Record<string,ReadinessFact>;ready:boolean;summary:string}> {
   const facts:Record<string,ReadinessFact>={};
+  await syncLocalExecutors(db,owner).catch(()=>[]);
   const [model]=await db.query<{provider:string;model:string;cap_tool_calling:boolean|null;cap_vision:boolean|null;probed_at:string|null;activated_at:string|null}>(
     `select provider,model,cap_tool_calling,cap_vision,probed_at,activated_at from llm_providers where role='primary'`);
   facts.model=!model?{ok:false,detail:'No language model is configured. Choose one under Models.'}
@@ -116,16 +120,16 @@ export async function pcControlReadiness(db:Db,owner:string,requested?:unknown):
      from pc_control_settings s left join pc_control_presence p on p.owner_user_id=s.owner_user_id and p.pc_id=s.pc_id
      left join pc_executor_identity i on i.owner_user_id=s.owner_user_id and i.pc_id=s.pc_id where s.owner_user_id=$1 order by s.pc_id`,[owner]);
   const pcId=typeof requested==='string'?requested:devices.length===1?devices[0].pcId:devices.find(d=>d.connected)?.pcId;
-  const pc=devices.find(d=>d.pcId===pcId);
+  const pc=devices.find(d=>d.pcId===pcId),linux=!!pc?.pcId.startsWith('linux-');
   facts.pcRegistered=pc?{ok:true,detail:'This PC is registered as '+pc.pcId+'.'}
     :devices.length?{ok:false,detail:'Several PCs are registered and none is selected: '+devices.map(d=>d.pcId).join(', ')+'.'}
     :{ok:false,detail:'No PC is registered to this account. Open Josi on the PC and sign in as the owner; it registers itself.'};
   facts.pcPaired=!pc?{ok:false,detail:'Not paired.'}:pc.paired?{ok:true,detail:'The PC approved its executor key.'}
-    :{ok:false,detail:'This PC has not approved its executor key. In Josi on that PC, open PC Control and choose Approve This PC (your password, once).'};
+    :{ok:false,detail:linux?'The PC service of this Linux server is not paired yet. Propose pc_control_enabled for it in chat: approving that card with the password pairs it.':'This PC has not approved its executor key. In Josi on that PC, open PC Control and choose Approve This PC (your password, once).'};
   facts.controlEnabled=!pc?{ok:false,detail:'PC control is off.'}:pc.enabled?{ok:true,detail:'PC control is on'+(pc.fullControl?' with everyday full control.':'.')}
     :{ok:false,detail:'PC control is off. Turn it on under PC Control, or ask Josi in chat to turn it on.'};
   facts.pcPresence=!pc?{ok:false,detail:'Josi is not announcing itself from any PC.'}:pc.connected?{ok:true,detail:'Josi is open on the PC and ready to work.'}
-    :pc.enabled&&pc.paired?{ok:false,detail:'Josi on the PC is not announcing itself. Is the app open and signed in as the owner on its Workspace screen?'}
+    :pc.enabled&&pc.paired?{ok:false,detail:linux?'The PC service on this Linux server (josi-pc.service) is not announcing itself. It may be stopped or paused; `sudo systemctl restart josi-pc` on the server starts it again.':'Josi on the PC is not announcing itself. Is the app open and signed in as the owner on its Workspace screen?'}
     :{ok:false,detail:'Josi announces itself once the PC is paired and control is on.'};
   if(pc){
     const [counts]=await db.query<{grants:string;pending:string}>(

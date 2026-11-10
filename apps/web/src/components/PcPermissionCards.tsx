@@ -3,11 +3,11 @@ import {useEffect,useRef,useState} from 'react';
 import {api} from '@/lib/api';
 import {passkeyMessage} from '@/lib/passkeys';
 import {Button,ErrorNote} from '@/components/ui';
+import {isPcProposal,type Proposal} from '@/lib/settingsChanges';
 
-type Proposal={id:string;threadId:string;area:string;title:string;summary:string;sensitive:boolean;canApprove:boolean};
 type Challenge={id:string;options:Parameters<typeof PublicKeyCredential.parseRequestOptionsFromJSON>[0]};
 
-function Card({proposal,onDone}:{proposal:Proposal;onDone:()=>void}){
+export function PcPermissionCard({proposal,onDone}:{proposal:Proposal;onDone:()=>void}){
   const [challenge,setChallenge]=useState<Challenge|null>(null);
   const [password,setPassword]=useState(''),[passwordForm,setPasswordForm]=useState(false);
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[reload,setReload]=useState(0);
@@ -51,15 +51,10 @@ function Card({proposal,onDone}:{proposal:Proposal;onDone:()=>void}){
     </form>:null}
   </article>;
 }
-export function PcPermissionCards({threadId}:{threadId:string}){
-  const [proposals,setProposals]=useState<Proposal[]>([]),[done,setDone]=useState<string[]>([]);
-  useEffect(()=>{
-    let alive=true,pending=false;
-    async function refresh(){if(pending||document.hidden)return;pending=true;try{const result=await api.get<{proposals:Proposal[]}>('/settings-changes');if(alive)setProposals(result.proposals.filter(p=>p.threadId===threadId&&p.area.startsWith('pc_control_')&&p.canApprove));}catch{}finally{pending=false;}}
-    void refresh();const timer=window.setInterval(()=>void refresh(),6000);
-    return()=>{alive=false;window.clearInterval(timer);};
-  },[threadId]);
-  const visible=proposals.filter(p=>!done.includes(p.id));
+/** The PC permission cards among a conversation's proposals (one poll in
+ * lib/settingsChanges.ts feeds every card). */
+export function PcPermissionCards({proposals,onDone}:{proposals:Proposal[];onDone:(id:string)=>void}){
+  const visible=proposals.filter(p=>isPcProposal(p)&&p.canApprove&&p.state==='proposed');
   if(!visible.length)return null;
-  return <section aria-label="Computer permissions" className="my-3 flex flex-col gap-3">{visible.map(proposal=><Card key={proposal.id} proposal={proposal} onDone={()=>setDone(ids=>[...ids,proposal.id])}/>)}</section>;
+  return <section aria-label="Computer permissions" className="my-3 flex flex-col gap-3">{visible.map(proposal=><PcPermissionCard key={proposal.id} proposal={proposal} onDone={()=>onDone(proposal.id)}/>)}</section>;
 }

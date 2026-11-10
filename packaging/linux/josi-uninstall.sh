@@ -14,7 +14,7 @@ case "${1:-}" in
   --purge) purge=1 ;;
   *) echo 'usage: sudo josi-uninstall [--purge]' >&2; exit 2 ;;
 esac
-[ "$(id -u)" = 0 ] || { echo 'josi-uninstall: run it with sudo' >&2; exit 1; }
+[ "$(id -u)" = 0 ] || { echo 'josi-uninstall: run it as root (with sudo, or from a root shell)' >&2; exit 1; }
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin LANG=C.UTF-8
 root=/var/lib/josi
@@ -24,6 +24,16 @@ children=$(for role in $roles; do printf 'josi-ce-%s.service ' "$role"; done)
 systemctl disable --now josi-update.path josi-update.timer >/dev/null 2>&1
 systemctl stop josi-update.service josi-update-check.service >/dev/null 2>&1
 systemctl disable josi.service $children >/dev/null 2>&1
+
+# PC control: the executor runs as a person's own account, so it goes in
+# either case; the install command sets it up again when it is chosen.
+systemctl disable --now josi-pc.service >/dev/null 2>&1
+rm -f /etc/systemd/system/josi-pc.service
+rmdir /etc/systemd/system/josi.service.wants 2>/dev/null
+# Its browser native-messaging host: the wrapper and each browser's manifest.
+rm -f /usr/lib/josi/josi-browser-host /etc/opt/chrome/native-messaging-hosts/com.heyjosi.browser.json \
+  /etc/chromium/native-messaging-hosts/com.heyjosi.browser.json /etc/opt/edge/native-messaging-hosts/com.heyjosi.browser.json \
+  /usr/lib/mozilla/native-messaging-hosts/com.heyjosi.browser.json
 
 # The lifecycle's own uninstall stops the services and moves their unit files
 # aside with a record, so the next install recognises them as Josi's.
@@ -41,6 +51,8 @@ if [ "$purge" = 1 ]; then
   for role in $roles; do rm -f "/etc/systemd/system/josi-ce-$role.service"; done
 fi
 systemctl daemon-reload
+# The web unit names josi-pc too; the install command creates it again.
+groupdel josi-pc >/dev/null 2>&1
 
 if command -v pacman >/dev/null 2>&1; then
   pacman -Q josi >/dev/null 2>&1 && pacman -R --noconfirm josi >/dev/null
@@ -56,6 +68,8 @@ if [ "$purge" = 1 ]; then
   done
   groupdel josi-ce-app >/dev/null 2>&1
   groupdel josi-ce-voice-shared >/dev/null 2>&1
+  # The executor's own state (its key); systemd made it for StateDirectory=.
+  rm -rf -- /var/lib/josi-pc /var/lib/private/josi-pc
   echo 'Josi was removed, with its data.'
 elif [ "$kept" = 1 ]; then
   echo 'Josi was removed. Its data is kept in /var/lib/josi; run the install command again to bring it back.'

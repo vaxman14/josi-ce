@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { pathShown } from '@/components/layout/mobileNavigation';
 import { useResource } from '@/lib/useResource';
 import { ResourceFallback } from '@/components/ResourceFallback';
 import { Badge, Button, Card, CardTitle, ErrorNote } from '@/components/ui';
@@ -43,7 +44,7 @@ export function AdminOverview() {
     else setError('The API or database did not answer. Other checks may also be incomplete.');
     const channelList = channels.status === 'fulfilled' ? channels.value.channels : [];
     const backupList = backups.status === 'fulfilled' ? backups.value.backups : [];
-    setChecks([
+    setChecks(([
       { label: 'API and database', state: assistant.status === 'fulfilled' ? 'working' : 'unavailable', detail: assistant.status === 'fulfilled' ? 'The application can read installation data.' : 'The core installation check failed.', href: '/admin/diagnostics' },
       { label: 'AI model', state: model.status !== 'fulfilled' ? 'unavailable' : !model.value.primary ? 'unconfigured' : model.value.primary.active && model.value.primary.probedAt ? 'working' : 'attention', detail: model.status !== 'fulfilled' ? 'Model status could not be read.' : !model.value.primary ? 'Choose and test a model before using Josi.' : model.value.primary.active && model.value.primary.probedAt ? 'The active model passed its readiness test.' : 'The selected model still needs a successful test.', href: '/admin/model' },
       { label: 'Storage', state: storage.status === 'fulfilled' ? 'working' : 'unavailable', detail: storage.status === 'fulfilled' ? 'Storage policy is available.' : 'Storage settings could not be read.', href: '/admin/storage' },
@@ -53,7 +54,8 @@ export function AdminOverview() {
       { label: 'Voice Box', state: voice.status !== 'fulfilled' ? 'unavailable' : !voice.value.helperAvailable || voice.value.phase === 'absent' ? 'unconfigured' : voice.value.healthy && voice.value.verified ? 'working' : 'attention', detail: voice.status !== 'fulfilled' ? 'Voice Box status could not be read.' : voice.value.healthy && voice.value.verified ? 'Voice Box is installed, verified, and healthy.' : !voice.value.helperAvailable || voice.value.phase === 'absent' ? 'Voice Box is optional and is not installed.' : 'Voice Box is installed but not ready.', href: '/admin/voice-box' },
       { label: 'Security and setup', state: launch.status !== 'fulfilled' ? 'unavailable' : launch.value.complete ? 'working' : launch.value.reminders.length ? 'attention' : 'unconfigured', detail: launch.status !== 'fulfilled' ? 'Setup requirements could not be read.' : launch.value.complete ? 'The launch checklist is complete.' : `${launch.value.progress.done} of ${launch.value.progress.total} launch items are settled.`, href: '/admin/launch' },
       ...(newVersion ? [{ label: 'Josi update', state: 'attention' as const, detail: `Version ${newVersion} is available. Open System checkup and click Update.`, href: '/admin/diagnostics' }] : []),
-    ]);
+    // A section this build hides (lib/flags.ts) gets no tile that leads nowhere.
+    ] as Check[]).filter((check) => pathShown(check.href)));
     setCheckedAt(new Date()); setLoading(false);
   }, []);
   useEffect(() => { void runChecks(); }, [runChecks]);

@@ -12,11 +12,12 @@
 // PostgreSQL. Nothing is kept in component state after the step is submitted.
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError, clearSetupHandoff, primeCsrf } from '@/lib/api';
+import { copyText } from '@/lib/clipboard';
 import {
   ProviderForm, type ProviderCatalogEntry, type SubscriptionInfo,
 } from '@/components/ProviderForm';
 import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
-import { JosiMark } from '@/components/brand/JosiMark';
+import { GreetingGhost } from '@/components/ghost/Ghost';
 import { LegalLinks } from '@/components/LegalLinks';
 
 /** The outcome of a real attempt to use something that was configured. */
@@ -87,7 +88,11 @@ interface SetupState {
   /** Sent with the state rather than fetched by the model step, so the wizard
    * cannot offer a provider this build would refuse to save. */
   providerCatalog: ProviderCatalogEntry[];
+  /** The address chosen in the Linux installer, to prefill the Address step. */
+  installerAddress?: InstallerAddress | null;
 }
+
+interface InstallerAddress { mode: 'lan' | 'domain' | 'proxy'; origin: string; domain: string; tlsMode: string; acmeEmail: string | null }
 
 interface HostCheck {
   id: string;
@@ -181,7 +186,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
   return (
     <div className="mx-auto w-full min-w-0 max-w-3xl p-5 text-[1.02rem] sm:p-8">
       <div className="mb-6 flex flex-col items-center text-center">
-        <JosiMark variant="bare" size={64} alt="Josi" className="mb-3" />
+        <div className="mb-3"><GreetingGhost size={120} /></div>
         <p className="text-sm text-muted-foreground">Setting up this installation</p>
       </div>
 
@@ -205,7 +210,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-4 text-sm text-muted-foreground">
             {revisingStep.summary} Saving this replaces what is stored and tests it again.
           </p>
-          <StepForm step={revisingStep.id} busy={busy} catalog={state.providerCatalog ?? []}
+          <StepForm step={revisingStep.id} busy={busy} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress}
                     smtpInitial={review?.summary?.smtp?.find((profile) => profile.kind === 'system')}
                     onSubmit={submit} />
           <div className="mt-3">
@@ -219,7 +224,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-1 text-xs text-muted-foreground">Step {position} of {state.steps.length}</p>
           <CardTitle>{current.title}</CardTitle>
           <p className="mb-4 text-sm text-muted-foreground">{current.summary}</p>
-          <StepForm step={current.id} busy={busy} ownerExists={state.ownerExists} catalog={state.providerCatalog ?? []} onSubmit={submit} />
+          <StepForm step={current.id} busy={busy} ownerExists={state.ownerExists} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress} onSubmit={submit} />
         </Card>
       ) : (
         <Card>
@@ -270,9 +275,10 @@ export function Setup({ onDone }: { onDone: () => void }) {
 }
 
 function StepForm({
-  step, busy, catalog, smtpInitial, onSubmit, ownerExists = false,
+  step, busy, catalog, smtpInitial, onSubmit, ownerExists = false, installerAddress,
 }: {
   step: string; busy: boolean; catalog: ProviderCatalogEntry[];
+  installerAddress?: InstallerAddress | null;
   ownerExists?: boolean;
   smtpInitial?: {
     host: string | null; port: number | null; security: string | null; username: string | null;
@@ -356,10 +362,11 @@ function StepForm({
           }))}
           className="space-y-3"
         >
-          <Field id="domain" name="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" autoComplete="url" inputMode="url" />
+          <Field id="domain" name="domain" label="Address" placeholder="josi.example.com or 192.168.1.20" required autoCapitalize="none" autoComplete="url" inputMode="url" defaultValue={installerAddress?.domain} />
+          {installerAddress ? <p className="text-xs text-muted-foreground">Chosen when Josi was installed: {installerAddress.origin}. To change it later, run the installer again.</p> : null}
           <div>
             <label className="mb-1 block text-sm" htmlFor="tlsMode">HTTPS</label>
-            <select id="tlsMode" name="tlsMode" defaultValue="bundled_caddy"
+            <select id="tlsMode" name="tlsMode" defaultValue={installerAddress?.tlsMode ?? 'bundled_caddy'}
                     className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm">
               <option value="bundled_caddy">Bundled Caddy (HTTPS for a public domain, HTTP on LAN)</option>
               <option value="external_proxy">I run my own reverse proxy</option>
@@ -368,7 +375,7 @@ function StepForm({
           <p className="text-xs text-muted-foreground">
             Public certificates require a domain pointing to this server. A LAN IP works over HTTP and needs no certificate email.
           </p>
-          <Field id="acmeEmail" name="acmeEmail" label="Email for certificate notices" type="email" autoComplete="email" />
+          <Field id="acmeEmail" name="acmeEmail" label="Email for certificate notices" type="email" autoComplete="email" defaultValue={installerAddress?.acmeEmail ?? undefined} />
           <Button type="submit" disabled={busy}>Continue</Button>
         </form>
       );
@@ -475,6 +482,7 @@ function StepForm({
           <p className="text-xs text-muted-foreground">
             Nothing is granted by pairing alone. Later, in the Josi app, PC Control shows whether this PC is paired
             and ready, and you can turn control on and allow shells, folders and programs there or by asking Josi.
+            On a Linux server, pair the server&rsquo;s own accounts later under PC control permissions, This server.
           </p>
           <Button type="submit" disabled={busy}>Skip for now</Button>
         </form>
@@ -533,6 +541,7 @@ function LlmStep({
         models: '/setup/models',
         codexBase: '/setup/subscription',
         claudeBase: '/setup/subscription/claude',
+        probeProgress: '/setup/models/probe-progress',
       }}
       loadSubscriptionInfo={() => api.get<SubscriptionInfo>('/setup/subscription').catch(() => null)}
       onSubmit={(body) => onSubmit('llm', body)}
@@ -553,7 +562,7 @@ function RecoveryKeyStep({
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(recovery.key);
+      await copyText(recovery.key);
       setCopied(true);
     } catch {
       onError('The browser could not copy the recovery key. Use Download instead.');

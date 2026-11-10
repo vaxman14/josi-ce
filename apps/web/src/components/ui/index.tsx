@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react';
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
+import { copyText } from '@/lib/clipboard';
 import { JosiMark } from '@/components/brand/JosiMark';
 
 export function Button({
@@ -221,24 +222,27 @@ export function NotYet({ title, children }: { title: string; children: ReactNode
  */
 export function Copyable({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
+  const [failed, setFailed] = useState('');
   return (
     <div className="mb-3">
       <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
       <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 break-all rounded-lg bg-secondary px-2.5 py-1.5 text-xs">{value}</code>
+        <code className="min-w-0 flex-1 select-all break-all rounded-lg bg-secondary px-2.5 py-1.5 text-xs">{value}</code>
         <Button
           type="button"
           variant="secondary"
           onClick={() => {
-            void navigator.clipboard?.writeText(value).then(() => {
+            setFailed('');
+            void copyText(value).then(() => {
               setCopied(true);
               setTimeout(() => setCopied(false), 2000);
-            }).catch(() => undefined);
+            }).catch((error: unknown) => setFailed(error instanceof Error ? error.message : 'Could not copy. Select it and copy it by hand.'));
           }}
         >
           {copied ? 'Copied' : 'Copy'}
         </Button>
       </div>
+      {failed ? <p role="alert" className="mt-1 text-xs text-destructive">{failed}</p> : null}
     </div>
   );
 }

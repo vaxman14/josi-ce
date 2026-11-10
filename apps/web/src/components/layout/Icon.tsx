@@ -28,6 +28,8 @@ const PATHS: Record<string, JSX.Element> = {
   backup: <path d="M4 12a8 8 0 0114-5l2-2v6h-6l2-2a5 5 0 10.5 6" />,
   globe: <><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" /></>,
   kid: <><circle cx="12" cy="7" r="3" /><path d="M8 21v-6l-2-3h12l-2 3v6" /></>,
+  world: <><circle cx="12" cy="12" r="9" /><circle cx="12" cy="10" r="2.5" /><path d="M7.5 18c1-2.5 2.6-3.5 4.5-3.5s3.5 1 4.5 3.5" /></>,
+  code: <path d="M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16" />,
 };
 
 export function Icon({ name }: { name: string }) {

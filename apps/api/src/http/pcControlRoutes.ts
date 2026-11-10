@@ -2,7 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { verifyPassword, checkLoginRate, recordLoginAttempt } from '@josi-ce/auth';
 import { verifyPcExecutor } from './pcExecutorIdentity.js';
 import { clientIp } from './cookies.js';
-import { disablePcControl, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
+import { pairLocalExecutor, localExecutorPaired, revokeExecutorSessions } from './pcLocalPairing.js';
+import { disablePcControl, localExecutorSpool, syncLocalExecutors, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
 import { pcControlReadiness } from '@josi-ce/agent';
 import { requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
@@ -45,7 +46,10 @@ export function pcControlRoutes(ctx:Ctx):Router {
     }
   });
   r.get('/',handle(async(req,res)=>{
-    const browser=await control(req).presence(req.user!.id);
+    const browser=await control(req).presence(req.user!.id),linux=control(req).pcId.startsWith('linux-');
+    if(linux)return res.json({...await control(req).snapshot(req.user!.id),pcId:control(req).pcId,executorAvailable:!!browser,browser,
+      availability:browser?'The PC service on this Linux server is connected and working as its chosen Linux user.':'Permissions can be saved here. Josi works on this server once its PC service is paired (ask Josi to control this server) and running.',
+      uac:'Administrator commands are not available on a Linux server.'});
     return res.json({...await control(req).snapshot(req.user!.id),pcId:control(req).pcId,executorAvailable:!!browser,browser,
       availability:browser?'The Josi app on this PC is connected'+(browser.origin?' with a '+browser.family+' tab attached ('+browser.origin+').':browser.family==='desktop'?'. No browser is linked.':', and its '+browser.family+' browser is linked with no tab attached.')
         :'Permissions can be saved here. Browser control starts when the Josi app is open and a tab is attached with the Josi browser extension.',
@@ -75,6 +79,37 @@ export function pcControlRoutes(ctx:Ctx):Router {
   r.delete('/identity',handle(async(req,res)=>{
     const pc=targetPc(req);await control(req).stop(req.user!.id);
     await ctx.db.query('delete from pc_executor_identity where owner_user_id=$1 and pc_id=$2',[req.user!.id,pc]);
+    return res.json({ok:true});
+  }));
+  // The Linux server's own PC service (josi-pc.service). It cannot sign in by
+  // itself, so the owner pairs it here, or by approving the chat card that
+  // turns control on for it; packages/core/src/pcLocalExecutors.ts.
+  r.get('/local',handle(async(req,res)=>{
+    const owner=req.user!.id,hellos=await syncLocalExecutors(ctx.db,owner);
+    const executors=[];
+    for(const hello of hellos){
+      const [live]=await ctx.db.query('select 1 from pc_control_presence where owner_user_id=$1 and pc_id=$2 and expires_at>now()',[owner,hello.pcId]);
+      executors.push({pcId:hello.pcId,user:hello.user,host:hello.host,paired:await localExecutorPaired(ctx.db,owner,hello.pcId),connected:!!live});
+    }
+    return res.json({available:localExecutorSpool()!==null,executors});
+  }));
+  r.post('/local/:pcId/pair',handle(async(req,res)=>{
+    const owner=req.user!.id,pcId=param(req,'pcId'),identifier='pc-identity:'+owner,ip=clientIp(req);
+    if(!/^linux-[a-f0-9]{32}$/.test(pcId))throw new PcControlError(400,'Choose a PC service on this server.');
+    if((await checkLoginRate(ctx.db,identifier,ip)).blocked)throw new PcControlError(429,'Wait before another password attempt.');
+    const [user]=await ctx.db.query<{password_hash:string|null}>('select password_hash from users where id=$1',[owner]);
+    const matched=await verifyPassword(user?.password_hash??null,typeof req.body?.password==='string'?req.body.password:'');
+    await recordLoginAttempt(ctx.db,{identifier,ip,success:matched});
+    if(!matched)throw new PcControlError(401,'Confirm your account password to pair this server.');
+    if(!await pairLocalExecutor(ctx.db,owner,pcId))throw new PcControlError(404,'That PC service has not started on this server. Run the installer again and choose PC control.');
+    return res.json({ok:true});
+  }));
+  r.delete('/local/:pcId',handle(async(req,res)=>{
+    const owner=req.user!.id,pcId=param(req,'pcId');
+    if(!/^linux-[a-f0-9]{32}$/.test(pcId))throw new PcControlError(400,'Choose a PC service on this server.');
+    await disablePcControl(ctx.db,owner,pcId).catch(()=>undefined);
+    await ctx.db.query('delete from pc_executor_identity where owner_user_id=$1 and pc_id=$2',[owner,pcId]);
+    await revokeExecutorSessions(ctx.db,owner,pcId);
     return res.json({ok:true});
   }));
   r.put('/enabled',handle(async(req,res)=>{

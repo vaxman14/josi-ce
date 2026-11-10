@@ -204,6 +204,7 @@ function ChangeModelForm(
           models: '/admin/llm/models',
           codexBase: '/admin/llm/subscription',
           claudeBase: '/admin/llm/subscription/claude',
+          probeProgress: '/admin/llm/providers/primary/probe/progress',
         }}
         loadSubscriptionInfo={async () => {
           try {

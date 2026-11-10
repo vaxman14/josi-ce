@@ -19,6 +19,7 @@ import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { clientIp } from './cookies.js';
+import { localExecutorPaired, pairLocalExecutor } from './pcLocalPairing.js';
 
 interface Ctx { db: Db; masterKey?: LoadOptions | false; mailTransport?: SmtpTransport; appUrl?:string }
 type Policy = 'self' | 'super_admin';
@@ -171,7 +172,11 @@ export function settingsChangeRoutes(ctx: Ctx): Router {
     const [claimed]=await db.query('update settings_change_proposals set state=\'approved\',approved_by=$2,approved_at=now() where id=$1 and state=\'proposed\' and expires_at>now() returning id',[row.id,owner]);
     if(!claimed)throw fail(409,'This permission was already decided.');
     try{
-      if(row.area==='pc_control_enabled'){await service.setEnabled(owner,body.enabled as boolean,revision);if(body.enabled===true&&body.everyday===true)await service.setFullControl(owner,true);}
+      if(row.area==='pc_control_enabled'){
+        // The Linux server's own PC service is paired by this same approval:
+        // the password was just confirmed, so there is no second step.
+        if(body.enabled===true&&pc.startsWith('linux-')&&!await localExecutorPaired(db,owner,pc))await pairLocalExecutor(db,owner,pc);
+        await service.setEnabled(owner,body.enabled as boolean,revision);if(body.enabled===true&&body.everyday===true)await service.setFullControl(owner,true);}
       else if(row.area==='pc_control_full_control')await service.setFullControl(owner,body.enabled as boolean,revision);
       else if(row.area==='pc_control_preset')await service.applyPreset(owner,body as PcPreset,revision);
       else if(row.area==='pc_control_scope'){const {approveRequestId,...policy}=body;await service.savePolicy(owner,policy as PcPolicy,{expectedRevision:revision,approveRequestId:approveRequestId as string|undefined});}

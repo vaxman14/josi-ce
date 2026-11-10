@@ -1,14 +1,12 @@
-import {useEffect,useState} from 'react';
+import {useState} from 'react';
 import {api} from '@/lib/api';
 import {Button,ErrorNote,Input} from '@/components/ui';
+import {claimApply,isCredentialProposal,releaseApply,type ApplyRequest,type Proposal} from '@/lib/settingsChanges';
 
 // A credential card Josi opened in conversation (docs/JOSI_IS_THE_INTERFACE.md
 // rules 3 and 5): the person pastes into secure fields; the browser performs
 // the route with their own session; the conversation learns only "saved".
-type Field={key:string;label:string;type:'text'|'secret'|'confirm';help?:string;required?:boolean;placeholder?:string};
-type Card={kind:string;provider:string;title:string;intro:string;fields:Field[];help:{text:string;url:string|null};done:string};
-export type CardProposal={id:string;threadId:string;area:string;title:string;summary:string;canApprove:boolean;card:Card|null};
-type Apply={method:string;path:string;body:Record<string,unknown>|null};
+type Apply=ApplyRequest;
 
 function smtpBody(fixed:Record<string,unknown>,values:Record<string,unknown>):Record<string,unknown>{
   const s=(key:string)=>typeof values[key]==='string'?values[key] as string:'';
@@ -19,7 +17,7 @@ function smtpBody(fixed:Record<string,unknown>,values:Record<string,unknown>):Re
     communications:{copyFromSystem:true,host:'',port:0,security:'',username:'',password:'',clearPassword:false,fromName,fromAddress:from}};
 }
 
-function CredentialCard({proposal,onDone}:{proposal:CardProposal;onDone:()=>void}){
+export function CredentialCard({proposal,onDone}:{proposal:Proposal;onDone:()=>void}){
   const card=proposal.card!;
   const [values,setValues]=useState<Record<string,unknown>>({});
   const [busy,setBusy]=useState(false),[error,setError]=useState('');
@@ -32,10 +30,12 @@ function CredentialCard({proposal,onDone}:{proposal:CardProposal;onDone:()=>void
     }
     setBusy(true);setError('');
     let failure:string|null=null;
+    // The background poll must not try to perform this card's route itself.
+    claimApply(proposal.id);
     try{
       const decided=await api.post<{apply:Apply|null}>(`/settings-changes/${proposal.id}/decide`,{approve:true});
       if(!decided.apply)throw new Error('This card can only be filled in by the person it was opened for.');
-      const fixed=decided.apply.body??{};
+      const fixed:Record<string,unknown>=decided.apply.body&&typeof decided.apply.body==='object'&&!Array.isArray(decided.apply.body)?decided.apply.body as Record<string,unknown>:{};
       const body=fixed.__shape==='smtp'?smtpBody(fixed,values):{...fixed,...values};
       try{
         const method=decided.apply.method.toUpperCase();
@@ -47,7 +47,7 @@ function CredentialCard({proposal,onDone}:{proposal:CardProposal;onDone:()=>void
       if(failure!==null)throw new Error(failure);
       setValues({});
       onDone();
-    }catch(e){setError(e instanceof Error?e.message:'Could not save.');setValues(current=>Object.fromEntries(Object.entries(current).filter(([key])=>card.fields.find(f=>f.key===key)?.type!=='secret')));}
+    }catch(e){releaseApply(proposal.id);setError(e instanceof Error?e.message:'Could not save.');setValues(current=>Object.fromEntries(Object.entries(current).filter(([key])=>card.fields.find(f=>f.key===key)?.type!=='secret')));}
     finally{setBusy(false);}
   }
   return <article className="approval-card rounded-xl p-4" aria-label={card.title} aria-busy={busy}>
@@ -70,15 +70,9 @@ function CredentialCard({proposal,onDone}:{proposal:CardProposal;onDone:()=>void
   </article>;
 }
 
-export function CredentialCards({threadId}:{threadId:string}){
-  const [proposals,setProposals]=useState<CardProposal[]>([]),[done,setDone]=useState<string[]>([]);
-  useEffect(()=>{
-    let alive=true,pending=false;
-    async function refresh(){if(pending||document.hidden)return;pending=true;try{const result=await api.get<{proposals:CardProposal[]}>('/settings-changes');if(alive)setProposals(result.proposals.filter(p=>p.threadId===threadId&&p.area==='credential_card'&&p.canApprove&&p.card));}catch{}finally{pending=false;}}
-    void refresh();const timer=window.setInterval(()=>void refresh(),5000);
-    return()=>{alive=false;window.clearInterval(timer);};
-  },[threadId]);
-  const visible=proposals.filter(p=>!done.includes(p.id));
+/** The credential cards among a conversation's proposals. */
+export function CredentialCards({proposals,onDone}:{proposals:Proposal[];onDone:(id:string)=>void}){
+  const visible=proposals.filter(p=>isCredentialProposal(p)&&p.canApprove&&p.state==='proposed'&&p.card);
   if(!visible.length)return null;
-  return <section aria-label="Credential cards" className="my-3 flex flex-col gap-3">{visible.map(proposal=><CredentialCard key={proposal.id} proposal={proposal} onDone={()=>setDone(ids=>[...ids,proposal.id])}/>)}</section>;
+  return <section aria-label="Credential cards" className="my-3 flex flex-col gap-3">{visible.map(proposal=><CredentialCard key={proposal.id} proposal={proposal} onDone={()=>onDone(proposal.id)}/>)}</section>;
 }

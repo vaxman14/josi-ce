@@ -2,11 +2,24 @@
 # One-command installer for the Josi server on Linux:
 #
 #   curl -fsSL https://<install host>/linux | sudo bash
+#   wget -qO- https://<install host>/linux | bash        (as root, e.g. Debian netinst)
 #
 # It finds the distribution (pacman or apt), installs what Josi needs, checks
 # the package's SHA-256 against this script, installs the package and starts
 # josi.service. Run it again at any time: it repairs or updates the install
 # and prints a fresh address. Everything after that happens in the browser.
+#
+# First it asks, on the terminal (/dev/tty, since stdin is this script), how
+# people reach Josi (this network, a public domain with HTTPS from the bundled
+# Caddy, or the administrator's own reverse proxy), the port, and whether Josi
+# may control this computer as a chosen Linux user, then shows a summary to
+# confirm. The answers are saved in /etc/josi/install.json and are the
+# defaults the next time. With --yes, JOSI_YES=1 or no terminal nothing is
+# asked; flags, the saved answers or the defaults are used:
+#
+#   ... | sudo bash -s -- --yes --address-mode lan|domain|proxy --port 8080 \
+#         [--lan-address IP] [--domain NAME --email ADDRESS] [--public-url https://HOST] \
+#         [--pc-control-user USER | --no-pc-control]
 #
 # In a terminal it shows its progress on stderr: the ghost, each step with a
 # spinner and its time, the download in megabytes, and one bar for the whole
@@ -28,7 +41,10 @@ PACKAGES='@PACKAGES@'
 log=/var/log/josi-install.log
 work=''
 bgpid=''
+interrupted=0
 processor='' family='' package='' expected='' url=''
+# Every apt-get waits up to ten minutes for another apt (unattended-upgrades).
+APT_LOCK='DPkg::Lock::Timeout=600'
 
 # ---------------------------------------------------------------- the steps
 
@@ -45,7 +61,7 @@ FRAC=0 PCT=0 DETAIL=''
 
 # ---------------------------------------------------------------- the screen
 
-screen=0 drawn=0 tick=0 lastf='' dirty=0 final=0
+screen=0 can_screen=0 drawn=0 tick=0 lastf='' dirty=0 final=0
 rows=24 cols=80 utf8=0 truecolor=0 GL=0 REGION=10 BW=40
 RST='' BOLD='' DIM='' GOLD='' LILAC='' GREEN='' RED='' EMPTYC=''
 SPIN=('|' '/' '-' '\') OK='+' NO='x' DOT='-' FULL='#' EMPTY='-'
@@ -201,8 +217,15 @@ init_screen() {
   fi
   BW=$((cols - 12)); [ "$BW" -le 52 ] || BW=52
   make_bar
+  can_screen=1
+  return 0
+}
+
+# The progress screen starts once the questions are answered.
+start_screen() {
+  [ "$can_screen" = 1 ] || return 0
   screen=1
-  printf '\e[?25l\n' >&2
+  printf '\e[?25l\n' >&2 2>/dev/null || screen=0
   draw
   return 0
 }
@@ -309,7 +332,9 @@ draw() {
     if [ "$i" -lt "$n" ]; then out+="${BARC[i]}$FULL"; else out+="$EMPTYC$EMPTY"; fi
   done
   out+="$RST  ${BOLD}${PCT}%${RST}"$'\n'
-  printf '%s' "$out" >&2
+  # A dropped SSH session leaves a terminal that refuses writes; the install
+  # goes on without its screen instead of stopping half-way.
+  printf '%s' "$out" >&2 2>/dev/null || screen=0
   drawn=1
   return 0
 }
@@ -360,27 +385,431 @@ fail() {
   exit 1
 }
 
+# Stops a step and everything it started (Ctrl-C). The lifecycle records an
+# interrupted upgrade for recovery, and the next run finishes dpkg's work and
+# rolls the upgrade back before it tries again.
+kill_tree() {
+  local child
+  for child in $(cat /proc/"$1"/task/*/children 2>/dev/null); do kill_tree "$child"; done
+  kill -TERM "$1" 2>/dev/null || true
+  return 0
+}
+
 cleanup() {
-  if [ -n "$bgpid" ]; then kill "$bgpid" 2>/dev/null || true; fi
+  if [ "$interrupted" = 1 ] && [ -n "$bgpid" ]; then kill_tree "$bgpid"; fi
   if [ -n "$work" ]; then rm -rf -- "$work"; fi
-  if [ "$screen" = 1 ]; then printf '\e[0m\e[?25h' >&2; fi
+  if [ "$screen" = 1 ]; then printf '\e[0m\e[?25h' >&2 2>/dev/null || true; fi
+}
+
+# ------------------------------------------------------------ the questions
+#
+# Asked on /dev/tty (fd 5) before anything is installed, in the same Plum &
+# Gold with the ghost. Each answer can also come from a flag; the saved
+# answers in /etc/josi/install.json are the defaults on a rerun. The real
+# check of every answer is josi-ce-server-install's; these only catch typing
+# mistakes early.
+
+YES=0 TTY=0 styled=0 QL=0 QH=0 ERR='' CL='' MARK='>'
+A_MODE='' A_LAN='' A_DOMAIN='' A_EMAIL='' A_URL='' A_PORT='' A_PC='' A_NOPC=0 GIVEN=' '
+S_MODE='' S_LAN='' S_DOMAIN='' S_EMAIL='' S_URL='' S_PORT='' S_PC='' CUR_PORT='' LAN_IP='' SUDO_REAL=''
+CLI_ARGS=()
+
+usage() {
+  cat >&2 <<'EOF'
+Josi installer. Without options it asks its questions on the terminal.
+
+  --yes, -y                        ask nothing (also JOSI_YES=1, or when there is no terminal)
+  --address-mode lan|domain|proxy  this network only / a public domain with HTTPS / my own proxy
+  --lan-address HOST               lan: this server's address (default: detected)
+  --domain NAME                    domain: the name whose DNS points here (Caddy uses 80 and 443)
+  --email ADDRESS                  domain: email for certificate notices
+  --public-url https://HOST        proxy: the address your reverse proxy serves
+  --port N                         the browser port (default 8080)
+  --pc-control-user USER           let Josi control this computer as USER
+  --no-pc-control                  do not
+
+Anything not given keeps the saved answer, or the default.
+EOF
+}
+
+parse_args() {
+  local name value
+  while [ $# -gt 0 ]; do
+    name=$1 value=''
+    case $name in --*=*) value=${name#*=} name=${name%%=*} ;; esac
+    case $name in
+      --yes | -y) YES=1; shift; continue ;;
+      --no-pc-control) A_NOPC=1 A_PC='' GIVEN+='pc '; CLI_ARGS+=(--no-pc-control); shift; continue ;;
+      --help | -h) usage; exit 0 ;;
+      --address-mode | --lan-address | --domain | --email | --public-url | --port | --pc-control-user) ;;
+      *) printf 'Josi installer: unknown option %s (try --help)\n' "${name:0:40}" >&2; exit 2 ;;
+    esac
+    if [ "$1" = "$name" ]; then
+      [ $# -ge 2 ] || { printf 'Josi installer: %s needs a value\n' "$name" >&2; exit 2; }
+      value=$2; shift
+    fi
+    shift
+    CLI_ARGS+=("$name" "$value")
+    case $name in
+      --address-mode) A_MODE=$value GIVEN+='mode ' ;;
+      --lan-address) A_LAN=$value ;;
+      --domain) A_DOMAIN=$value ;;
+      --email) A_EMAIL=$value ;;
+      --public-url) A_URL=$value ;;
+      --port) A_PORT=$value GIVEN+='port ' ;;
+      --pc-control-user) A_PC=$value A_NOPC=0 GIVEN+='pc ' ;;
+    esac
+  done
+  if [ "${JOSI_YES:-0}" = 1 ]; then YES=1; fi
+  return 0
+}
+
+# The answers saved by the last install, read by root's own python3.
+load_saved() {
+  local f=/etc/josi/install.json out
+  if [ -f /var/lib/josi/status.json ]; then
+    CUR_PORT=$(sed -n 's/.*"publicPort": *\([0-9][0-9]*\).*/\1/p' /var/lib/josi/status.json 2>/dev/null || true)
+  fi
+  [ -f "$f" ] && [ ! -L "$f" ] && [ "$(stat -c %u "$f" 2>/dev/null)" = 0 ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  out=$(python3 -I - "$f" 2>/dev/null <<'PY'
+import json, shlex, sys
+value = json.load(open(sys.argv[1]))
+for key, name in (('addressMode', 'S_MODE'), ('lanAddress', 'S_LAN'), ('domain', 'S_DOMAIN'), ('email', 'S_EMAIL'),
+                  ('publicUrl', 'S_URL'), ('port', 'S_PORT'), ('pcControlUser', 'S_PC')):
+    item = value.get(key)
+    print(name + '=' + shlex.quote('' if item is None else str(item)))
+PY
+  ) || return 0
+  eval "$out"
+  return 0
+}
+
+detect_lan() {
+  local a=''
+  a=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '!found { for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); found = 1; break } }') || a=''
+  [ -n "$a" ] || a=$(hostname -I 2>/dev/null | awk '{ print $1 }') || a=''
+  case $a in '' | 127.*) a=127.0.0.1 ;; esac
+  LAN_IP=$a
+  return 0
+}
+
+# 0 when another program listens on the port.
+port_busy() {
+  if command -v ss >/dev/null 2>&1; then
+    [ -n "$(ss -ltnH "sport = :$1" 2>/dev/null)" ] && return 0
+    return 1
+  fi
+  (exec 6<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
+free_port_after() {
+  local p=$1
+  while [ "$p" -lt 65535 ]; do
+    p=$((p + 1))
+    if ! port_busy "$p"; then REPLY=$p; return 0; fi
+  done
+  REPLY=$1
+  return 0
+}
+
+real_user() {
+  local line uid
+  [[ $1 =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || return 1
+  line=$(getent passwd "$1" 2>/dev/null) || return 1
+  uid=$(cut -d: -f3 <<< "$line")
+  case $uid in '' | *[!0-9]*) return 1 ;; esac
+  [ "$uid" -ge 1000 ] && [ "$uid" != 65534 ] || return 1
+  case ${line##*:} in */nologin | */false) return 1 ;; esac
+  return 0
+}
+
+valid_host() {
+  [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] && [[ $1 != *..* ]]
+}
+
+valid_domain() {
+  [[ $1 =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$ ]]
+}
+
+valid_email() {
+  [[ $1 =~ ^[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]]
+}
+
+# A graphical login on this machine: then the optional desktop helpers help.
+has_desktop() {
+  local s
+  [ "$(systemctl get-default 2>/dev/null)" = graphical.target ] && return 0
+  for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{ print $1 }'); do
+    case $(loginctl show-session "$s" -p Type --value 2>/dev/null) in x11 | wayland) return 0 ;; esac
+  done
+  return 1
+}
+
+# The terminal, when there is one this process may read: under curl | bash
+# stdin is the script. sudo-rs can run the script outside the terminal's
+# foreground group, where reading would stop it; then nothing is asked.
+open_tty() {
+  local -a st
+  [ "$YES" = 0 ] || return 0
+  { exec 5<>/dev/tty; } 2>/dev/null || return 0
+  # Fields after the "(comm)" one: state ppid pgrp session tty tpgid.
+  read -r -a st <<< "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null)"
+  if [ "${#st[@]}" -lt 6 ] || [ "${st[2]}" != "${st[5]}" ]; then
+    exec 5>&-
+    printf 'Josi installer: this terminal cannot be read here; using the saved or default answers (see --help).\n' >&3
+    return 0
+  fi
+  TTY=1
+  if [ "$can_screen" = 1 ]; then styled=1 CL=$'\r\e[2K'; fi
+  if [ "$utf8" = 1 ]; then MARK='›'; fi
+  return 0
+}
+
+q() { printf '%s  %s\n' "$CL" "$1" >&5; QL=$((QL + 1)); return 0; }
+
+q_clear() {
+  if [ "$styled" = 1 ] && [ "$QL" -gt 0 ]; then printf '\e[%dA\r\e[J' "$QL" >&5; fi
+  QL=0
+  if [ -n "$ERR" ]; then q "${RED}${NO} ${ERR}${RST}"; q ''; ERR=''; fi
+  return 0
+}
+
+q_header() {
+  local i
+  local -a t=('' '' '' '' "${BOLD}${GOLD}Josi${RST}  ${LILAC}${VERSION}${RST}"
+    "${LILAC}A few questions, then Josi installs itself.${RST}"
+    "${DIM}Enter keeps the answer shown; Ctrl-C stops.${RST}" '' '' '' '')
+  QH=0
+  if [ "$styled" = 1 ] && [ "$GL" -gt 0 ]; then
+    printf '\n' >&5
+    for ((i = 0; i < GL; i++)); do printf '\r\e[2K  %s    %s\n' "${GH[0,$i]}" "${t[i]}" >&5; done
+    QH=$((GL + 1))
+  else
+    printf '\n%s  %s\n' "$CL" "${BOLD}${GOLD}Josi${RST} ${LILAC}${VERSION}${RST}  a few questions, then Josi installs itself." >&5
+    QH=2
+  fi
+  printf '%s\n' "$CL" >&5
+  QH=$((QH + 1))
+  return 0
+}
+
+# ask <question> <shown answer>: one line from the terminal into REPLY,
+# with the answer already typed in so Enter keeps it or it can be edited
+# (readline; its echo goes to the terminal, never to stdout).
+# A one-key choice (third argument "choice") shows its default in brackets
+# instead, so typing 2 over a shown 1 does not read as 12.
+ask() {
+  local prompt shown=$2 hint=''
+  if [ "${3:-}" = choice ]; then shown='' hint="[$2] "; fi
+  if [ "$styled" = 1 ]; then
+    prompt=$'  \001'"$GOLD"$'\002'"$MARK"$'\001'"$RST$BOLD"$'\002'" $1 "$'\001'"$RST$DIM"$'\002'"$hint"$'\001'"$RST"$'\002'
+  else
+    prompt="  $MARK $1 $hint"
+  fi
+  if ! IFS= read -e -r -i "$shown" -p "$prompt" REPLY <&5 >&5 2>&5; then
+    printf '\n' >&5
+    fail 'no answer was given; nothing was installed'
+  fi
+  QL=$((QL + 1))
+  REPLY=${REPLY#"${REPLY%%[![:space:]]*}"}
+  REPLY=${REPLY%"${REPLY##*[![:space:]]}"}
+  return 0
+}
+
+ask_lan() {
+  ask "This server's address on your network:" "$A_LAN"
+  REPLY=${REPLY:-$A_LAN}
+  if valid_host "$REPLY"; then A_LAN=$REPLY; return 0; fi
+  ERR="That is not an IP address or a host name: ${REPLY:0:60}"
+  return 1
+}
+
+ask_domain() {
+  local d busy=''
+  ask 'Domain name (its DNS points at this server):' "$A_DOMAIN"
+  d=${REPLY,,}; d=${d%.}
+  if ! valid_domain "$d"; then ERR="That is not a domain name: ${REPLY:0:60}"; return 1; fi
+  A_DOMAIN=$d
+  if [ "$S_MODE" != domain ]; then
+    if port_busy 80; then busy=80; fi
+    if port_busy 443; then busy="${busy:+$busy and }443"; fi
+    if [ -n "$busy" ]; then
+      ERR="Port $busy is taken by another program; Josi's Caddy needs 80 and 443. Choose 3 to use your own proxy."
+      return 1
+    fi
+  fi
+  ask 'Email for certificate notices (empty for none):' "$A_EMAIL"
+  if [ -n "$REPLY" ] && ! valid_email "$REPLY"; then ERR="That is not an email address: ${REPLY:0:60}"; return 1; fi
+  A_EMAIL=$REPLY
+  return 0
+}
+
+ask_proxy() {
+  ask 'The https address your proxy serves:' "${A_URL:-https://}"
+  if [[ $REPLY =~ ^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?/?$ ]]; then
+    A_URL=${REPLY%/}
+    return 0
+  fi
+  ERR="Type it as https://josi.example.com, with no path: ${REPLY:0:60}"
+  return 1
+}
+
+ask_mode() {
+  local n
+  case $GIVEN in *' mode '*) return 0 ;; esac
+  while :; do
+    q_clear
+    q "${BOLD}How will people reach Josi?${RST}"
+    q ''
+    q "  ${GOLD}1${RST}  This network only           ${DIM}http://${A_LAN}:${A_PORT}${RST}"
+    q "  ${GOLD}2${RST}  A public domain             ${DIM}HTTPS from Josi's own Caddy, on ports 80 and 443${RST}"
+    q "  ${GOLD}3${RST}  Behind my own reverse proxy ${DIM}it already serves HTTPS and forwards to Josi${RST}"
+    q ''
+    case $A_MODE in domain) n=2 ;; proxy) n=3 ;; *) n=1 ;; esac
+    ask 'Choose 1, 2 or 3:' "$n" choice
+    case ${REPLY:-$n} in
+      1) A_MODE=lan; if ask_lan; then return 0; fi ;;
+      2) A_MODE=domain; if ask_domain; then return 0; fi ;;
+      3) A_MODE=proxy; if ask_proxy; then return 0; fi ;;
+      *) ERR='Type 1, 2 or 3.' ;;
+    esac
+  done
+}
+
+ask_port() {
+  local p
+  case $GIVEN in *' port '*) return 0 ;; esac
+  if [ "$A_PORT" != "$CUR_PORT" ] && port_busy "$A_PORT"; then free_port_after "$A_PORT"; A_PORT=$REPLY; fi
+  while :; do
+    q_clear
+    q "${BOLD}Which port should Josi answer on?${RST}"
+    case $A_MODE in
+      lan) q "${DIM}People open http://${A_LAN}:<port>.${RST}" ;;
+      domain) q "${DIM}https://${A_DOMAIN} uses 80 and 443; this port serves this network over plain HTTP.${RST}" ;;
+      *) q "${DIM}Point your proxy at http://${LAN_IP}:<port>.${RST}" ;;
+    esac
+    q ''
+    ask 'Port:' "$A_PORT"
+    p=${REPLY:-$A_PORT}
+    if ! [[ $p =~ ^[0-9]{4,5}$ ]] || [ "$((10#$p))" -lt 1024 ] || [ "$((10#$p))" -gt 65535 ]; then
+      ERR='Choose a port from 1024 to 65535.'
+      continue
+    fi
+    p=$((10#$p))
+    if [ "$p" != "$CUR_PORT" ] && port_busy "$p"; then
+      free_port_after "$p"; A_PORT=$REPLY
+      ERR="Port $p is taken by another program; $A_PORT is free."
+      continue
+    fi
+    A_PORT=$p
+    return 0
+  done
+}
+
+ask_pc() {
+  local d
+  case $GIVEN in *' pc '*) return 0 ;; esac
+  while :; do
+    q_clear
+    q "${BOLD}Let Josi control this computer?${RST}"
+    q "${DIM}Josi can then run commands, work with files and start programs here,${RST}"
+    q "${DIM}as a Linux user you choose and with only that user's permissions.${RST}"
+    q ''
+    if [ "$A_NOPC" = 1 ] || [ -z "$A_PC" ]; then d=n; else d=y; fi
+    ask 'Allow it? (y/n):' "$d" choice
+    REPLY=${REPLY:-$d}
+    case ${REPLY,,} in
+      n | no) A_NOPC=1 A_PC=''; return 0 ;;
+      y | yes) ;;
+      *) ERR='Type y or n.'; continue ;;
+    esac
+    ask 'Which Linux user should Josi act as?' "${A_PC:-$SUDO_REAL}"
+    if real_user "$REPLY"; then A_PC=$REPLY A_NOPC=0; return 0; fi
+    ERR="${REPLY:0:40} is not a normal login account on this machine."
+    A_PC='' A_NOPC=0
+  done
+}
+
+summary() {
+  local address how pc
+  q_clear
+  case $A_MODE in
+    lan) address="http://$A_LAN:$A_PORT" how='this network only' ;;
+    domain) address="https://$A_DOMAIN" how="HTTPS from Josi's Caddy; on this network also http://$LAN_IP:$A_PORT" ;;
+    *) address=$A_URL how="your proxy forwards to http://$LAN_IP:$A_PORT" ;;
+  esac
+  if [ "$A_NOPC" = 1 ] || [ -z "$A_PC" ]; then pc=no; else pc="yes, as $A_PC"; fi
+  q "${BOLD}Josi will be set up like this:${RST}"
+  q ''
+  q "  ${LILAC}Address${RST}       ${BOLD}${GOLD}${address}${RST}"
+  q "                ${DIM}${how}${RST}"
+  q "  ${LILAC}Port${RST}          $A_PORT"
+  if [ "$A_MODE" = domain ] && [ -n "$A_EMAIL" ]; then q "  ${LILAC}Certificates${RST}  notices to $A_EMAIL"; fi
+  q "  ${LILAC}PC control${RST}    $pc"
+  q ''
+  ask 'Install Josi now? (y/n):' y choice
+  REPLY=${REPLY:-y}
+  case ${REPLY,,} in y | yes) return 0 ;; esac
+  GIVEN=' '  # n: every question again, with these answers shown
+  return 1
+}
+
+questions() {
+  # Defaults: a flag, then the saved answer, then this machine.
+  if [ -n "${SUDO_USER:-}" ] && real_user "$SUDO_USER"; then SUDO_REAL=$SUDO_USER; fi
+  [ -n "$A_MODE" ] || A_MODE=${S_MODE:-lan}
+  [ -n "$A_LAN" ] || A_LAN=${S_LAN:-$LAN_IP}
+  [ -n "$A_DOMAIN" ] || A_DOMAIN=$S_DOMAIN
+  [ -n "$A_EMAIL" ] || A_EMAIL=$S_EMAIL
+  [ -n "$A_URL" ] || A_URL=$S_URL
+  [ -n "$A_PORT" ] || A_PORT=${S_PORT:-${CUR_PORT:-8080}}
+  case $GIVEN in *' pc '*) ;; *) if [ -n "$S_PC" ]; then A_PC=$S_PC; else A_NOPC=1; fi ;; esac
+  [ "$TTY" = 1 ] || return 0  # nothing asked: the flags alone go to the install command
+  q_header
+  while :; do
+    ask_mode
+    ask_port
+    ask_pc
+    if summary; then break; fi
+  done
+  if [ "$styled" = 1 ]; then printf '\e[%dA\r\e[J' $((QL + QH)) >&5; fi
+  CLI_ARGS=(--address-mode "$A_MODE" --port "$A_PORT")
+  case $A_MODE in
+    lan) CLI_ARGS+=(--lan-address "$A_LAN") ;;
+    domain) CLI_ARGS+=(--domain "$A_DOMAIN"); if [ -n "$A_EMAIL" ]; then CLI_ARGS+=(--email "$A_EMAIL"); fi ;;
+    *) CLI_ARGS+=(--public-url "$A_URL") ;;
+  esac
+  if [ "$A_NOPC" = 1 ] || [ -z "$A_PC" ]; then CLI_ARGS+=(--no-pc-control); else CLI_ARGS+=(--pc-control-user "$A_PC"); fi
+  return 0
 }
 
 # ------------------------------------------------------------- the commands
 
-apt_get() { apt-get -o APT::Status-Fd=4 "$@" 4>"$work/status"; }
+apt_get() { apt-get -o "$APT_LOCK" -o APT::Status-Fd=4 "$@" 4>"$work/status"; }
 download() {
   curl --fail --location --silent --show-error --proto "$proto" --retry 3 \
     --output "$work/$package" "$BASE_URL/$package"
 }
 checksum() { sha256sum "$work/$package" > "$work/sum"; }
-start_josi() { /usr/bin/josi-ce-server-install 2>&3 > "$work/url"; }
+start_josi() { /usr/bin/josi-ce-server-install 2>&3 > "$work/url" ${CLI_ARGS[@]+"${CLI_ARGS[@]}"}; }
 
 main() {
-  local line missing actual
+  local line missing actual rest port helpers=''
+  parse_args "$@"
   [ "$(uname -s)" = Linux ] || fail 'Linux is required'
-  [ "$(id -u)" = 0 ] || fail 'run it with sudo: curl -fsSL <address>/linux | sudo bash'
+  [ "$(id -u)" = 0 ] || fail 'run it as root: curl -fsSL <address>/linux | sudo bash, or from a root shell: wget -qO- <address>/linux | bash'
   command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ] || fail 'systemd is required'
+  if [ -d /var/lib/josi-ce-server ] && [ ! -e /var/lib/josi/installation.json ]; then
+    fail "an earlier Josi CE Server from before the rename is in /var/lib/josi-ce-server, with services and
+  accounts of the same names. Remove it first (this deletes its data; back up its chats in its
+  Administration > Backups first), as root:
+    systemctl disable --now josi-ce-database josi-ce-voice josi-ce-voice-control josi-ce-web josi-ce-worker josi-ce-proxy
+    rm -f /etc/systemd/system/josi-ce-*.service; systemctl daemon-reload
+    for a in database voice control web worker proxy; do userdel josi-ce-\$a; groupdel josi-ce-\$a; done
+    groupdel josi-ce-app; groupdel josi-ce-voice-shared; rm -rf /var/lib/josi-ce-server
+  then run this command again."
+  fi
 
   case "$(uname -m)" in
     x86_64|amd64) processor=x86_64 ;;
@@ -393,9 +822,18 @@ main() {
   work=$(mktemp -d /var/tmp/josi-install.XXXXXX)
   chmod 755 "$work"
   trap cleanup EXIT
-  trap 'exit 130' INT TERM HUP
+  trap 'interrupted=1; exit 130' INT TERM
+  # A dropped SSH session must not stop dpkg or the lifecycle half-way: the
+  # hangup is ignored here and, inherited, by everything this starts.
+  trap '' HUP
 
   init_screen
+  open_tty
+  load_saved
+  detect_lan
+  questions
+  printf 'Answers: %s\n' "${CLI_ARGS[*]-saved or default}" >&3
+  start_screen
 
   begin 0
   if command -v pacman >/dev/null 2>&1; then
@@ -413,16 +851,30 @@ main() {
   finish
 
   begin 1
+  # PC control on a machine with a graphical login: the optional desktop
+  # helpers (typing, windows, screenshots). Never required.
+  if [ "$A_NOPC" != 1 ] && [ -n "$A_PC" ] && has_desktop; then helpers='xdotool wmctrl scrot'; fi
   if [ "$family" = arch ]; then
     missing=$(pacman -T curl python rsync acl iproute2 || true)
     if [ -n "$missing" ]; then
       # shellcheck disable=SC2086
       run pacman -Sy --needed --noconfirm $missing || fail 'pacman could not install the dependencies'
     fi
+    if [ -n "$helpers" ]; then
+      # shellcheck disable=SC2086
+      run pacman -S --needed --noconfirm $helpers || printf 'Desktop helpers were not installed\n' >&3
+    fi
   else
     export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=l
-    run apt-get update -q || fail 'apt-get update failed'
+    # Finish what an interrupted apt or dpkg (Ctrl-C, a dropped session) left
+    # half-configured; until then apt refuses to install anything.
+    run dpkg --configure -a || printf 'dpkg --configure -a did not finish\n' >&3
+    run apt-get -o "$APT_LOCK" update -q || fail 'apt-get update failed'
     run apt_get install -y -q ca-certificates curl python3 rsync acl iproute2 || fail 'apt could not install the dependencies'
+    if [ -n "$helpers" ]; then
+      # shellcheck disable=SC2086
+      run apt_get install -y -q --no-install-recommends $helpers || printf 'Desktop helpers were not installed\n' >&3
+    fi
   fi
   finish
 
@@ -473,6 +925,15 @@ main() {
     printf '%s\n' "$url"
   fi
   if [ "$screen" = 1 ]; then
+    case $url in
+      https://*)
+        # Until the domain's DNS and certificate are in place, or the proxy
+        # forwards, the same link works on this network over plain HTTP.
+        port=$(sed -n 's/.*"publicPort": *\([0-9][0-9]*\).*/\1/p' /var/lib/josi/status.json 2>/dev/null || true)
+        rest=${url#https://}; rest=${rest#*/}
+        printf '\n  %sIf that address does not open yet, on this network use http://%s:%s/%s%s\n' \
+          "$DIM" "$LAN_IP" "${port:-8080}" "$rest" "$RST" >&2 ;;
+    esac
     case $url in
       *'#handoff='*) printf '\n  %sThe link works once, for 10 minutes. Run the same command again for a new one.%s\n\n' "$DIM" "$RST" >&2 ;;
       *) printf '\n' >&2 ;;

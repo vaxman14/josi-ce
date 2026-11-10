@@ -12,6 +12,7 @@ feed names for this distribution and processor, and its SHA-256 must match the
 feed before the package manager sees it. The result goes to
 /var/lib/josi/data/state/update-status.json, which the web service reads.
 """
+import fcntl
 import grp
 import hashlib
 import json
@@ -21,6 +22,7 @@ import platform
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -32,14 +34,18 @@ STATE = ROOT / 'data/state'
 REQUEST = STATE / 'update-request'
 STATUS = STATE / 'update-status.json'
 WORK = ROOT / 'updates'
+LOCK = ROOT / 'update.lock'
 CONFIG = Path('/etc/josi/update.json')
 DEFAULT_FEED = 'https://github.com/vaxman14/josi-ce/releases/latest/download/linux-latest.json'
 VERSION = re.compile(r'^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$')
 NAME = re.compile(r'^[A-Za-z0-9._+-]{1,200}$')
 ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8',
        'DEBIAN_FRONTEND': 'noninteractive'}
+# Wait for another apt or unattended-upgrades instead of failing at once.
+APT_LOCK = ['-o', 'DPkg::Lock::Timeout=600']
 MAX_FEED = 256 * 1024
 MAX_PACKAGE = 4 * 1024 ** 3
+MAX_STATUS = 64 * 1024
 
 
 def now():
@@ -51,18 +57,55 @@ def current_version():
 
 
 def newer(left, right):
+    """Semantic-version order: 1.2.8-beta.2 < 1.2.8-beta.10 < 1.2.8."""
     def key(value):
         head, _, tail = value.partition('-')
-        return tuple(int(part) for part in head.split('.')), tail == '', tail
+        numbers = tuple(int(part) for part in head.split('.'))
+        if not tail:
+            return numbers, 1, ()
+        # Numeric identifiers sort below names and among themselves by value.
+        parts = tuple((0, int(part), '') if part.isdigit() else (1, 0, part) for part in tail.split('.'))
+        return numbers, 0, parts
     return key(left) > key(right)
 
 
 def read_status():
+    """The status file lives in a folder the web account can write, so it is
+    read without following links, without blocking on a FIFO, only as a
+    regular file and only up to a small size."""
     try:
-        value = json.loads(STATUS.read_text())
+        descriptor = os.open(STATUS, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return {}
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_STATUS:
+            return {}
+        body = os.read(descriptor, MAX_STATUS + 1)
+        if len(body) > MAX_STATUS:
+            return {}
+        value = json.loads(body)
         return value if isinstance(value, dict) else {}
     except (OSError, ValueError):
         return {}
+    finally:
+        os.close(descriptor)
+
+
+def update_lock(wait):
+    """One updater at a time: a check never runs beside an update. Returns the
+    held descriptor, or None when wait is False and another run holds it."""
+    descriptor = os.open(LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    info = os.fstat(descriptor)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_nlink != 1:
+        os.close(descriptor)
+        raise SystemExit('Unsafe updater lock ' + str(LOCK))
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+    except BlockingIOError:
+        os.close(descriptor)
+        return None
+    return descriptor
 
 
 def write_status(**fields):
@@ -176,9 +219,11 @@ def package_install(path):
     if family() == 'arch':
         command = ['/usr/bin/pacman', '-U', '--noconfirm', '--needed', str(path)]
     else:
-        subprocess.run(['/usr/bin/apt-get', 'update', '-qq'], env=ENV, capture_output=True, timeout=600)
-        command = ['/usr/bin/apt-get', 'install', '-y', '-q', str(path)]
-    result = subprocess.run(command, env=ENV, capture_output=True, text=True, timeout=1800)
+        # Finish a dpkg run an earlier interruption left half-configured.
+        subprocess.run(['/usr/bin/dpkg', '--configure', '-a'], env=ENV, capture_output=True, timeout=1200)
+        subprocess.run(['/usr/bin/apt-get', *APT_LOCK, 'update', '-qq'], env=ENV, capture_output=True, timeout=1200)
+        command = ['/usr/bin/apt-get', *APT_LOCK, 'install', '-y', '-q', str(path)]
+    result = subprocess.run(command, env=ENV, capture_output=True, text=True, timeout=2400)
     if result.returncode:
         raise RuntimeError('The package manager refused the update: ' + (result.stderr or result.stdout)[-300:])
 
@@ -212,6 +257,11 @@ def update(version):
     except Exception as error:
         # Bring back whatever is installed. Units are only rewritten once the
         # new version is ready to start, so before that this is the old one.
+        # A failure during the data migration first puts back the snapshot
+        # (maintenance.py recover <transaction>); without it the next start
+        # would refuse the half-migrated data and Josi would stay down.
+        subprocess.run(['/usr/bin/josi-ce-server-install', '--recover'], env=ENV, capture_output=True,
+            timeout=3600)
         subprocess.run(['/usr/bin/systemctl', 'start', 'josi.service'], env=ENV, capture_output=True, timeout=300)
         write_status(state='failed', finishedAt=now(), message=str(error)[:300])
 
@@ -243,17 +293,24 @@ def main():
         raise SystemExit('josi_update.py runs as root under systemd.')
     command = sys.argv[1:]
     if command == ['check']:
-        check()
+        # The twice-a-day check skips while an update runs; it would read a
+        # status the update is about to replace and write the old one back.
+        lock = update_lock(wait=False)
+        if lock is not None:
+            check()
     elif command == ['request']:
         value = take_request()
         if not value:
             return
         if value.get('operation') == 'check':
-            check()
+            lock = update_lock(wait=False)
+            if lock is not None:
+                check()
         elif value.get('operation') == 'update' and isinstance(value.get('version'), str) and VERSION.match(value['version']):
-            # A run that died (power loss) leaves "running"; an hour later it is stale.
-            stale = STATUS.exists() and time.time() - STATUS.stat().st_mtime > 3600
-            if read_status().get('state') != 'running' or stale:
+            # Holding the lock means no other update runs; a "running" left by
+            # one that died (power loss) is stale, so this one goes ahead.
+            update_lock(wait=True)
+            if value['version'] != current_version():  # a repeat request for what just installed
                 update(value['version'])
     else:
         raise SystemExit('usage: josi_update.py check|request')

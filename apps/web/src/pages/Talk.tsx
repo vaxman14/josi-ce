@@ -34,7 +34,7 @@
 // bubble is in the DOM the moment it is sent.
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link, useOutletContext, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useOutletContext, useSearchParams } from 'react-router-dom';
 import { api, ApiError, type Approval, type Message, type Thread, type TurnResult } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { JosiMark } from '@/components/brand/JosiMark';
@@ -45,6 +45,8 @@ import { GhostFigure, StageReply, useReducedMotion } from '@/components/ghost/Gh
 import { useWorkGoals } from '@/lib/workGoals';
 import { PcPermissionCards } from '@/components/PcPermissionCards';
 import { CredentialCards } from '@/components/CredentialCards';
+import { ProposalCard, SettingsChangeCards } from '@/components/SettingsChangeCards';
+import { belongsHere, useSettingsChanges, waitingOnMe } from '@/lib/settingsChanges';
 import {
   firstName, GhostController, isListReply, loopFor, nextAcknowledgement, stageMood, type GhostSnapshot,
 } from '@/lib/ghost';
@@ -131,6 +133,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
   // Answered here, or put away with "Not now". The poll catches up on its own.
   const [settled, setSettled] = useState<string[]>([]);
   const pendingApprovals = approvals.filter(approval => !settled.includes(approval.id));
+  const navigate = useNavigate();
 
   // ---- the stage
   const reduced = useReducedMotion();
@@ -154,6 +157,13 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
   const mood = stageMood({ waiting: sending, speaking, voice: voiceActive, typing });
   const activeTasks = work.goals.filter(goal => goal.state !== 'completed' && goal.state !== 'cancelled').length;
   const lastReply = [...messages].reverse().find(message => message.direction === 'out');
+
+  // Settings changes, credential cards and PC permissions Josi opened: one
+  // poll, checked again the moment a reply lands (lib/settingsChanges.ts).
+  const { proposals, needsPassword } = useSettingsChanges(thread?.id, lastReply?.id);
+  const [cardsDone, setCardsDone] = useState<string[]>([]);
+  const cardDone = useCallback((id: string) => setCardsDone(ids => ids.includes(id) ? ids : [...ids, id]), []);
+  const threadCards = thread ? proposals.filter(p => !cardsDone.includes(p.id) && belongsHere(p, thread.id, needsPassword) && waitingOnMe(p, needsPassword)) : [];
 
   // Hello when the page opens. The controller lives as long as the page.
   useEffect(() => {
@@ -371,6 +381,12 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
   const greeting = firstName(user);
   const busy = sending || loading || !thread;
   const stageApproval = !sending ? pendingApprovals[0] : undefined;
+  // The history panel is closed by default, so a card waiting there would be
+  // invisible: the first one sits on the stage under the reply instead. Only
+  // one copy is mounted at a time (stage while History is closed, History
+  // while open), so a card never holds two passkey challenges or two drafts.
+  const stageCard = !sending && !stageApproval && !historyOpen ? threadCards[0] : undefined;
+  const waitingCount = pendingApprovals.length + threadCards.length;
   const approve = (approval: Approval) => async () => {
     await api.post(`/assistant/approvals/${approval.id}/decide`, { approve: true });
     setSettled(ids => [...ids, approval.id]);
@@ -398,6 +414,16 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
             {activeTasks} {activeTasks === 1 ? 'task' : 'tasks'}
           </button>
         ) : null}
+        <button
+          type="button"
+          onClick={() => navigate('/app/my-world')}
+          aria-label="My World"
+          title="My World"
+          data-testid="josi.chat.my-world"
+          className="stage-round shrink-0"
+        >
+          <svg aria-hidden viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="10" r="2.5" /><path d="M7.5 18c1-2.5 2.6-3.5 4.5-3.5s3.5 1 4.5 3.5" /></svg>
+        </button>
         <button
           ref={historyButton}
           type="button"
@@ -450,7 +476,15 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
               {stageApproval ? (
                 <div className="flex w-full flex-col items-center gap-1 text-left">
                   <ApprovalCard approval={stageApproval} onLater={() => setSettled(ids => [...ids, stageApproval.id])} onApprove={approve(stageApproval)} />
-                  {pendingApprovals.length > 1 ? <button type="button" onClick={openHistory} className="link min-h-11 text-xs">{pendingApprovals.length - 1} more waiting in History</button> : null}
+                  {waitingCount > 1 ? <button type="button" onClick={openHistory} className="link min-h-11 text-xs">{waitingCount - 1} more waiting in History</button> : null}
+                </div>
+              ) : stageCard ? (
+                <div className="flex w-full flex-col items-center gap-1 text-left">
+                  {/* A credential card can be tall; it scrolls rather than pushing the ghost off the stage. */}
+                  <div className="max-h-[50dvh] w-full max-w-md overflow-y-auto">
+                    <ProposalCard key={stageCard.id} proposal={stageCard} needsPassword={needsPassword} onDone={() => cardDone(stageCard.id)} />
+                  </div>
+                  {waitingCount > 1 ? <button type="button" onClick={openHistory} className="link min-h-11 text-xs">{waitingCount - 1} more waiting in History</button> : null}
                 </div>
               ) : null}
             </div>
@@ -535,8 +569,9 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
                 ))}
               </ul>
             ) : null}
-            {thread ? <PcPermissionCards key={'permissions-'+thread.id} threadId={thread.id} /> : null}
-            {thread ? <CredentialCards key={'credentials-'+thread.id} threadId={thread.id} /> : null}
+            {thread && historyOpen ? <PcPermissionCards key={'permissions-'+thread.id} proposals={threadCards} onDone={cardDone} /> : null}
+            {thread && historyOpen ? <CredentialCards key={'credentials-'+thread.id} proposals={threadCards} onDone={cardDone} /> : null}
+            {thread && historyOpen ? <SettingsChangeCards key={'settings-'+thread.id} proposals={threadCards} needsPassword={needsPassword} onDone={cardDone} /> : null}
             <ChatWorkProgressList {...work} />
             {sending ? <Working text="Josi is thinking" elapsed size={28} className="py-2 pl-1" /> : null}
             <div ref={end} />

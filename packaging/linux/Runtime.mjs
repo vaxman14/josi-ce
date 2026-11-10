@@ -40,6 +40,26 @@ try {
     || ![cfg.workspace.dev, cfg.workspace.ino, cfg.workspace.uid].every(Number.isSafeInteger))) throw Error();
   if (!['migrate', 'bootstrap'].includes(role) && cfg.version !== meta.version) throw Error();
 
+  // The installer's answers (/etc/josi/install.json, root's, written by
+  // josi-ce-server-install): the address people open. lan is plain HTTP on
+  // the LAN address; domain and proxy are https. Without the file (an older
+  // install before its first rerun) Josi answers on loopback only.
+  let address = { addressMode: 'lan', appUrl: `http://localhost:${cfg.publicPort}`, email: null };
+  if (!isolated) {
+    let st = null;
+    try { st = lstatSync('/etc/josi/install.json'); } catch {}
+    if (st) {
+      if (!st.isFile() || st.uid !== 0 || (st.mode & 0o022) || st.size > 4096) throw Error('Unsafe /etc/josi/install.json');
+      const saved = JSON.parse(readFileSync('/etc/josi/install.json'));
+      const url = new URL(saved.appUrl);
+      if (!['lan', 'domain', 'proxy'].includes(saved.addressMode) || url.origin !== saved.appUrl
+        || (saved.addressMode === 'lan' ? url.protocol !== 'http:' : url.protocol !== 'https:')
+        || (saved.email !== null && (typeof saved.email !== 'string' || saved.email.length > 254
+          || !/^[^\s@]+@[^\s@]+$/.test(saved.email)))) throw Error('Invalid /etc/josi/install.json');
+      address = { addressMode: saved.addressMode, appUrl: saved.appUrl, email: saved.email };
+    }
+  }
+
   for (const key of Object.keys(process.env)) delete process.env[key];
   const secret = join(data, 'secrets', role);
   Object.assign(process.env, {
@@ -53,14 +73,21 @@ try {
     // Shared by web and worker (the codex folder is group-writable for both),
     // so a Claude sign-in made in the browser is used by background work too.
     CLAUDE_CONFIG_DIR: join(data, 'codex', 'claude-code'),
-    NODE_ENV: 'production', JOSI_NATIVE_RUNTIME: '1', JOSI_VERSION: cfg.version, JOSI_DATA_DIR: data,
+    // JOSI_NATIVE_RUNTIME selects the native secrets and paths; JOSI_LINUX_SERVER
+    // says this is the headless server, not the desktop app, so setup asks
+    // for (and keeps) the address chosen at install instead of localhost.
+    NODE_ENV: 'production', JOSI_NATIVE_RUNTIME: '1', JOSI_LINUX_SERVER: '1', JOSI_VERSION: cfg.version, JOSI_DATA_DIR: data,
     JOSI_STORAGE_ROOT_BASE: join(data, 'roots'), JOSI_UPLOAD_DIR: join(data, 'chat-attachments'),
     MASTER_KEY_FILE: join(secret, 'master-key'), PGPASSWORD_FILE: join(secret, 'database-password'),
     DATABASE_URL: `postgresql://josi@127.0.0.1:${cfg.databasePort}/josi`, PGHOST: '127.0.0.1',
     PGPORT: String(cfg.databasePort), POSTGRES_DB: 'josi', POSTGRES_USER: 'josi',
     JOSI_PG_BIN: join(PROGRAM, 'postgresql/bin'), PORT: String(cfg.apiPort),
     LD_LIBRARY_PATH: join(PROGRAM, 'postgresql/lib'),
-    APP_URL: `http://localhost:${cfg.publicPort}`, WEB_DIR: join(PROGRAM, 'app/apps/web/dist'),
+    APP_URL: address.appUrl, JOSI_ACCESS_MODE: address.addressMode,
+    ...(address.email ? { JOSI_ACME_EMAIL: address.email } : {}),
+    // The PC control spool, shared with josi-pc.service (group josi-pc).
+    ...(role === 'web' ? { JOSI_PC_SPOOL: join(data, 'pc-spool') } : {}),
+    WEB_DIR: join(PROGRAM, 'app/apps/web/dist'),
     JOSI_SETUP_TOKEN_SHA256: cfg.setupTokenSha256,
     JOSI_WORKER_HEARTBEAT_FILE: join(data, 'state/worker-heartbeat'), CODEX_HOME: join(data, 'codex'),
     JOSI_VOICE_HELPER_TOKEN_FILE: join(secret, 'voice-control-token'),

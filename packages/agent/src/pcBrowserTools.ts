@@ -40,7 +40,7 @@ export const PC_BROWSER_TOOLS: ToolSpec[] = [
     description: 'Download one exact https address on the attached site into the browser\'s Downloads folder. Needs "Browser downloads" permission for the site, or the owner\'s approval.',
     parameters: shape({ url: { type: 'string', maxLength: 2048 } }) }, actionClass: 'automation_control' },
   { def: { name: 'browser_upload_file',
-    description: 'Put one file from this PC (an exact absolute Windows path, at most 8 MB) into a file field from the latest read of the attached tab. It does not submit the form. Needs "Browser uploads" for the site and "Folder read access" for the file\'s folder; the owner approves it unless both are allowed.',
+    description: 'Put one file from this PC (an exact absolute path, such as C:\\Users\\Name\\photo.jpg on Windows or /home/name/photo.jpg on Linux, at most 8 MB) into a file field from the latest read of the attached tab. It does not submit the form. Needs "Browser uploads" for the site and "Folder read access" for the file\'s folder; the owner approves it unless both are allowed.',
     parameters: shape({ observation_id: id, element_id: id, path: { type: 'string', maxLength: 500 } }) }, actionClass: 'automation_control' },
   { def: { name: 'browser_check_request',
     description: 'Check a browser request that was waiting for the owner\'s approval, and get its result once it ran. Never resend the request instead.',
@@ -228,7 +228,7 @@ export async function executePcBrowserTool(db: Db, owner: string, key: MasterKey
     } else if (name === 'browser_upload_file') {
       const path = cleanPath(input.path);
       const folder = path ? cleanPath(path.startsWith('/') ? posix.dirname(path) : win32.dirname(path)) : null;
-      if (!path || !folder || folder === path) return { ok: false, code: 'invalid_path', message: 'Use one exact absolute Windows path to a file, like C:\\Users\\Name\\Pictures\\photo.jpg.' };
+      if (!path || !folder || folder === path) return { ok: false, code: 'invalid_path', message: 'Use one exact absolute path to a file, like C:\\Users\\Name\\Pictures\\photo.jpg on Windows or /home/name/Pictures/photo.jpg on Linux.' };
       action = 'browser.upload'; description = `Upload ${path.startsWith('/') ? posix.basename(path) : win32.basename(path)} into one file field on ${origin}`;
       extra.push({ action: 'folder.read', scope: { kind: 'folder', target: folder } });
       payload = { kind: 'upload', observationId: String(input.observation_id), elementId: String(input.element_id), path };

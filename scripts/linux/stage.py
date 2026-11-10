@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -12,6 +13,8 @@ REPO=Path(__file__).resolve().parents[2]
 BASE=Path(os.environ.get('JOSI_LINUX_BUILD_BASE','/home/roman/JosiDrive/BuildTemp/josi-ce-native-linux-20261010'))
 CACHE=Path(os.environ.get('JOSI_LINUX_BUILD_CACHE','/home/roman/JosiDrive/Caches/codex-linux-native-20261010'))
 RUNTIME=BASE/'stage/runtime';VERSION=os.environ.get('JOSI_LINUX_VERSION','1.0.0')
+# The one version shape every part accepts (lifecycle.py, Runtime.mjs, the updater).
+if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?',VERSION):raise SystemExit('Invalid JOSI_LINUX_VERSION: '+VERSION)
 
 def copy(source,target):
     if source.is_dir():shutil.copytree(source,target,symlinks=True,dirs_exist_ok=True)
@@ -73,6 +76,14 @@ def main():
         copy(path,app/path.relative_to(REPO))
     for path in (REPO/'packaging/linux').glob('*'):
         if path.name in ('PythonRuntime.py','Runtime.mjs','lifecycle.py','maintenance.py'):copy(path,app/'native'/path.name)
+    # The PC control executor (josi-pc.service runs <version>/node/bin/node
+    # <version>/app/packaging/linux/pc-executor/josi-pc.mjs as the chosen user).
+    executor=REPO/'packaging/linux/pc-executor'
+    if (executor/'josi-pc.mjs').is_file():
+        for path in executor.rglob('*'):
+            if path.is_file() and not path.name.startswith('test') and '__pycache__' not in path.parts:
+                copy(path,app/'packaging/linux/pc-executor'/path.relative_to(executor))
+    else:print('warning: packaging/linux/pc-executor/josi-pc.mjs is missing; this build has no PC control',file=sys.stderr)
     for name in ('bounded_http.py','gateway.py','model_smoke.py','posix_helper.py','runtime_config.py','settings.py','tts.py','windows_helper.py'):
         copy(REPO/'services/voice-box'/name,app/'services/voice-box'/name)
     if sys.argv[1:]==['--code-only']:return

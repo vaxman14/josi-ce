@@ -50,6 +50,64 @@ export interface ProviderFormPaths {
   codexBase: string;
   /** Claude sign-in base, handed to ClaudeSignIn. */
   claudeBase: string;
+  /** GET: where the five-part test started by this form's submit is. When
+   * set, the form lists the five checks while the test runs. */
+  probeProgress?: string;
+}
+
+/** The server's view of a running probe (apps/api/src/http/probeProgress.ts). */
+interface ProbeProgressView {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  current: string | null;
+  steps: Array<{ id: string; label: string; passed: boolean; detail: string; latencyMs?: number }>;
+}
+
+/** The five checks, in the order the probe asks them (packages/llm/src/probe.ts). */
+const PROBE_CHECKS: Array<{ id: string; label: string }> = [
+  { id: 'chat', label: 'Basic reply' },
+  { id: 'structuredOutput', label: 'Structured output' },
+  { id: 'toolCalling', label: 'Tool calling' },
+  { id: 'vision', label: 'Image understanding' },
+  { id: 'context', label: 'Usable context' },
+];
+
+const seconds = (ms: number) => `${(Math.max(0, ms) / 1000).toFixed(ms < 10_000 ? 1 : 0)} s`;
+
+/** The five checks, each waiting, running, passed or failed, with the time
+ * each took. Fed by polling the progress route while the one long request runs. */
+function ProbeChecks({ view, startedAt, finished, now, stepStarts }: {
+  view: ProbeProgressView | null; startedAt: number; finished: boolean; now: number; stepStarts: Record<string, number>;
+}) {
+  const over = finished || (view !== null && !view.running);
+  return (
+    <div className="rounded-md border border-border p-3" aria-live="polite" data-testid="josi.model.probe-progress">
+      <p className="text-sm font-medium">
+        {over ? 'The five-part test' : view ? 'Running the five-part test…' : 'Saving, then starting the five-part test…'}
+        <span className="ml-2 text-xs font-normal text-muted-foreground">{seconds(now - startedAt)}</span>
+      </p>
+      <ol className="mt-2 space-y-1">
+        {PROBE_CHECKS.map((check) => {
+          const done = view?.steps.find((step) => step.id === check.id);
+          const running = !over && !done && view?.current === check.id;
+          const state = done ? (done.passed ? 'passed' : 'failed') : running ? 'running' : over && view ? 'not run' : 'waiting';
+          const began = stepStarts[check.id];
+          const took = done?.latencyMs !== undefined ? seconds(done.latencyMs) : running && began !== undefined ? seconds(now - began) : '';
+          return (
+            <li key={check.id} className="text-sm" data-state={state}>
+              <span className="flex items-center gap-2">
+                <span aria-hidden className={`inline-block h-2 w-2 shrink-0 rounded-full ${state === 'passed' ? 'bg-success' : state === 'failed' ? 'bg-destructive' : state === 'running' ? 'animate-pulse bg-primary' : 'bg-secondary'}`} />
+                <span className="min-w-0 flex-1">{done?.label ?? check.label}</span>
+                <span className={`shrink-0 text-xs ${state === 'failed' ? 'text-destructive' : 'text-muted-foreground'}`}>{state}{took ? ` · ${took}` : ''}</span>
+              </span>
+              {done && !done.passed && done.detail ? <span className="ml-4 block break-words text-xs text-muted-foreground">{done.detail}</span> : null}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
 }
 
 /** One provider as the server describes it.
@@ -118,6 +176,10 @@ export function ProviderForm({
   const currentScope = useRef(discoveryScope);
   currentScope.current = discoveryScope;
   const discoveryRequest = useRef(0);
+  const [probe, setProbe] = useState<{ startedAt: number; view: ProbeProgressView | null; finished: boolean } | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const stepStarts = useRef<Record<string, number>>({});
+  const probeRun = useRef(0);
 
   const entry = catalog.find((c) => c.kind === provider) ?? null;
   const external = entry ? entry.external : provider !== 'openai_compatible';
@@ -151,6 +213,49 @@ export function ProviderForm({
   useEffect(() => { if (initialProvider) setProvider(initialProvider); }, [initialProvider]);
 
   const setField = (key: string, value: string) => setValues((v) => ({ ...v, [key]: value }));
+
+  // The clock on the five-part test, while it runs.
+  useEffect(() => {
+    if (!probe || probe.finished) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [probe]);
+  useEffect(() => () => { probeRun.current += 1; }, []);
+
+  /** Submit, and while the request runs ask the server which check it is on.
+   * The single request still decides the outcome; this only shows progress. */
+  async function submitWithProgress(body: Record<string, unknown>) {
+    const path = paths.probeProgress;
+    if (!path) { await onSubmit(body); return; }
+    const run = ++probeRun.current;
+    // A probe that ran before this submit is not this one.
+    const before = await api.get<ProbeProgressView>(path).then((v) => v.startedAt).catch(() => null);
+    if (run !== probeRun.current) return;
+    const startedAt = Date.now();
+    stepStarts.current = {};
+    setNow(startedAt);
+    setProbe({ startedAt, view: null, finished: false });
+    const read = async () => {
+      try {
+        const view = await api.get<ProbeProgressView>(path);
+        if (run !== probeRun.current || !view.startedAt || view.startedAt === before) return;
+        if (view.current && stepStarts.current[view.current] === undefined) stepStarts.current[view.current] = Date.now();
+        setProbe((current) => current ? { ...current, view } : current);
+      } catch { /* progress is a convenience; the request itself reports */ }
+    };
+    const timer = window.setInterval(() => void read(), 700);
+    try {
+      await onSubmit(body);
+    } finally {
+      window.clearInterval(timer);
+      await read();
+      if (run === probeRun.current) {
+        setNow(Date.now());
+        // Nothing was probed (the save itself failed): no list to keep.
+        setProbe((current) => current ? (current.view ? { ...current, finished: true } : null) : current);
+      }
+    }
+  }
 
   /** Everything the provider needs before it is worth asking it anything. */
   const missingRequired = fields.filter((f) => f.required && !(values[f.key] ?? '').trim());
@@ -229,7 +334,7 @@ export function ProviderForm({
       onSubmit={(event) => {
         event.preventDefault();
         const f = new FormData(event.currentTarget);
-        void onSubmit({
+        void submitWithProgress({
           ...credentialBody(),
           model: manualModel.trim() || chosen || '',
           externalAcknowledged: f.get('ack') === 'on',
@@ -459,6 +564,8 @@ export function ProviderForm({
           A model on your own hardware. Nothing leaves this server for it.
         </p>
       )}
+
+      {probe ? <ProbeChecks view={probe.view} startedAt={probe.startedAt} finished={probe.finished} now={now} stepStarts={stepStarts.current} /> : null}
 
       <div className="flex flex-wrap items-center justify-end gap-2">
         {onCancel ? <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>Cancel</Button> : null}

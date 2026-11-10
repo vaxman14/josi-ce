@@ -144,6 +144,20 @@ const bool = (v: unknown): boolean => v === true;
  * simply leaves the normal Address step in place. This is idempotent so both
  * GET and POST routes can enforce the same state-machine boundary. */
 async function applyInstallerDeployment(db: Db): Promise<void> {
+  if (process.env.JOSI_LINUX_SERVER === '1') {
+    // The headless Linux server. Its installer asked how people reach it and
+    // started it with APP_URL and JOSI_ACCESS_MODE; server startup already
+    // recorded that domain and HTTPS mode (reconcilePublicAddress). Add the
+    // certificate email, and leave the Address step open so the owner sees
+    // the address, prefilled from linuxInstallerAddress().
+    const email = str(process.env.JOSI_ACME_EMAIL, 320);
+    if (process.env.JOSI_ACCESS_MODE === 'domain' && email.includes('@')) {
+      await db.query(`update deployment_config set acme_email=$1
+        where id=true and acme_email is null
+          and exists(select 1 from setup_state where id=true and completed=false)`, [email]);
+    }
+    return;
+  }
   if (process.env.JOSI_NATIVE_RUNTIME === '1' && process.env.APP_URL === 'http://localhost:8080') {
     // Import the already-installed local address. Never overwrite a previously
     // chosen address or alter proxy/firewall configuration during onboarding.
@@ -182,6 +196,25 @@ async function applyInstallerDeployment(db: Db): Promise<void> {
      set completed_steps = array_append(completed_steps, 'domain'), current_step = 'domain'
      where id = true and completed = false and not ('domain' = any(completed_steps))`,
   );
+}
+
+/** What the Linux installer chose, for prefilling the Address step: the
+ * domain field, the HTTPS select and the certificate email. Null elsewhere. */
+async function linuxInstallerAddress(db: Db): Promise<Record<string, unknown> | null> {
+  if (process.env.JOSI_LINUX_SERVER !== '1') return null;
+  const mode = process.env.JOSI_ACCESS_MODE;
+  let url: URL;
+  try { url = new URL(process.env.APP_URL ?? ''); } catch { return null; }
+  if (!['lan', 'domain', 'proxy'].includes(mode ?? '')) return null;
+  const [deployment] = await db.query<{ acme_email: string | null }>(
+    'select acme_email from deployment_config where id = true');
+  return {
+    mode,
+    origin: url.origin,
+    domain: url.hostname.toLowerCase(),
+    tlsMode: mode === 'proxy' ? 'external_proxy' : 'bundled_caddy',
+    acmeEmail: deployment?.acme_email ?? null,
+  };
 }
 
 /** Saving a model is not completing the model step. The five-part probe is the
@@ -265,6 +298,8 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         // the server had long since accepted twenty, so a provider was
         // reachable after installation but not during it.
         providerCatalog: providerCatalog(),
+        // Linux: the address chosen in the installer, to prefill the Address step.
+        installerAddress: await linuxInstallerAddress(db),
       });
     }),
   );
