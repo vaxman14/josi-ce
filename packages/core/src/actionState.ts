@@ -194,10 +194,13 @@ export async function expirePreparedActionApprovals(db:Db):Promise<number>{
 export async function resolveConversationalAction(db:Db,args:{ownerUserId:string;threadId:string;inbound:string;replyToMessageId?:string|null;requireReplyTarget?:boolean}):Promise<ConversationalDecision>{
   const text=args.inbound.trim();
   if(YES.test(text)||NO.test(text)){
+    // A yes or no while nothing waits for approval is ordinary talk
+    // (the answer to a question Josi asked): it goes to the model like any
+    // other message and approves nothing.
     const candidates=await latestPresented(db,{ownerUserId:args.ownerUserId,threadId:args.threadId,status:'prepared'});
-    if(!candidates.length)return {handled:true,reply:'I do not have one immediately preceding prepared action to apply that answer to.'};
+    if(!candidates.length)return {handled:false};
     const [lastOutbound]=await db.query<{id:string}>(`select id from messages where thread_id=$1 and direction='out' order by created_at desc limit 1`,[args.threadId]);
-    if(!lastOutbound||candidates[0].presented_turn_id!==lastOutbound.id)return {handled:true,reply:'I do not have one immediately preceding prepared action to apply that answer to.'};
+    if(!lastOutbound||candidates[0].presented_turn_id!==lastOutbound.id)return {handled:true,reply:'That did not approve anything. A request is still waiting for your approval further up; use Approve or Deny on it.'};
     // Durable clients can queue multiple turns before any reply exists. For
     // them, arrival order is not consent: yes/no must explicitly reply to the
     // exact assistant message that presented the action. Legacy synchronous
