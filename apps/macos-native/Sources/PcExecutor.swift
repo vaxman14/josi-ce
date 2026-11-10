@@ -92,6 +92,46 @@ import Foundation
         let key = try key(api, owner: owner); return (key.publicPoint, key.hardware)
     }
     /// Pairs this Mac with the person's password, once. Grants no permissions by itself.
+    /// Pairs this Mac without the Josi password: a Mac administrator approves it in
+    /// macOS's own prompt, and the server accepts that within ten minutes of signing
+    /// in (Windows does the same with its administrator prompt). Returns false when
+    /// the administrator declined; throws when the sign-in is too old for it.
+    func approveAsAdministrator(_ api: JosiAPI, owner: String) async throws -> Bool {
+        guard Self.administratorApproves() else { return false }
+        let identity = try await api.request("/admin/pc-control/identity")
+        let key = try key(api, owner: owner)
+        if !identity["publicKey"].text.isEmpty, identity["publicKey"].text != key.publicPoint {
+            throw JosiError(message: "This Mac's computer-control key changed. Remove its old identity under PC Control before approving it again.")
+        }
+        if identity["publicKey"].text.isEmpty {
+            do { _ = try await api.request("/admin/pc-control/identity", method: "POST", body: ["publicKey": .string(key.publicPoint), "elevated": .bool(true)]) }
+            catch let error as JosiError where error.status == 401 {
+                throw JosiError(message: "Your sign-in is more than ten minutes old, so approve this Mac with your Josi password instead.", status: 401)
+            }
+        }
+        approved = true; needsApproval = false; keyChanged = false
+        return true
+    }
+    /// macOS's administrator prompt (Authorization Services). Nothing is kept afterwards.
+    private static func administratorApproves() -> Bool {
+        var authorization: AuthorizationRef?
+        guard AuthorizationCreate(nil, nil, [], &authorization) == errAuthorizationSuccess, let authorization else { return false }
+        defer { AuthorizationFree(authorization, [.destroyRights]) }
+        return kAuthorizationRightExecute.withCString { name -> Bool in
+            var item = AuthorizationItem(name: name, valueLength: 0, value: nil, flags: 0)
+            return withUnsafeMutablePointer(to: &item) { pointer -> Bool in
+                var rights = AuthorizationRights(count: 1, items: pointer)
+                let prompt = "Josi wants to approve this Mac for computer control. This grants no permissions by itself."
+                return prompt.withCString { text -> Bool in
+                    var promptItem = AuthorizationItem(name: kAuthorizationEnvironmentPrompt, valueLength: strlen(text), value: UnsafeMutableRawPointer(mutating: text), flags: 0)
+                    return withUnsafeMutablePointer(to: &promptItem) { promptPointer -> Bool in
+                        var environment = AuthorizationEnvironment(count: 1, items: promptPointer)
+                        return AuthorizationCopyRights(authorization, &rights, &environment, [.interactionAllowed, .extendRights, .preAuthorize], nil) == errAuthorizationSuccess
+                    }
+                }
+            }
+        }
+    }
     func approve(_ api: JosiAPI, owner: String, password: String) async throws {
         let identity = try await api.request("/admin/pc-control/identity")
         let key = try key(api, owner: owner)

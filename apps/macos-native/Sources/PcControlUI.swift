@@ -41,9 +41,10 @@ struct PcRequestCards: View {
                 ? "This Mac's computer-control key changed. Remove its old identity under PC Control, then approve it again."
                 : "Computer control is on, but this Mac hasn't been approved yet. One approval with your password binds it to your account; it grants no permissions by itself.")
             if !pc.keyChanged {
+                Button("Approve with Mac Administrator", action: approveAsAdministrator).buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(working)
                 HStack {
-                    SecureField("Your Josi password", text: $password).textFieldStyle(JosiFieldStyle()).onSubmit(approveMac)
-                    Button("Approve This Mac", action: approveMac).buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(password.isEmpty || working)
+                    SecureField("Or your Josi password", text: $password).textFieldStyle(JosiFieldStyle()).onSubmit(approveMac)
+                    Button("Approve This Mac", action: approveMac).buttonStyle(JosiOutlineButtonStyle()).disabled(password.isEmpty || working)
                 }
             }
             if !problem.isEmpty, asking.isEmpty { Text(problem).font(JosiFont.caption).foregroundStyle(JosiTheme.error) }
@@ -109,6 +110,16 @@ struct PcRequestCards: View {
         Task {
             defer { working = false }
             do { try await pc.approve(api, owner: model.user["id"].text, password: secret) } catch { problem = error.localizedDescription }
+        }
+    }
+    private func approveAsAdministrator() {
+        guard let api = model.api else { return }
+        working = true; problem = ""
+        Task {
+            defer { working = false }
+            do {
+                if !(try await pc.approveAsAdministrator(api, owner: model.user["id"].text)) { problem = "Not approved. You can use your Josi password instead." }
+            } catch { problem = error.localizedDescription }
         }
     }
     private func send(_ request: Wire, approve: Bool) {

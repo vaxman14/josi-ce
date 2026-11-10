@@ -19,6 +19,8 @@ struct NativePcControlView: View {
     @State private var browsers: [PcBrowserBridge.Allowed] = []
     @State private var accessibility = PcDesktop.accessibilityTrusted
     @State private var screen = CGPreflightScreenCaptureAccess()
+    @State private var openAtLogin = JosiAppDelegate.openAtLogin
+    @State private var ownBrowser = PcOwnBrowser.enabled
     var body: some View {
         NativeLeanPage {
             HStack {
@@ -85,6 +87,11 @@ struct NativePcControlView: View {
             permissionRow("Accessibility: to read and use windows", granted: accessibility) { PcDesktop.askForAccessibility() }
             permissionRow("Screen Recording: to take pictures of a window", granted: screen) { _ = CGRequestScreenCaptureAccess() }
             NativeLeanNote(text: "macOS keeps these in System Settings > Privacy & Security. Josi works without them for commands, files and the browser.")
+            Divider()
+            Toggle("Open Josi at login, in the menu bar, so she can work on this Mac with her window closed", isOn: Binding(
+                get: { openAtLogin }, set: { openAtLogin = $0; JosiAppDelegate.openAtLogin = $0 })).toggleStyle(.checkbox)
+            Toggle("Josi's own browser: a hidden browser of her own, for when none of yours is open and for sign-in cards (downloaded once, about 190 MB)", isOn: Binding(
+                get: { ownBrowser }, set: { ownBrowser = $0; PcOwnBrowser.enabled = $0; if !$0 { PcOwnBrowser.shared.stop() } })).toggleStyle(.checkbox)
         }
     }
     private func permissionRow(_ label: String, granted: Bool, ask: @escaping () -> Void) -> some View {
