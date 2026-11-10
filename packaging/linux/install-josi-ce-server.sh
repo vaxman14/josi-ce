@@ -554,26 +554,42 @@ has_desktop() {
 # The terminal, when there is one this process may read: under curl | bash
 # stdin is the script. sudo-rs can run the script outside the terminal's
 # foreground group, where reading would stop it; then nothing is asked.
+# OUTER: the /dev/pts device of the nearest ancestor whose terminal is not $1.
+outer_tty() {
+  local mine=$1 p=$PPID major minor
+  local -a f
+  OUTER=''
+  while [ "${p:-0}" -gt 1 ]; do
+    # Fields after "(comm)": state ppid pgrp session tty_nr ...
+    read -r -a f <<< "$(sed 's/^.*) //' "/proc/$p/stat" 2>/dev/null)"
+    [ "${#f[@]}" -ge 5 ] || return 0
+    if [ "${f[4]}" != 0 ] && [ "${f[4]}" != "$mine" ]; then
+      major=$(( (f[4] >> 8) & 0xfff )); minor=$(( (f[4] & 0xff) | ((f[4] >> 12) & 0xfff00) ))
+      if [ "$major" -ge 136 ] && [ "$major" -le 143 ] && [ -c "/dev/pts/$(( (major - 136) * 256 + minor ))" ]; then
+        OUTER=/dev/pts/$(( (major - 136) * 256 + minor ))
+      fi
+      return 0
+    fi
+    p=${f[1]}
+  done
+  return 0
+}
+
 open_tty() {
   local -a st
   [ "$YES" = 0 ] || return 0
   { exec 5<>/dev/tty; } 2>/dev/null || return 0
   trap '' TTOU TTIN
   # Fields after the "(comm)" one: state ppid pgrp session tty tpgid.
-  # Debian's sudo, with use_pty, hands the terminal to the script a moment after
-  # starting it, so wait up to two seconds for the foreground; sudo-rs never
-  # does. A last probe reads with SIGTTIN ignored: a background read fails at
-  # once (status 1) where a readable terminal just times out (status > 128).
-  local tries=0 probe=1
-  while :; do
-    read -r -a st <<< "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null)"
-    [ "${#st[@]}" -ge 6 ] && [ "${st[2]}" = "${st[5]}" ] && break
-    tries=$((tries + 1)); [ "$tries" -le 40 ] || break
-    sleep 0.05
-  done
+  # With the script piped in (curl | sudo bash), Debian's classic sudo, with use_pty, and
+  # sudo-rs run it in the background of a terminal of their own, which never
+  # receives the keyboard. Then the questions go to the terminal the person is
+  # typing in: the first ancestor process on a different terminal. That is not
+  # our controlling terminal, so reading it is allowed from here.
+  read -r -a st <<< "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null)"
   if [ "${#st[@]}" -ge 6 ] && [ "${st[2]}" != "${st[5]}" ]; then
-    read -r -t 0.05 -u 5 _ 2>/dev/null; probe=$?
-    [ "$probe" -gt 128 ] && st[5]=${st[2]}
+    outer_tty "${st[4]}"
+    if [ -n "$OUTER" ] && { exec 5<>"$OUTER"; } 2>/dev/null; then st[5]=${st[2]}; fi
   fi
   if [ "${#st[@]}" -lt 6 ] || [ "${st[2]}" != "${st[5]}" ]; then
     exec 5>&-
