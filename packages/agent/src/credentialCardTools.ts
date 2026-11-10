@@ -9,14 +9,14 @@
 // later, the note the route's outcome writes into the thread. No value typed
 // into a card is ever returned to a conversation, a log or a proposal row.
 import { json, type Db } from '@josi-ce/core';
-import { OAUTH_PROVIDERS, DEVELOPER_SERVICE_CATALOG, isDeveloperService, mayConnect, type OAuthProvider, type DeveloperService } from '@josi-ce/connectors';
+import { OAUTH_PROVIDERS, DEVELOPER_SERVICE_CATALOG, isDeveloperService, mayConnect, clientStatuses, sharedGoogleAvailable, type OAuthProvider, type DeveloperService } from '@josi-ce/connectors';
 import type { ToolSpec } from './tools.js';
 import { connectorRequirement, installationOrigin } from './setupStatusTools.js';
 
 export type CardFieldType = 'text' | 'secret' | 'confirm';
 export interface CardField { key: string; label: string; type: CardFieldType; help?: string; required?: boolean; placeholder?: string }
 export interface CredentialCard {
-  kind: CredentialKind;
+  kind: CredentialKind | typeof ACCOUNT_CONNECTION_KIND;
   provider: string;
   title: string;
   /** What the person is doing, in the words they are held to. */
@@ -30,6 +30,10 @@ export interface CredentialCard {
 export const CREDENTIAL_KINDS = ['oauth_client', 'developer_token', 'nextcloud_account', 'model_api_key', 'mail_server', 'telegram_bot', 'messaging_channel'] as const;
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number];
 export const CREDENTIAL_CARD_AREA = 'credential_card';
+/** A card with nothing to type: one button that opens the provider's own
+ * sign-in page in the person's browser. The app starts the handshake with the
+ * person's session and reports the outcome when the browser returns. */
+export const ACCOUNT_CONNECTION_KIND = 'account_connection';
 
 const PROVIDER_NAMES: Record<string, string> = { google: 'Google', microsoft: 'Microsoft', dropbox: 'Dropbox', box: 'Box', nextcloud: 'Nextcloud', whatsapp: 'WhatsApp', slack: 'Slack', primary: 'primary model', fallback: 'fallback model' };
 export function providerName(provider: string): string { return PROVIDER_NAMES[provider] ?? DEVELOPER_SERVICE_CATALOG.find((d) => d.service === provider)?.label ?? provider; }
@@ -131,13 +135,20 @@ export const CREDENTIAL_CARD_TOOLS: ToolSpec[] = [
       provider: { type: 'string', maxLength: 40, description: 'For oauth_client: google, microsoft, dropbox or box. For developer_token: the service, for example github. For model_api_key: primary or fallback. For messaging_channel: slack or whatsapp. Others: omit.' },
     }, required: ['kind'], additionalProperties: false } }, actionClass: null },
 ];
+CREDENTIAL_CARD_TOOLS.push({ def: { name: 'start_account_connection',
+  description: 'Connect the person\'s own Google, Microsoft, Dropbox or Box account from this conversation: opens a card in the Josi app with one "Sign in" button that takes them to the provider\'s sign-in page in their browser. Use it whenever the person asks to connect, link, sign in to or add such an account ("connect my Gmail", "add my work calendar", "link Dropbox"). Never send them to a Connections screen. If the provider\'s application is not set up on this Josi yet, the result says so and what to do instead. The result says only that the card is open; a note in this conversation later says whether the account was connected.',
+  parameters: { type: 'object', properties: {
+    provider: { type: 'string', enum: [...OAUTH_PROVIDERS], description: 'Gmail, Google Calendar, Drive, Contacts: google. Outlook, OneDrive, Microsoft 365: microsoft.' },
+  }, required: ['provider'], additionalProperties: false } }, actionClass: null });
 export const CREDENTIAL_CARD_TOOL_NAMES = new Set(CREDENTIAL_CARD_TOOLS.map((t) => t.def.name));
 
 export const CREDENTIAL_CARD_PROMPT = 'Setting up a connector is a conversation: "Set up Google" → say what it needs (from josi_setup_status: a client ID and secret, and the exact redirect URIs) and ask whether they have it. Yes → request_credential_card, then say the card is open and stop. No → offer the steps, with the redirect URIs quoted exactly. '
   + 'The same for GitHub and the other developer services ("got a token, or need help getting one?"), a model\'s API key, the mail server, Telegram, Slack and WhatsApp. Open one card per credential set; never ask for the value in chat and never repeat a value the person pastes anywhere by mistake. '
-  + 'After the card is saved a note appears in this conversation; then offer the next natural step (connect the account, pull something from GitHub, send a test email).';
+  + 'After the card is saved a note appears in this conversation; then offer the next natural step (connect the account, pull something from GitHub, send a test email). '
+  + '"Connect my Google account" (or Gmail, Calendar, Drive, Outlook, OneDrive, Dropbox, Box) → start_account_connection: the person gets a card with one Sign in button. Say the card is open and stop; never tell them to open Connections or any other screen, and never ask for their password.';
 
 export async function executeCredentialCardTool(db: Db, userId: string, name: string, input: Record<string, unknown>, threadId: string | null = null) {
+  if (name === 'start_account_connection') return startAccountConnection(db, userId, input, threadId);
   if (name !== 'request_credential_card') return { ok: false, code: 'unknown_tool' };
   const kind = String(input.kind ?? '') as CredentialKind;
   if (!(CREDENTIAL_KINDS as readonly string[]).includes(kind)) return { ok: false, code: 'unknown_kind', message: `Choose one of ${CREDENTIAL_KINDS.join(', ')}.` };
@@ -168,4 +179,28 @@ export async function executeCredentialCardTool(db: Db, userId: string, name: st
     [userId, prepared.scope, CREDENTIAL_CARD_AREA, prepared.card.title, prepared.card.intro, prepared.method, prepared.path, json({ card: prepared.card, fixed: prepared.fixed }), threadId]);
   return { ok: true, cardId: row.id, state: 'card_open',
     message: `A card titled "${prepared.card.title}" is open in the Josi app (and under Approvals) for the person to fill in: ${prepared.card.fields.map((f) => f.label).join(', ')}. Say it is open and wait; a note here will say when it is saved. Never ask for the value in chat.` };
+}
+
+async function startAccountConnection(db: Db, userId: string, input: Record<string, unknown>, threadId: string | null) {
+  const provider = String(input.provider ?? '').trim().toLowerCase();
+  if (!(OAUTH_PROVIDERS as readonly string[]).includes(provider)) return { ok: false, code: 'bad_provider', message: `Choose one of ${OAUTH_PROVIDERS.join(', ')}.` };
+  const name = providerName(provider);
+  const [user] = await db.query<{ role: string }>('select role from users where id = $1', [userId]);
+  const admin = user?.role === 'super_admin';
+  const client = (await clientStatuses(db)).find((c) => c.provider === provider);
+  const ready = (client?.configured ?? false) || (provider === 'google' && await sharedGoogleAvailable(db).catch(() => false));
+  if (!ready) return { ok: false, code: 'application_not_set_up', message: admin
+    ? `The ${name} application is not set up on this Josi yet, so nobody can sign in with ${name}. Say so in one sentence, give the needs from josi_setup_status, and offer request_credential_card with kind oauth_client.`
+    : `The owner has not set up ${name} on this Josi yet. Tell the person so; only the owner can set it up.` };
+  const path = `/connections/${provider}/start`;
+  const card: CredentialCard = { kind: ACCOUNT_CONNECTION_KIND, provider, title: `Connect ${name}`,
+    intro: `Sign in with ${name} in your browser and allow Josi. You come back here on your own when it is done. Your ${name} password is typed on ${name}'s page only; Josi never sees it.`,
+    fields: [], help: { text: 'What Josi may do with the account stays off until you turn it on by asking.', url: null }, done: `Your ${name} account is connected.` };
+  await db.query(`update settings_change_proposals set state = 'expired' where proposer_user_id = $1 and area = $2 and path = $3 and state in ('proposed', 'approved')`, [userId, CREDENTIAL_CARD_AREA, path]);
+  const [row] = await db.query<{ id: string }>(
+    `insert into settings_change_proposals(proposer_user_id, scope, area, sensitive, title, summary, method, path, body, thread_id)
+     values ($1, 'personal', $2, false, $3, $4, 'POST', $5, $6, $7) returning id`,
+    [userId, CREDENTIAL_CARD_AREA, card.title, card.intro, path, json({ card, fixed: { native: true } }), threadId]);
+  return { ok: true, cardId: row.id, state: 'card_open',
+    message: `A card titled "${card.title}" is open in the Josi app (and under Approvals) with a "Sign in with ${name}" button. Say it is open and wait; a note here will say when the account is connected. Do not describe any other screen.` };
 }

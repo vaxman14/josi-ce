@@ -180,6 +180,103 @@ namespace Josi.Native {
       sheet.Loaded += delegate { sheet.Activate(); var first = inputs.Select(p => p.Item2).FirstOrDefault(); var entry = first as Ui.SecretEntry; if (entry != null) entry.Focus(); else if (first != null) first.Focus(); };
       sheet.ShowDialog();
     }
+    /// "Send to my devices": one file, to another of this person's devices
+    /// (it arrives by itself) or to another person here (they accept first).
+    public static void SendToDevice(Window owner, AppModel model, string path) {
+      var sheet = new Sheet(owner, "Josi", 540, "send-to-device");
+      var outcome = "cancelled";
+      var info = new FileInfo(path);
+      var body = new StackPanel();
+      var problem = Automation.Id(Ui.T("", 13, null, Ui.Error), "josi.send-to-device.error");
+      problem.Visibility = Visibility.Collapsed;
+      string target = null; Wire targets = null; Button go = null; Action render = null;
+      go = Automation.Id(Ui.Pill("Send", async () => {
+        if (target == null) return;
+        go.IsEnabled = false; problem.Visibility = Visibility.Collapsed;
+        try {
+          await model.SendTransfer(path, target.StartsWith("d:") ? target.Substring(2) : null, target.StartsWith("p:") ? target.Substring(2) : null);
+          outcome = "sent"; sheet.Close();
+        } catch (JosiException e) { problem.Text = e.Message; problem.Visibility = Visibility.Visible; go.IsEnabled = true; }
+      }, true), "josi.send-to-device.send");
+      go.IsEnabled = false; go.IsDefault = true;
+      var cancel = Automation.Id(Ui.Pill("Cancel", () => sheet.Close()), "josi.send-to-device.cancel");
+      cancel.IsCancel = true;
+      render = () => {
+        body.Children.Clear();
+        if (targets == null) { body.Children.Add(Ui.Secondary("Looking for your devices…")); return; }
+        var devices = targets["devices"].List.Select(d => new KeyValuePair<string, string>("d:" + d.Id, d["name"].Text)).ToList();
+        var people = targets["people"].List.Select(p => new KeyValuePair<string, string>("p:" + p.Id, p["name"].Text)).ToList();
+        Action<string> pick = key => { target = key; go.IsEnabled = true; render(); };
+        body.Children.Add(Ui.Stack(10,
+          Ui.Caption("Your devices"),
+          devices.Count == 0 ? (UIElement)Ui.Secondary("No other device is signed in to Josi as you yet. Open Josi on it once and it appears here.")
+            : Ui.Chips(devices, target, pick, "josi.send-to-device.target."),
+          people.Count == 0 ? null : Ui.Caption("People here (nothing is saved for them until they accept)"),
+          people.Count == 0 ? null : Ui.Chips(people, target, pick, "josi.send-to-device.target.")));
+      };
+      sheet.Closed += delegate { Automation.PopupResult = "send-to-device:" + outcome; };
+      sheet.Body(Ui.Stack(14,
+        Ui.T("Send a file", 17, FontWeights.SemiBold),
+        Automation.Id(Ui.T(info.Name + " · " + Wires.Bytes(info.Exists ? info.Length : 0), 14), "josi.send-to-device.file"),
+        body, problem,
+        Ui.Caption("To your own device it arrives in Downloads\\Josi by itself. Josi never opens a received file."),
+        Ui.Spread(null, Ui.Row(8, cancel, go))));
+      sheet.Loaded += async delegate {
+        render();
+        try { targets = await model.TransferTargets(); }
+        catch (JosiException e) { targets = Wires.Parse("{}"); problem.Text = e.Message; problem.Visibility = Visibility.Visible; }
+        render();
+      };
+      sheet.ShowDialog();
+    }
+    /// A file another person here wants to send to this person.
+    public static void TransferOffer(Window owner, AppModel model, Wire item) {
+      var sheet = new Sheet(owner, "Josi", 500, "transfer-offer");
+      var outcome = "later";
+      var accept = Automation.Id(Ui.Pill("Accept", () => { outcome = "accepted"; sheet.Close(); model.AcceptTransfer(item); }, true), "josi.transfer-offer.accept");
+      var decline = Automation.Id(Ui.Pill("Decline", () => { outcome = "declined"; sheet.Close(); model.DeclineTransfer(item); }), "josi.transfer-offer.decline");
+      var later = Automation.Id(Ui.Pill("Not now", () => sheet.Close()), "josi.transfer-offer.later");
+      later.IsCancel = true;
+      sheet.Closed += delegate { Automation.PopupResult = "transfer-offer:" + outcome; };
+      sheet.Body(Ui.Stack(14,
+        Automation.Id(Ui.T(item["from"].Text + " wants to send you a file", 17, FontWeights.SemiBold), "josi.transfer-offer.title"),
+        Automation.Id(Ui.T(item["name"].Text + " · " + Wires.Bytes(item["size"].Number), 14), "josi.transfer-offer.file"),
+        Ui.Caption("If you accept, it is saved to Downloads\\Josi on this computer. Josi does not open it."),
+        Ui.Spread(decline, Ui.Row(8, later, accept))));
+      sheet.Loaded += delegate { sheet.Activate(); later.Focus(); };
+      sheet.ShowDialog();
+    }
+    public static bool IsAccountCard(Wire proposal) {
+      return proposal["area"].Text == "credential_card" && proposal["card"]["kind"].Text == "account_connection";
+    }
+    /// "Connect my Google account", asked in conversation: one button that
+    /// opens the provider's sign-in page in the browser. Nothing is typed here.
+    public static void AccountCard(Window owner, AppModel model, Wire proposal) {
+      var card = proposal["card"]; var provider = card["provider"].Text;
+      var name = provider.Length > 0 ? char.ToUpperInvariant(provider[0]) + provider.Substring(1) : "the provider";
+      var sheet = new Sheet(owner, "Josi", 520, "account-card");
+      var outcome = "later";
+      var problem = Automation.Id(Ui.T("", 13, null, Ui.Error), "josi.account-card.error");
+      problem.Visibility = Visibility.Collapsed;
+      Button go = null;
+      go = Automation.Id(Ui.Pill("Sign in with " + name, async () => {
+        go.IsEnabled = false; problem.Visibility = Visibility.Collapsed;
+        try { await model.StartAccountCard(proposal, provider); outcome = "started"; sheet.Close(); }
+        catch (JosiException e) { problem.Text = e.Message; problem.Visibility = Visibility.Visible; go.IsEnabled = true; }
+      }, true), "josi.account-card.sign-in");
+      go.IsDefault = true;
+      var cancel = Automation.Id(Ui.Pill("Not now", () => { sheet.Close(); }), "josi.account-card.later");
+      cancel.IsCancel = true;
+      var decline = Automation.Id(Ui.Pill("Decline", () => { outcome = "declined"; sheet.Close(); model.Run(async () => { await model.DecideSettingsChange(proposal, false); }); }), "josi.account-card.decline");
+      sheet.Closed += delegate { Automation.PopupResult = "account-card:" + outcome; };
+      sheet.Body(Ui.Stack(14,
+        Ui.Row(10, Ui.JosiMark(28), Automation.Id(Ui.T(card["title"].Text, 17, FontWeights.SemiBold), "josi.account-card.title")),
+        Automation.Id(Ui.T(card["intro"].Text, 14), "josi.account-card.intro"),
+        Ui.Caption(card["help"]["text"].Text), problem,
+        Ui.Spread(decline, Ui.Row(8, cancel, go))));
+      sheet.Loaded += delegate { sheet.Activate(); go.Focus(); };
+      sheet.ShowDialog();
+    }
     /// One secret value, typed by the person for their own World. Returns null
     /// when cancelled; the box is cleared either way and the value is never logged.
     public static string AskSecret(Window owner, string title, string detail, string label, string action) {

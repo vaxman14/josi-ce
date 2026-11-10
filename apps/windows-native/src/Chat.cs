@@ -31,7 +31,7 @@ namespace Josi.Native {
     readonly TextBlock hint = Ui.Caption("");
     readonly Voice voice;
     string renderedKey, lastMessageId;
-    bool wasThinking, loadedModel;
+    bool wasThinking, wasAnswering, loadedModel;
     const double StageLineHeight = 200;
     static readonly string[] Acknowledgements = { "I got you.", "Consider it handled. Well, almost.", "On it. Try to contain your excitement.", "Oh, I like this one. Give me a sec.", "Say less." };
     static readonly string[] Suggestions = { "What's on my calendar today?", "Remind me to call Dana", "Draft a note to the team" };
@@ -84,9 +84,17 @@ namespace Josi.Native {
 
       editor = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 42, MaxHeight = 140,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = Brushes.Transparent, BorderThickness = new Thickness(0),
-        FontSize = 15, Padding = new Thickness(8, 10, 8, 8), VerticalAlignment = VerticalAlignment.Bottom };
+        FontSize = 15, Padding = new Thickness(8, 11, 8, 11), VerticalAlignment = VerticalAlignment.Bottom };
       editor.Template = EditorTemplate();
-      Ui.Placeholder(editor, "Message Josi…", Brushes.Transparent);
+      // The hint is a text line laid over the box with the box's own insets
+      // (padding, then the text view's 2 pixels), so it sits exactly where the
+      // caret and the first typed letter sit, on the buttons' centre line.
+      var ask = new TextBlock { Text = "Message Josi…", FontSize = 15, FontFamily = Ui.Font, Foreground = Ui.Muted, IsHitTestVisible = false,
+        Margin = new Thickness(10, 11, 10, 11), VerticalAlignment = VerticalAlignment.Bottom, TextTrimming = TextTrimming.CharacterEllipsis };
+      editor.FontFamily = Ui.Font;
+      editor.TextChanged += delegate { ask.Visibility = editor.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; };
+      var writing = new Grid();
+      writing.Children.Add(ask); writing.Children.Add(editor);
       System.Windows.Automation.AutomationProperties.SetName(editor, "Message Josi");
       Automation.Id(editor, "josi.chat.composer");
       Automation.Id(hint, "josi.chat.hint");
@@ -98,7 +106,7 @@ namespace Josi.Native {
       DockPanel.SetDock(left, Dock.Left); DockPanel.SetDock(right, Dock.Right);
       left.VerticalAlignment = VerticalAlignment.Bottom; right.VerticalAlignment = VerticalAlignment.Bottom;
       attachments.Visibility = Visibility.Collapsed;
-      controls.Children.Add(left); controls.Children.Add(right); controls.Children.Add(editor);
+      controls.Children.Add(left); controls.Children.Add(right); controls.Children.Add(writing);
       var composerStack = new StackPanel();
       composerStack.Children.Add(attachments); composerStack.Children.Add(partial); composerStack.Children.Add(voiceError); composerStack.Children.Add(controls);
       var composer = new Border { Child = composerStack, Padding = new Thickness(8), CornerRadius = new CornerRadius(29),
@@ -637,7 +645,17 @@ namespace Josi.Native {
     void RenderComposer() {
       FollowGhost();
       Automation.BeginScope("chat");
-      editor.IsEnabled = !model.PendingMessage && voice.Mode != VoiceMode.Conversation;
+      var writable = !model.PendingMessage && voice.Mode != VoiceMode.Conversation;
+      var answered = !Thinking && wasAnswering;
+      wasAnswering = Thinking;
+      var reopened = writable && !editor.IsEnabled;
+      editor.IsEnabled = writable;
+      // Typing continues without a click: when the box opens again, and when
+      // Josi finishes answering, the keyboard goes back to it, unless the
+      // person is in another window, the history, or another text box.
+      if ((reopened || answered) && writable && owner.IsActive && !historyOpen
+        && !(Keyboard.FocusedElement is System.Windows.Controls.Primitives.TextBoxBase && Keyboard.FocusedElement != editor) && !(Keyboard.FocusedElement is PasswordBox))
+        Dispatcher.BeginInvoke(new Action(() => { if (editor.IsEnabled && owner.IsActive) editor.Focus(); }), System.Windows.Threading.DispatcherPriority.Input);
       attachments.Children.Clear();
       var attachmentNumber = 0;
       foreach (var item in model.DraftAttachments) {
@@ -652,7 +670,8 @@ namespace Josi.Native {
       voiceError.Text = voice.Error; voiceError.Visibility = voice.Error.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
 
       left.Children.Clear(); right.Children.Clear();
-      var attach = Automation.Id(Ui.RoundButton(Glyph.Plus, "Attach a file or photo", Attach, 42, Ui.Text), "josi.chat.attach");
+      Button attach = null;
+      attach = Automation.Id(Ui.RoundButton(Glyph.Plus, "Attach a file, or send one to a device", () => AttachMenu(attach), 42, Ui.Text), "josi.chat.attach");
       attach.IsEnabled = !model.Busy && !model.PendingMessage && model.DraftAttachments.Count < 10 && voice.Mode == VoiceMode.None;
       var settings = Automation.Id(Ui.PillIcon(Glyph.Chevron, voice.ModelLabel, () => Dialogs.VoiceSettings(owner, model, voice), false, "Voice models and settings"), "josi.chat.voice-settings");
       settings.IsEnabled = voice.Mode == VoiceMode.None;
@@ -679,6 +698,24 @@ namespace Josi.Native {
       hint.Text = model.PendingMessage ? "Delivery is unconfirmed. Retry keeps the same message and attachments." : "Enter to send · Shift + Enter for a new line";
     }
 
+    /// The plus button: attach to this conversation, or send a file to
+    /// another device or person without it entering the conversation.
+    void AttachMenu(Button anchor) {
+      var popup = new System.Windows.Controls.Primitives.Popup { PlacementTarget = anchor, Placement = System.Windows.Controls.Primitives.PlacementMode.Top,
+        StaysOpen = false, AllowsTransparency = true, VerticalOffset = -8 };
+      var file = Automation.Id(Ui.Pill("Attach to this conversation", () => { popup.IsOpen = false; Attach(); }), "josi.chat.attach.file");
+      var send = Automation.Id(Ui.Pill("Send to a device or person…", () => { popup.IsOpen = false; SendToDevice(); }), "josi.chat.attach.send");
+      file.HorizontalAlignment = HorizontalAlignment.Stretch; send.HorizontalAlignment = HorizontalAlignment.Stretch;
+      popup.Child = new Border { Background = Ui.Sidebar, BorderBrush = Ui.Hairline, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(16),
+        Padding = new Thickness(10), Child = Ui.Stack(8, file, send) };
+      popup.IsOpen = true;
+      file.Focus();
+    }
+    void SendToDevice() {
+      var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Choose a file to send to a device or person.", CheckFileExists = true, Multiselect = false };
+      if (dialog.ShowDialog(owner) != true) return;
+      Dialogs.SendToDevice(owner, model, dialog.FileName);
+    }
     void Attach() {
       var dialog = new Microsoft.Win32.OpenFileDialog { Title = "Choose a file or photo to attach to this conversation.", CheckFileExists = true, Multiselect = false };
       if (dialog.ShowDialog(owner) != true) return;

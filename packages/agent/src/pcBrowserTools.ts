@@ -16,7 +16,7 @@ export const PC_BROWSER_TOOLS: ToolSpec[] = [
     description: `Read the browser tab Josi is using on this PC (the one the owner is looking at, or one you opened): its title, address, visible text and the elements you can click or fill, each with an id. Needs the owner's "Browser viewing" permission for that site, or their approval in Josi. ${UNTRUSTED}`,
     parameters: shape({}) }, actionClass: null },
   { def: { name: 'browser_open_page',
-    description: `Open an exact HTTPS address and read the page that loads: in the tab in use, or in a new tab when none is in use; if the browser is closed, Josi starts it with this page. If the site needs a sign-in, tell the owner to sign in in that tab, then read it again. Needs "Browser viewing" permission for the destination site, or the owner's approval. Does not submit anything. ${UNTRUSTED}`,
+    description: `Open an exact HTTPS address and read the page that loads: in the tab in use, or in a new tab when none is in use; if the browser is closed, Josi starts it with this page. It always opens in the browser linked to Josi, whichever browser the owner names, and the result says which page loaded. If the site needs a sign-in, tell the owner to sign in in that tab, then read it again. Needs "Browser viewing" permission for the destination site, or the owner's approval. Does not submit anything. ${UNTRUSTED}`,
     parameters: shape({ url: { type: 'string', maxLength: 2048 } }) }, actionClass: null },
   { def: { name: 'browser_click',
     description: 'Click one element from the latest read of the tab in use. A click can submit, send, delete or buy, so the owner approves each click in Josi unless they turned on Full control. Read the page again afterwards; the receipt alone does not prove what happened.',
@@ -69,7 +69,8 @@ export const PC_BROWSER_ABSENT_PROMPT = 'No web browser with the Josi extension 
 /** Told to the model when the browser is linked but no tab is attached yet. */
 export const PC_BROWSER_LINKED_PROMPT = 'The owner\'s browser is linked to Josi on this PC, but it is not showing a website right now (or it is closed). '
   + 'When they mention a page they have open, call browser_attach_tab (no tab_id means the tab they are looking at), then browser_read_page. '
-  + 'Use browser_list_tabs to name or pick another tab. To go to a site that is not open ("open mercari.com"), call browser_open_page with its https address: it opens a new tab and uses it, and starts the browser first if it is closed. If the site asks for a sign-in, tell the owner to sign in in that tab. Never tell the owner to attach a tab, open the browser or click anything in the browser: use these tools yourself.';
+  + 'Use browser_list_tabs to name or pick another tab. To go to a site that is not open ("open mercari.com"), call browser_open_page with its https address: it opens a new tab and uses it, and starts the browser first if it is closed. If the site asks for a sign-in, tell the owner to sign in in that tab. Never tell the owner to attach a tab, open the browser or click anything in the browser: use these tools yourself. '
+  + 'Josi works in one browser, the linked one (browser_list_tabs names it); pages open in any other browser are invisible. When the owner names a browser ("in Edge"), still open the page with browser_open_page and, if the linked browser is a different one, say so in one sentence. An empty tab list is never a reason to ask the owner to look or to say "use this tab".';
 const ALL_BROWSER_TOOLS = [...PC_BROWSER_LINK_TOOLS, ...PC_BROWSER_TOOLS];
 export const PC_BROWSER_TOOL_NAMES = new Set(ALL_BROWSER_TOOLS.map(tool => tool.def.name));
 /** The prompt piece that matches the offered browser tools ('' for none). */
@@ -170,7 +171,9 @@ export async function executePcBrowserTool(db: Db, owner: string, key: MasterKey
     if (name === 'browser_list_tabs') {
       return { ok: true, browser: browser.family, untrustedContent: true,
         attached: browser.origin ? { origin: browser.origin, title: browser.title } : null,
-        tabs: tabs.map(t => ({ tab_id: t.tabId, site: t.origin, title: t.title, ...(t.active ? { active: true } : {}) })) };
+        tabs: tabs.map(t => ({ tab_id: t.tabId, site: t.origin, title: t.title, ...(t.active ? { active: true } : {}) })),
+        ...(tabs.length || browser.origin ? {} : { note: `Josi is linked to ${browser.family} on this PC, and ${browser.family} shows no website tabs right now. Tabs in any other browser are invisible to Josi. `
+          + `Never ask the owner to look, check or say "use this tab". To go to a site, call browser_open_page: it opens in ${browser.family}. If the owner named a different browser, do the work in ${browser.family} and say in one sentence that ${browser.family} is the browser linked to Josi.` }) };
     }
     let action: PcAction, origin = browser.origin ?? '', description: string, payload: Record<string, unknown>;
     const extra: PcRequirement[] = [];
@@ -180,7 +183,7 @@ export async function executePcBrowserTool(db: Db, owner: string, key: MasterKey
         ? (browser.activeOrigin && Number.isSafeInteger(browser.activeTabId) ? { tabId: browser.activeTabId as number, origin: browser.activeOrigin, title: browser.activeTitle ?? null } : tabs.find(t => t.active))
         : tabs.find(t => t.tabId === wanted) ?? (wanted === browser.activeTabId && browser.activeOrigin ? { tabId: wanted, origin: browser.activeOrigin, title: browser.activeTitle ?? null } : undefined);
       if (!tab) return { ok: false, code: 'tab_not_found',
-        message: wanted === null ? 'The browser is not showing a website right now. Ask the owner to open the page they mean, then try again.'
+        message: wanted === null ? `Josi is linked to ${browser.family}, and ${browser.family} is not showing a website right now; a page open in another browser is invisible to Josi. If you know the address, call browser_open_page (it opens in ${browser.family}). Otherwise tell the owner in one sentence that Josi is linked to ${browser.family} and ask which site they mean. Never ask them to check their tabs.`
           : 'That tab is not open any more. Use browser_list_tabs to see the current tabs.' };
       action = 'browser.view'; origin = tab.origin; description = `Attach the ${browser.family} tab on ${tab.origin} to Josi`;
       payload = { kind: 'attach', tabId: tab.tabId };

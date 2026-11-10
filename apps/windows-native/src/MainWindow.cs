@@ -244,8 +244,12 @@ namespace Josi.Native {
       // A settings change Josi prepared: ask here, in front of whatever is open.
       Model.SettingsChangeProposed += proposal => Dispatcher.BeginInvoke(new Action(() => {
         if (Model.Screen != Screen.Workspace) return;
-        if (proposal["area"].Text == "credential_card") Dialogs.CredentialCard(this, Model, proposal);
+        if (Dialogs.IsAccountCard(proposal)) Dialogs.AccountCard(this, Model, proposal);
+        else if (proposal["area"].Text == "credential_card") Dialogs.CredentialCard(this, Model, proposal);
         else Dialogs.SettingsChange(this, Model, proposal);
+      }), System.Windows.Threading.DispatcherPriority.Background);
+      Model.TransferOffered += item => Dispatcher.BeginInvoke(new Action(() => {
+        if (Model.Screen == Screen.Workspace) Dialogs.TransferOffer(this, Model, item);
       }), System.Windows.Threading.DispatcherPriority.Background);
       InputBindings.Add(new KeyBinding(new Command(() => {
         if (Model.Screen == Screen.Workspace && !Model.Busy) Model.Run(() => Model.NewThread());
