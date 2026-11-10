@@ -74,3 +74,22 @@ Off in the lean beta but still shown on Linux:
 Fix: add one web flags file, for example `apps/web/src/lib/flags.ts`, that mirrors `Flags.cs` with the same section names, and filter the menu and routes through it. The server should also skip starting what's off (executor, browser bridge, channels). Hidden sections stay in the source, as on Mac and Windows.
 
 To decide: anything marked (?) above, plus which of Tasks, Approvals, Conversations, Calendar, Contacts, Vault, Devices, People, Backups and System checkup stay.
+
+## For the next build (noted by Roman, 2026-11-10, beta.11 on gate)
+
+**Installer: the ghost is drawn twice and the second one is broken.** Seen on gate
+(Ubuntu 26.04, sudo-rs, ssh from the Mac's Terminal, 99x30) with
+`curl … | sudo bash`, after answering the questions. The question screen's header
+(ghost + "A few questions, then Josi installs itself.") stays on screen instead of being
+cleared, and the progress screen is drawn under it: its ghost has rows out of place (the
+face is cut by stray lines, the body is shifted), then the step list and the bar. The steps
+and the bar themselves are right, and the install works.
+
+Where to look: `packaging/linux/install-josi-ce-server.sh`, the hand-over from the
+questions (`q`, `q_clear`, the `QH`/`QL` line counts, drawn on fd 5) to the progress
+drawing on stderr, which moves the cursor up by a counted number of rows. Since
+`281f7e3` the questions under sudo-rs are asked on the script's own terminal (the one
+sudo-rs made) instead of the outer one, so check whether that terminal's size and the
+line count still agree, and that the header is cleared before the progress ghost is
+drawn. A 30-row window may also be too short for both. Reproduce by typing through a
+real pty on Ubuntu 26.04; the VM runs use `--yes` and never draw the questions.
