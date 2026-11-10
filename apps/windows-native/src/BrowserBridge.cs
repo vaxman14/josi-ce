@@ -159,11 +159,18 @@ namespace Josi.Native {
               discovered = new Discovery { NativeProfileId = nativeProfileId, Browser = browser, Application = peer["application"].Text, Url = OriginOf(url) };
               return Reply(id, true, Wires.O("profileDiscovered", true));
             }
+            // One browser is linked at a time. A standing link (no tab) from a
+            // different browser, or its remembered tab, waits while another is live,
+            // so several allowed browsers do not knock each other off; only a tab
+            // the person attaches with a click takes over.
+            if (!payload["explicit"].Flag && Live() && link.ProfileId != known["profileId"].Text) return Reply(id, true, Wires.O("standby", true, "family", link.Family));
             if (link != null) { Fail(link.Sent, "replaced"); Fail(link.Queued, "replaced"); }
             link = new Link { Owner = owner, SessionId = Guid.NewGuid().ToString(), ProfileId = known["profileId"].Text, Family = family,
               Browser = browser, Application = known["application"].Text, Profile = known["profile"].Text.Length > 0 ? known["profile"].Text : "Default",
               Url = withTab ? url : null, Title = withTab ? payload["title"].Text : null, TabId = withTab ? payload["attachedTabId"].Integer : -1, LastPoll = DateTime.UtcNow };
             if (withTab) link.Origins.Add(OriginOf(url));
+            // Remembered so a closed browser can be started again from chat.
+            try { LocalSettings.Set("browserLast", Wires.Serialize(Wires.O("family", link.Browser.ToLowerInvariant(), "application", link.Application, "profile", link.Profile))); } catch (IOException) { }
             changed = true;
             return Reply(id, true, Session());
           }
@@ -180,15 +187,15 @@ namespace Josi.Native {
           if (link == null || link.Owner != owner || request["sessionId"].Text != link.SessionId) return Reply(id, false, null);
           if (operation == "browser.poll") {
             link.LastPoll = DateTime.UtcNow;
-            if (link.TabId >= 0) {
-              // The extension reports the attached tab; a tab it no longer has detaches.
-              if (payload["tabId"].IsNull) { link.TabId = -1; link.Url = link.Title = null; changed = true; }
-              else {
-                var origin = OriginOf(payload["url"].Text);
-                if (origin != null && (payload["url"].Text != link.Url || payload["title"].Text != link.Title)) {
-                  link.Url = payload["url"].Text; link.Title = payload["title"].Text; changed = true;
-                  if (!link.Origins.Contains(origin) && link.Origins.Count < 128) link.Origins.Add(origin);
-                }
+            // The extension names the tab Josi uses: the one the person is looking
+            // at, or the one Josi is working in (it holds that while a task runs).
+            if (payload["tabId"].IsNull) { if (link.TabId >= 0) { link.TabId = -1; link.Url = link.Title = null; changed = true; } }
+            else if (payload["tabId"].IsNumber && payload["tabId"].Integer >= 0 && (link.Sent == null || payload["tabId"].Integer == link.TabId)) {
+              if (payload["tabId"].Integer != link.TabId) { link.TabId = payload["tabId"].Integer; changed = true; }
+              var origin = OriginOf(payload["url"].Text);
+              if (origin != null && (payload["url"].Text != link.Url || payload["title"].Text != link.Title)) {
+                link.Url = payload["url"].Text; link.Title = payload["title"].Text; changed = true;
+                if (!link.Origins.Contains(origin) && link.Origins.Count < 128) link.Origins.Add(origin);
               }
             }
             var active = TabFrom(payload["active"], true);
@@ -319,8 +326,14 @@ namespace Josi.Native {
               if (link.Active != null) { browser["activeTabId"] = link.Active.Id; browser["activeOrigin"] = link.Active.Origin; browser["activeTitle"] = link.Active.Title; }
               presence = Wires.O("connected", true, "browser", browser);
             }
-            // No browser linked: Josi is still open on this desktop, so desktop work can run.
-            else presence = Wires.O("connected", true, "browser", Wires.O("family", "desktop", "application", Environment.ProcessPath ?? "", "profile", "Default", "origin", null, "title", null));
+            // No browser running: name the last one you used, with no tabs, so
+            // "open mercari.com" can start it. Without one, desktop work only.
+            else {
+              var last = LastBrowser();
+              presence = last != null
+                ? Wires.O("connected", true, "browser", Wires.O("family", last["family"].Text, "application", last["application"].Text, "profile", last["profile"].Text, "origin", null, "title", null, "tabs", new List<object>()))
+                : Wires.O("connected", true, "browser", Wires.O("family", "desktop", "application", Environment.ProcessPath ?? "", "profile", "Default", "origin", null, "title", null));
+            }
           }
           var json = Wires.Serialize(presence);
           if (json != lastPresence || (DateTime.UtcNow - presenceAt).TotalSeconds >= 10) {
@@ -363,6 +376,14 @@ namespace Josi.Native {
     async Task<Tuple<bool, object>> Dispatch(Wire request) {
       var payload = request["payload"]; var scope = request["requirements"].List.Select(r => r["scope"]).FirstOrDefault() ?? Wire.Null;
       Pending pending;
+      // Opening a page while the browser is closed starts it with that page,
+      // then reads the page once the extension has linked and shows it.
+      var launched = false;
+      if (payload["kind"].Text == "open" && !Linked) {
+        var started = await Launch(scope, payload["url"].Text);
+        if (started != null) return started;
+        launched = true;
+      }
       lock (gate) {
         Func<string, Tuple<bool, object>> refuse = code => Tuple.Create(false, (object)Wires.O("code", code));
         if (!Live()) return refuse("browser_not_linked");
@@ -381,6 +402,9 @@ namespace Josi.Native {
           if (!link.Origins.Contains(target)) link.Origins.Add(target);
           command["kind"] = "attach"; command["tabId"] = tab.Id; command["origin"] = target;
           pending.Activity = "Attaching a tab on " + site;
+        } else if (kind == "open" && launched && link.TabId >= 0 && OriginOf(link.Url) == target) {
+          // The browser opened the page itself; read it.
+          command["kind"] = "inspect"; command["origin"] = target; command["maxOutputBytes"] = ObservationBytes; pending.Activity = "Reading " + site;
         } else if (kind == "open") {
           if (OriginOf(payload["url"].Text) != target || !payload["url"].Text.StartsWith("https://", StringComparison.Ordinal)) return refuse("invalid_page");
           if (!link.Origins.Contains(target)) link.Origins.Add(target);
@@ -426,6 +450,37 @@ namespace Josi.Native {
         return Tuple.Create(false, (object)Wires.O("code", "browser_not_responding"));
       }
       return pending.Done.Task.Result;
+    }
+
+    /// The browser you last linked, while it is still one you allowed.
+    Wire LastBrowser() {
+      try {
+        var last = Wires.Parse(LocalSettings.Get("browserLast", "null"));
+        if (last.IsNull || Allowed().All(a => !string.Equals(a["application"].Text, last["application"].Text, StringComparison.OrdinalIgnoreCase))) return null;
+        return File.Exists(last["application"].Text) ? last : null;
+      } catch (Exception) { return null; }
+    }
+    /// Starts the approved browser with the approved https page and waits for
+    /// the extension to link and show it. Returns a refusal, or null when ready.
+    async Task<Tuple<bool, object>> Launch(Wire scope, string url) {
+      Func<string, Tuple<bool, object>> refuse = code => Tuple.Create(false, (object)Wires.O("code", code));
+      var last = LastBrowser(); var target = scope["target"].Text;
+      if (last == null || !string.Equals(scope["application"].Text, last["application"].Text, StringComparison.OrdinalIgnoreCase)) return refuse("browser_not_linked");
+      if (OriginOf(url) != target || !url.StartsWith("https://", StringComparison.Ordinal)) return refuse("invalid_page");
+      DesktopExecutor.Current.BeginExternal("Opening " + new Uri(target).Host);
+      try {
+        var start = new System.Diagnostics.ProcessStartInfo(last["application"].Text) { UseShellExecute = false };
+        start.ArgumentList.Add(url);
+        System.Diagnostics.Process.Start(start)?.Dispose();
+        var deadline = DateTime.UtcNow.AddSeconds(40);
+        while (DateTime.UtcNow < deadline) {
+          await Task.Delay(500);
+          if (DesktopExecutor.Current.Blocked) return refuse("paused");
+          lock (gate) if (Live() && link.TabId >= 0 && OriginOf(link.Url) == target) return null;
+        }
+        return refuse("browser_not_responding");
+      } catch (Exception e) when (e is System.ComponentModel.Win32Exception || e is InvalidOperationException) { return refuse("browser_did_not_start"); }
+      finally { DesktopExecutor.Current.EndExternal(); }
     }
 
     /// The file for an approved upload, read once from the folder the owner

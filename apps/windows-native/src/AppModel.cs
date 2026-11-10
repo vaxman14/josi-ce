@@ -309,7 +309,7 @@ namespace Josi.Native {
     public async Task StartConnection(string provider, string connectionId) {
       var api = Api; if (api == null) return;
       AppLinks.Register();
-      var body = Wires.O("native", true);
+      var body = Wires.O("native", true, "poll", true);
       if (!string.IsNullOrEmpty(connectionId)) body["connectionId"] = connectionId;
       var result = await api.Request("/connections/" + Uri.EscapeDataString(provider) + "/start", "POST", body);
       Uri url;
@@ -317,9 +317,58 @@ namespace Josi.Native {
         throw new JosiException("The server did not return a usable sign-in address for " + provider + ".");
       var state = Query(url, "state");
       if (!Regex.IsMatch(state, "^[A-Za-z0-9_-]{20,512}$")) throw new JosiException("The server could not start the connection.");
-      connectionStates.Add(state);
+      // A server that keeps the provider's answer is asked for it; an older one
+      // sends the browser back through a josi:// link instead.
+      var asked = result["poll"].Flag;
+      if (!asked) connectionStates.Add(state);
       ModelText.Open(url);
       Activity = ""; Error = "";
+      if (asked) Run(() => AwaitConnection(api, provider, state));
+    }
+
+    /// Asks the server every two seconds whether the browser has come back,
+    /// and finishes the connection with this session when it has.
+    async Task AwaitConnection(JosiApi api, string provider, string state) {
+      var until = DateTime.UtcNow.AddMinutes(10);
+      while (DateTime.UtcNow < until) {
+        await Task.Delay(2000);
+        if (Api != api) return;
+        Wire answer;
+        try { answer = await api.Request("/connections/" + provider + "/native/complete", "POST", Wires.O("state", state)); }
+        catch (JosiException e) {
+          if (e.Status != 409) continue;
+          await ConnectionOutcome(api, provider, ConnectionProblem(e.Message));
+          throw new JosiException(ConnectionProblem(e.Message));
+        }
+        if (answer["waiting"].Flag) continue;
+        await ConnectionOutcome(api, provider, null);
+        return;
+      }
+      await ConnectionOutcome(api, provider, "The sign-in was not finished in the browser. Start again.");
+    }
+    async Task ConnectionOutcome(JosiApi api, string provider, string error) {
+      string cardId; accountCards.TryGetValue(provider, out cardId); accountCards.Remove(provider);
+      if (cardId != null) await ReportAccountCard(api, cardId, error);
+      var handler = ConnectionFinished; if (handler != null) handler();
+    }
+
+    /// The sign-in card Josi opened in conversation: claims it, opens the
+    /// provider's page, and remembers the card so the outcome is reported to
+    /// the conversation when the browser comes back.
+    readonly Dictionary<string, string> accountCards = new Dictionary<string, string>();
+    public async Task StartAccountCard(Wire proposal, string provider) {
+      var api = Api; if (api == null) throw new JosiException("Not signed in.");
+      if (!Regex.IsMatch(provider, "^(google|microsoft|dropbox|box)$")) throw new JosiException("Josi does not know that provider. Ask her to open the card again.");
+      if (proposal["state"].Text != "approved") {
+        try { await api.Request("/settings-changes/" + api.Uuid(proposal.Id) + "/decide", "POST", Wires.O("approve", true)); }
+        catch (JosiException e) { if (e.Status != 409) throw; }
+      }
+      await StartConnection(provider, null);
+      accountCards[provider] = proposal.Id;
+    }
+    async Task ReportAccountCard(JosiApi api, string id, string error) {
+      try { await api.Request("/settings-changes/" + api.Uuid(id) + "/applied", "POST", error == null ? Wires.O("ok", true) : Wires.O("ok", false, "error", error)); }
+      catch (JosiException) { }
     }
 
     public async Task CompleteConnection(string link) {
@@ -330,10 +379,14 @@ namespace Josi.Native {
       if (api == null || !connectionStates.Remove(state)) throw new JosiException("That connection was not started from this Josi window. Start it again from Connections.");
       if (!Regex.IsMatch(provider, "^(google|microsoft|dropbox|box)$")) throw new JosiException("Josi received a connection link it does not recognise.");
       var declined = Query(uri, "error").Length > 0;
+      string cardId; accountCards.TryGetValue(provider, out cardId); accountCards.Remove(provider);
       try {
         await api.Request("/connections/" + provider + "/native/complete", "POST", Wires.O("state", state, "code", Query(uri, "code"), "declined", declined));
+        if (cardId != null) await ReportAccountCard(api, cardId, null);
       } catch (JosiException e) {
-        throw new JosiException(ConnectionProblem(e.Message));
+        var why = ConnectionProblem(e.Message);
+        if (cardId != null) await ReportAccountCard(api, cardId, why);
+        throw new JosiException(why);
       } finally { var handler = ConnectionFinished; if (handler != null) handler(); }
     }
     static string ConnectionProblem(string reason) {
@@ -363,6 +416,38 @@ namespace Josi.Native {
       var files = pendingShares.ToList(); pendingShares.Clear();
       Section = "chat";
       Run(async () => { foreach (var path in files) await AttachFile(path); });
+    }
+    // ------------------------------------------------ send to my devices
+    /// Raised with a file another person offers; the window asks Accept or Decline.
+    public event Action<Wire> TransferOffered;
+    public void OfferTransfer(Wire item) {
+      var handler = TransferOffered;
+      if (handler != null) handler(item);
+      else Notifications.Show(item["from"].Text + " wants to send you a file", item["name"].Text);
+    }
+    /// My other devices and the other people here.
+    public Task<Wire> TransferTargets() {
+      var api = Api; if (api == null) throw new JosiException("Not signed in.");
+      return api.Request("/device-transfers/devices?deviceId=" + JosiApi.DeviceId);
+    }
+    public async Task SendTransfer(string path, string toDevice, string toUser) {
+      var api = Api; if (api == null) throw new JosiException("Not signed in.");
+      var to = toDevice != null ? "toDevice=" + Uri.EscapeDataString(toDevice) : "toUser=" + api.Uuid(toUser);
+      await api.UploadFiles("/device-transfers?" + to + "&fromDevice=" + JosiApi.DeviceId, "file", new[] { path }, 25L * 1024 * 1024);
+      Notifications.Show("File sent", toDevice != null ? "It arrives when Josi is open on that device." : "It waits until they accept it.");
+      lastNotificationCheck = DateTime.MinValue;
+    }
+    public async void AcceptTransfer(Wire item) {
+      var api = Api; if (api == null) return;
+      try {
+        await api.Request("/device-transfers/" + api.Uuid(item.Id) + "/accept", "POST", Wires.O("deviceId", JosiApi.DeviceId));
+        await watcher.Receive(api, item);
+      } catch (JosiException e) { Notifications.Show("The file was not received", e.Message); }
+    }
+    public async void DeclineTransfer(Wire item) {
+      var api = Api; if (api == null) return;
+      try { await api.Request("/device-transfers/" + api.Uuid(item.Id) + "/decline", "POST", Wires.O()); }
+      catch (JosiException) { }
     }
     // ------------------------------------------ settings changes by talking
     /// Raised on the UI thread with a proposal this person can make live; the

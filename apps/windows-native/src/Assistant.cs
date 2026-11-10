@@ -34,12 +34,13 @@ namespace Josi.Native {
         foreach (var p in changes) {
           var proposal = p; var id = p.Id; var administrator = p["scope"].Text == "administrator";
           var items = new List<UIElement> {
-            Ui.Row(10, ModelText.Pill(p["state"].Text == "approved" ? "Approved, applying" : administrator ? "Administrator setting" : p["mine"].Flag ? "Your setting" : p["proposer"].Text + "'s setting", p["state"].Text == "approved" ? Ui.Green : Ui.Accent),
+            Ui.Row(10, ModelText.Pill(Dialogs.IsAccountCard(p) ? "Account sign-in" : p["state"].Text == "approved" ? "Approved, applying" : administrator ? "Administrator setting" : p["mine"].Flag ? "Your setting" : p["proposer"].Text + "'s setting", p["state"].Text == "approved" ? Ui.Green : Ui.Accent),
               p["sensitive"].Flag ? ModelText.Pill("Sensitive", Ui.Muted) : null),
             Ui.Copyable(p["summary"].Text),
             Ui.Caption("Proposed " + Wires.Date(p["createdAt"].Text) + (p["mine"].Flag ? "" : " by " + p["proposer"].Text) + " · expires " + Wires.Date(p["expiresAt"].Text)) };
           var actions = Ui.Wrap();
-          if (p["canApprove"].Flag && p["area"].Text == "credential_card") actions.Children.Add(Ui.Pill("Fill in", () => { Dialogs.CredentialCard(owner, model, proposal); StartLoad(); }, true));
+          if (Dialogs.IsAccountCard(p) && p["mine"].Flag) actions.Children.Add(Ui.Pill("Sign in", () => { Dialogs.AccountCard(owner, model, proposal); StartLoad(); }, true));
+          else if (p["canApprove"].Flag && p["area"].Text == "credential_card") actions.Children.Add(Ui.Pill("Fill in", () => { Dialogs.CredentialCard(owner, model, proposal); StartLoad(); }, true));
           else if (p["canApprove"].Flag) actions.Children.Add(Ui.Pill(administrator || p["mine"].Flag ? "Approve and Apply" : "Approve", () => Perform(async (api, stamp) => { string secret = null; if (proposal["sensitive"].Flag) { secret = Dialogs.AskPassword(owner, "Confirm to approve: " + proposal["title"].Text, proposal["summary"].Text, "Approve"); if (secret == null) return; } note = await model.DecideSettingsChange(proposal, true, secret); }), true));
           if (p["canDeny"].Flag) actions.Children.Add(Ui.Pill("Decline", () => Perform(async (api, stamp) => { note = await model.DecideSettingsChange(proposal, false); })));
           if (!p["canApprove"].Flag && p["state"].Text == "proposed") items.Add(Ui.Caption(administrator ? "Waiting for the super-admin." : "Waiting for the super-admin's consent; your Josi applies it after that."));

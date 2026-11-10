@@ -57,8 +57,8 @@ export function pcControlRoutes(ctx:Ctx):Router {
       availability:browser?'The PC service on this Linux server is connected and working as its chosen Linux user.':'Permissions can be saved here. Josi works on this server once its PC service is paired (ask Josi to control this server) and running.',
       uac:'Administrator commands are not available on a Linux server.'});
     return res.json({...await control(req).snapshot(req.user!.id),pcId:control(req).pcId,executorAvailable:!!browser,browser,
-      availability:browser?'The Josi app on this PC is connected'+(browser.origin?' with a '+browser.family+' tab attached ('+browser.origin+').':browser.family==='desktop'?'. No browser is linked.':', and its '+browser.family+' browser is linked with no tab attached.')
-        :'Permissions can be saved here. Browser control starts when the Josi app is open and a tab is attached with the Josi browser extension.',
+      availability:browser?'The Josi app on this PC is connected'+(browser.origin?' with a '+browser.family+' browser in use ('+browser.origin+').':browser.family==='desktop'?'. No browser is linked.':', and its '+browser.family+' browser is linked.')
+        :'Permissions can be saved here. Browser control starts when the Josi app is open and the Josi browser extension is installed.',
       uac:'Windows UAC always requires its own approval. Josi cannot approve future prompts.'});
   }));
   // The app makes its PC known as soon as the owner signs in, before pairing

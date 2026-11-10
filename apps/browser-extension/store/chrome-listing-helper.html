@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Chrome listing helper</title>
+<style>
+body{font:15px "Segoe UI",sans-serif;background:#1b1022;color:#f3ecf7;max-width:860px;margin:24px auto;padding:0 16px}
+h1{color:#eec978;font-size:22px} h2{font-size:16px;margin:26px 0 6px;color:#eec978}
+.row{background:#2a1736;border:1px solid #5a3d6e;border-radius:10px;padding:12px;margin:8px 0}
+.label{display:flex;justify-content:space-between;align-items:center;font-weight:600;margin-bottom:6px}
+pre{white-space:pre-wrap;margin:0;font:14px "Segoe UI",sans-serif;color:#e2d6ec}
+button{background:#eec978;color:#241330;border:0;border-radius:8px;padding:6px 14px;font-weight:600;cursor:pointer}
+button.done{background:#7bd3a0}
+.note{color:#b7a6c4;font-size:13px}
+</style></head><body>
+<h1>Chrome Web Store: Josi Browser Control</h1>
+<p class="note">Copy each box into the matching field. Images to upload are in this same folder (icon-128.png, screenshot-1…, screenshot-2…, promo-tile-440x280.png). Visibility: <b>Unlisted</b>.</p>
+
+<h2>Store listing tab</h2>
+<div class="row"><div class="label">Description<button>Copy</button></div><pre>Josi Browser Control connects your browser to Josi, the assistant app on your computer, so Josi can do things on the web for you.
+
+Ask in Josi's chat and it happens in your browser:
+• "What's on this page?": Josi reads the tab you are looking at.
+• "Open mercari.com": Josi opens it in a new tab, and starts your browser if it is closed.
+• "Describe each photo": Josi looks at pictures on the page, one at a time.
+• Fill in fields, choose options, click, scroll, download and upload files, when you allow it.
+
+You stay in charge:
+• Every site and action follows the permissions you set in Josi's PC Control, or Josi asks you in chat first.
+• It never reads or fills passwords, payment details or one-time codes.
+• "Take control" in the popup stops Josi in this browser at once; Pause and Stop in Josi stop everything.
+• No servers of its own and no ads. Page content goes only to the Josi app on your computer, which you run.
+
+Requires the Josi app (heyjosi.com) installed and open on the same computer. Works in Chrome, Edge, Brave and Firefox.</pre></div>
+<div class="row"><div class="label">Category<button>Copy</button></div><pre>Productivity</pre></div>
+<div class="row"><div class="label">Language<button>Copy</button></div><pre>English (United States)</pre></div>
+<div class="row"><div class="label">Official URL / Homepage URL<button>Copy</button></div><pre>https://heyjosi.com</pre></div>
+<div class="row"><div class="label">Support URL<button>Copy</button></div><pre>https://help.heyjosi.com</pre></div>
+
+<h2>Privacy tab</h2>
+<div class="row"><div class="label">Single purpose<button>Copy</button></div><pre>Lets the Josi assistant app on the same computer read and act on web pages in this browser when the user asks, within the user's Josi permissions.</pre></div>
+<div class="row"><div class="label">nativeMessaging<button>Copy</button></div><pre>Talks to the Josi app on the same computer; nothing else.</pre></div>
+<div class="row"><div class="label">tabs<button>Copy</button></div><pre>Knows which tab the user is looking at, and the site and title of open tabs so the user can say "go to my Gmail tab" in Josi.</pre></div>
+<div class="row"><div class="label">activeTab<button>Copy</button></div><pre>Acts on the tab the user is looking at when they ask Josi.</pre></div>
+<div class="row"><div class="label">scripting<button>Copy</button></div><pre>Reads the page and performs the requested action (fill, click, choose, scroll, upload) in the tab Josi uses.</pre></div>
+<div class="row"><div class="label">storage<button>Copy</button></div><pre>Remembers this browser's random id and, until the browser closes, which tab Josi is using.</pre></div>
+<div class="row"><div class="label">alarms<button>Copy</button></div><pre>Reconnects to the Josi app every 30 seconds while the browser is open, so it works again after Josi restarts.</pre></div>
+<div class="row"><div class="label">downloads<button>Copy</button></div><pre>Saves a file from the site in use into the Downloads folder when the user asks Josi and allows it.</pre></div>
+<div class="row"><div class="label">Host permission<button>Copy</button></div><pre>Josi opens or reads whichever site the user names in chat; asking per site at install time is not possible for sites named later. Every site and action is still allowed or approved by the user in Josi before anything is read or done.</pre></div>
+<div class="row"><div class="label">Remote code<button>Copy</button></div><pre>No, I am not using remote code</pre></div>
+<div class="row"><div class="label">Privacy policy URL<button>Copy</button></div><pre>https://heyjosi.com/browser-extension/privacy/</pre></div>
+<p class="note">Data usage: tick <b>Website content</b> and <b>Web history</b> (site and title of open tabs). Then the three certifications (not sold, not unrelated use, not creditworthiness): those are yours.</p>
+
+<h2>Test instructions (Distribution / reviewer notes, if asked)</h2>
+<div class="row"><div class="label">Notes for reviewers<button>Copy</button></div><pre>Requires the Josi desktop app (free, https://heyjosi.com) on the same computer; the extension talks only to that app over native messaging and has no servers. Without the app, the popup says "Josi is not open on this computer". Passwords, payment and one-time-code fields are excluded in page-agent.js (sensitive()). Source: https://github.com/vaxman14/josi-ce/tree/redesign/windows-lean-beta/apps/browser-extension/src</pre></div>
+
+<script>
+for (const b of document.querySelectorAll('button')) b.addEventListener('click', async () => {
+  await navigator.clipboard.writeText(b.closest('.row').querySelector('pre').textContent);
+  b.textContent = 'Copied'; b.classList.add('done'); setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('done'); }, 1500);
+});
+</script>
+</body></html>

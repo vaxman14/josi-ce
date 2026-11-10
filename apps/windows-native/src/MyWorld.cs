@@ -41,7 +41,7 @@ namespace Josi.Native {
       var kinds = world["kinds"].List;
       var options = new List<string> { "all", "Everything" };
       foreach (var k in kinds) { options.Add(k["kind"].Text); options.Add(k["plural"].Text); }
-      Ui.Add(page, Ui.Segments(Ui.Options(options.ToArray()), kindFilter, k => { kindFilter = k; Render(); }), 20);
+      Ui.Add(page, Ui.Chips(Ui.Options(options.ToArray()), kindFilter, k => { kindFilter = k; Render(); }, "josi.my-world.kind."), 20);
       var items = world["items"].List.Where(i => kindFilter == "all" || i["kind"].Text == kindFilter).ToList();
       if (items.Count == 0) Ui.Add(page, Ui.CardBox("Nothing here yet", Ui.Secondary("Tell Josi about your life (\"I just bought a 2026 Ford Explorer\", \"Dana is my daughter\") or use Add. Secret fields, like a plate or a card number, are typed into a protected box, never into the chat.")), 20);
       foreach (var item in items) Ui.Add(page, ItemCard(item, unlocked), 20);
@@ -92,22 +92,21 @@ namespace Josi.Native {
       var id = item.Id; var spec = Spec(item["kind"].Text); var label = item["label"].Text;
       var lines = new List<UIElement> { Ui.Caption(spec["label"].Text) };
       var fields = item["fields"].Raw as IDictionary<string, object>;
-      if (fields != null) foreach (var pair in fields) lines.Add(Ui.Spread(Ui.Caption(LabelOf(spec, pair.Key)), Ui.T(Convert.ToString(pair.Value) ?? "", 14)));
+      if (fields != null) foreach (var pair in fields) lines.Add(Ui.Fact(LabelOf(spec, pair.Key), Ui.T(Convert.ToString(pair.Value) ?? "", 14)));
       var dates = item["dates"].Raw as IDictionary<string, object>;
-      if (dates != null) foreach (var pair in dates) lines.Add(Ui.Spread(Ui.Caption(LabelOf(spec, pair.Key)), Ui.T(Convert.ToString(pair.Value) ?? "", 14)));
+      if (dates != null) foreach (var pair in dates) lines.Add(Ui.Fact(LabelOf(spec, pair.Key), Ui.T(Convert.ToString(pair.Value) ?? "", 14)));
       var secretKeys = item["secretKeys"].List.Select(k => k.Text).ToList();
       var set = item["secretsSet"].List.Select(k => k.Text).ToList();
       foreach (var key in secretKeys) {
         var fieldKey = key; var fieldLabel = LabelOf(spec, key); var isSet = set.Contains(key);
-        var actions = Ui.Row(6,
+        var actions = Ui.Row(6, Ui.T(isSet ? "Saved, hidden" : "Not set", 14, null, isSet ? Ui.Text : Ui.Muted),
           isSet && unlocked ? Ui.Pill("Show", () => Reveal(id, fieldKey, fieldLabel, label)) : null,
           Ui.Pill(isSet ? "Replace…" : "Set…", () => SetSecret(id, fieldKey, fieldLabel, label)),
           isSet ? Ui.Danger("Clear", () => { if (Dialogs.Confirm(owner, "Clear " + fieldLabel + "?", "The saved value is removed from your World.", "Clear")) Perform(async (api, stamp) => { await api.Request("/my-world/items/" + api.Uuid(id) + "/secrets/" + Uri.EscapeDataString(fieldKey), "DELETE", null); }); }) : null);
-        lines.Add(Ui.Spread(Ui.Caption(fieldLabel + (isSet ? " · set, secret" : " · not set")), actions));
+        lines.Add(Ui.Fact(fieldLabel, actions));
       }
       if (secretKeys.Any(set.Contains) && !unlocked) lines.Add(UnlockRow());
-      lines.Add(Ui.Caption("Updated " + Wires.Date(item["updatedAt"].Text)));
-      lines.Add(Ui.Wrap(Ui.Danger("Remove…", () => {
+      lines.Add(Ui.Spread(Ui.Caption("Updated " + Wires.Date(item["updatedAt"].Text)), Ui.Danger("Remove…", () => {
         if (Dialogs.Confirm(owner, "Remove " + label + " from your World?", "Its facts, its secret fields and what Josi knows about it are removed.", "Remove"))
           Perform(async (api, stamp) => { await api.Request("/my-world/items/" + api.Uuid(id), "DELETE", null); note = "Removed " + label + "."; });
       })));

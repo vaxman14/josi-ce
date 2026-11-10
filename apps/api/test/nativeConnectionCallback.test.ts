@@ -141,6 +141,45 @@ describe('a native handshake, coming back with no session', () => {
   });
 });
 
+describe('a native handshake the app asks about, with no link back', () => {
+  async function startPolled(token = session) {
+    const res = await fetch(`${base}/api/connections/google/start`, { method: 'POST', headers: bearer(token), body: JSON.stringify({ native: true, poll: true }) });
+    const body = await res.json() as { url: string; poll?: boolean };
+    expect(body.poll).toBe(true);
+    return new URL(body.url).searchParams.get('state')!;
+  }
+
+  it('waits, shows the browser a plain page, then finishes for the session that started it', async () => {
+    const state = await startPolled();
+    const early = await complete(session, { state });
+    expect(early.status).toBe(202);
+    expect(await early.json()).toEqual({ waiting: true });
+    const res = await callback(`state=${encodeURIComponent(state)}&code=provider-code`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+    const page = await res.text();
+    expect(page).toContain('go back to Josi');
+    expect(page).not.toContain('provider-code');
+    expect(page).not.toContain(state);
+    expect(providerCalls).toEqual([]);
+    const stolen = await complete(otherSession, { state });
+    expect(stolen.status).toBe(409);
+    expect(await connections()).toHaveLength(0);
+    const done = await complete(session, { state });
+    expect(done.status).toBe(200);
+    expect((await connections()).map(row => row.owner_user_id)).toEqual([userId]);
+    expect((await complete(session, { state })).status).toBe(409);
+  });
+
+  it('reports a refusal at the provider', async () => {
+    const state = await startPolled();
+    expect((await callback(`state=${encodeURIComponent(state)}&error=access_denied`)).status).toBe(200);
+    const done = await complete(session, { state });
+    expect(done.status).toBe(409);
+    expect((await done.json() as { reason: string }).reason).toBe('declined');
+  });
+});
+
 describe('everything else without a session', () => {
   it('refuses an unknown, missing or oversized state', async () => {
     for (const query of ['state=made-up-state&code=provider-code', 'code=provider-code', '', `state=${'a'.repeat(600)}&code=provider-code`]) {

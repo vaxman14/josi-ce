@@ -160,13 +160,13 @@ export async function upsertConnection(
       ? (await tx.query<ConnectionRow>(`update connections set meta = coalesce(meta, jsonb_build_object()) || $2 where id = $1 returning *`, [rows[0].id, json({ oauthClient: args.oauthClient ?? null })]))[0]
       : rows[0];
 
-    // Record which capabilities the provider now covers. A normal first connect
-    // leaves the default read bundle off: consent to CONNECT is not consent to
-    // ACT. An explicitly requested write/storage capability is different: the
-    // owner pressed "Approve at provider" for that exact switch, so returning
-    // from a successful incremental-consent trip must finish turning it on.
-    // Otherwise the UI sends them through consent and then leaves the switch off,
-    // which was the live Calendar-write failure reproduced on 2026-09-04.
+    // Record which capabilities the provider now covers. A capability the
+    // provider covers for the first time starts ON: the owner decided
+    // (2026-11-09) that connecting an account means Josi may use it, and that
+    // each switch is there to turn things off afterwards. A switch the person
+    // already set is theirs: a reconnect never turns one back on, except the
+    // one they just sent through "Approve at provider". What an administrator
+    // switched off for everyone stays off for everyone but the owner.
     const covered = grantedCapabilities(args.provider, grantedScopes);
     await tx.query(`update connection_capabilities set enabled=false,scopes_granted_at=null where connection_id=$1 and not(capability=any($2::text[]))`,[connection.id,covered]);
     for (const capability of covered) {
@@ -176,11 +176,13 @@ export async function upsertConnection(
         && (spec?.kind === 'write' || spec?.connectOptIn === true);
       await tx.query(
         `insert into connection_capabilities (connection_id, capability, enabled, scopes_granted_at)
-         values ($1, $2, $3, now())
+         values ($1, $2, (not exists (select 1 from admin_capability_policy p where p.capability = $2 and not p.allowed)
+                 or exists (select 1 from users u where u.id = $4 and u.role = 'super_admin')), now())
          on conflict (connection_id, capability) do update set
            scopes_granted_at = now(),
-           enabled = connection_capabilities.enabled or excluded.enabled`,
-        [connection.id, capability, enableAfterExplicitConsent],
+           enabled = case when connection_capabilities.scopes_granted_at is null then excluded.enabled
+                          else connection_capabilities.enabled or $3 end`,
+        [connection.id, capability, enableAfterExplicitConsent, args.ownerUserId],
       );
     }
 
@@ -517,11 +519,11 @@ export async function connectNextcloud(
     // The one capability this provider has, granted immediately — there is no
     // incremental-scope dance to model: the app password the person generated
     // either works for WebDAV or it does not, and there is nothing narrower to
-    // ask Nextcloud for. Still OFF by default (M32's "consent to connect is not
-    // consent to act" applies here exactly as it does to an OAuth grant).
+    // ask Nextcloud for. It starts ON, like every other newly connected account;
+    // a switch the person already set stays as they left it.
     await tx.query(
       `insert into connection_capabilities (connection_id, capability, enabled, scopes_granted_at)
-       values ($1, 'nextcloud.files.read', false, now())
+       values ($1, 'nextcloud.files.read', true, now())
        on conflict (connection_id, capability) do update set scopes_granted_at = now()`,
       [connection.id],
     );

@@ -583,7 +583,7 @@ namespace Josi.Native {
         Ui.T("Josi works in your current Windows session and in browser tabs you explicitly attach. It does not create a separate desktop, virtual machine or browser profile, and your browser sign-ins stay in your browser."),
         model.IsAdministrator
           ? Ui.T("Desktop control is ready while this app is open: Josi can list windows, read a program's controls, take screenshots, click, type, press keys and open programs, within the permissions under PC Control (or Full control). " +
-              (BrowserBridge.Current.Attached ? "A " + BrowserBridge.Current.AttachedBrowser + " tab is attached, so browser control is ready too." : BrowserBridge.Current.Linked ? BrowserBridge.Current.AttachedBrowser + " is linked; say \"use this tab\" in chat to attach one." : "Open your browser with the Josi extension for browser control."), 14)
+              (BrowserBridge.Current.Linked ? BrowserBridge.Current.AttachedBrowser + " is linked, so Josi can use your browser too." : "Install the Josi browser extension and Josi can use your browser too."), 14)
           : Ui.T("Desktop and browser control on this PC are run by the administrator's Josi app.", 14),
         Ui.Caption("Who is in control is always shown at the top of the window, with Pause and Stop. Moving your mouse or typing stops Josi immediately for 20 seconds; Josi reads a window again before every next step rather than assuming its last action worked."),
         model.IsAdministrator ? Ui.Pill("Open PC Control", () => model.Section = "pc-control") : null), 20);

@@ -28,20 +28,24 @@ function webUrl(value) {
 // reconnect (Josi went away; linking again), stopped (you took control here).
 const STATUS = {
   off: 'Josi is not open on this computer. Open Josi and this browser links by itself.',
-  offAttached: 'Josi is not open. The attached tab attaches again by itself when Josi is back.',
+  offAttached: 'Josi is not open. It picks up where it left off when Josi is back.',
   unknown: 'Josi found this browser. Allow it in Josi under PC Control; it links by itself after that.',
-  linked: 'Linked to Josi. No tab is attached: say "use this tab" in Josi, or attach this tab here.',
-  attached: 'This tab is attached. Josi acts on it only with your permissions in Josi.',
-  attachedElsewhere: 'Another tab is attached to Josi.',
+  linked: 'Linked to Josi. Open a website and Josi uses the tab you are looking at.',
+  attached: 'Josi uses the tab you are looking at (or one it opened), only with your permissions in Josi.',
+  attachedElsewhere: 'Josi is working in another tab right now; it follows the tab you are looking at again when it is done.',
   paused: 'Josi is paused; resume in Josi.',
   reconnect: 'Reconnecting to Josi…',
   stopped: 'You have control. Josi will not use this browser until you resume.',
+  standby: 'Josi is using another browser right now. Click "Use this browser" to switch Josi here.',
   site: 'Josi asked to use this tab. Click "Attach this tab" once to let Josi use this site.',
   unsupported: 'Josi cannot use this kind of tab. Open a website to attach it.',
 };
 let channel = null, workspace = null, phase = 'off', hostPaused = false;
 let linking = false, polling = false, generation = 0, pollTimer = null, retryTimer = null, lastClock = Date.now();
 let attachedTabId = null, stopped = false, askedSite = null;
+// While Josi works (and two minutes after its last step) it stays on its tab;
+// otherwise it follows the tab you are looking at. Nothing to attach by hand.
+const WORK_HOLD_MS = 120000; let workingUntil = 0;
 const seen = new Set();
 // Survives the worker's sleeps (storage.session lasts until the browser
 // closes). The browser instance id stays in storage.local.
@@ -124,7 +128,7 @@ async function profileId() {
 }
 /** Links to Josi: at startup, every 30 s (alarm), when the popup opens, and
  * again after Josi restarts. Carries the attached tab when there is one. */
-async function link() {
+async function link(explicit = false) {
   await ready;
   if (stopped || linking || workspace) return;
   linking = true; const epoch = ++generation;
@@ -139,9 +143,12 @@ async function link() {
     channel?.close(); channel = connection;
     const reply = await native('browser.hello', { family: config.family,
       extensionId: config.family === 'safari' ? config.extensionId : browserApi.runtime.id, nativeProfileId: await profileId(),
-      attachedTabId: tab ? tab.id : null, ...(windowsHost && tab ? { url: tab.url, title: clip(tab.title) } : {}) }, null);
+      attachedTabId: tab ? tab.id : null, ...(windowsHost && tab ? { url: tab.url, title: clip(tab.title) } : {}),
+      ...(windowsHost && explicit ? { explicit: true } : {}) }, null);
     if (epoch !== generation) return;
     if (reply?.profileDiscovered === true) { drop(); setPhase('unknown'); return; }
+    // Another browser holds Josi's link; this one waits and asks again on the alarm.
+    if (reply?.standby === true) { drop(); setPhase('standby'); return; }
     const verified = acceptSession(reply);
     if (epoch !== generation) return;
     workspace = verified; seen.clear(); lastClock = Date.now();
@@ -160,7 +167,7 @@ async function attachHere(tabId) {
   stopped = false; attachedTabId = tab.id; askedSite = null; persist();
   for (let i = 0; i < 40 && (linking || polling); i++) await new Promise(resolve => setTimeout(resolve, 50));
   drop(); setPhase('reconnect');
-  await link();
+  await link(true);
   return phase === 'attached';
 }
 async function stopHere() {
@@ -194,6 +201,10 @@ async function describeTabs() {
   let active = null;
   try { [active] = await browserApi.tabs.query({ active: true, lastFocusedWindow: true }); } catch { active = null; }
   if (active && (active.incognito || !webUrl(active.url))) active = null;
+  if (active && active.id !== attachedTabId && !stopped && Date.now() > workingUntil
+    && await browserApi.permissions.contains({ origins: [webUrl(active.url).origin + '/*'] })) {
+    attachedTabId = active.id; attached = active; persist();
+  }
   const open = (await browserApi.tabs.query({})).filter(t => !t.incognito && Number.isSafeInteger(t.id) && webUrl(t.url));
   const listed = open.filter(t => t.id === active?.id).concat(open.filter(t => t.id !== active?.id)).slice(0, TABS_REPORTED);
   return {
@@ -258,6 +269,7 @@ async function execute(command, epoch) {
     || !Number.isSafeInteger(command.expiresAt) || command.expiresAt <= Date.now()
     || command.expiresAt > workspace.expiresAt || seen.has(command.id) || seen.size >= 4096) throw new Error('invalid_command');
   seen.add(command.id);
+  workingUntil = Date.now() + WORK_HOLD_MS;
   if (!KINDS.includes(command.kind)) throw new Error('unsupported_operation');
   if (command.kind === 'attach') return attachCommand(command, epoch);
   if (!workspace.origins.length) throw new Error('invalid_command');
@@ -306,7 +318,11 @@ async function execute(command, epoch) {
   try {
     const result = await browserApi.tabs.sendMessage(tab.id, input, { frameId: 0 });
     if (!result || !bounded(result) || result.kind === 'refused') throw new Error(result?.code && /^[a-z_]{3,40}$/.test(result.code) ? result.code : 'invalid_page_response');
-    if (command.kind === 'photo' && result.photo?.screenshot === true) result.photo = await screenshot(tab, result.photo, epoch, command);
+    if (command.kind === 'photo' && result.photo?.screenshot === true) {
+      let fetched = null;
+      try { fetched = result.photo.source ? await downloadPhoto(result.photo, epoch, command) : null; } catch { fetched = null; }
+      result.photo = fetched ?? await screenshot(tab, result.photo, epoch, command);
+    }
     return ['inspect', 'photo', 'scroll'].includes(command.kind) ? { ...result, tabId: tab.id, windowId: tab.windowId } : result;
   } finally {
     delete input.value; delete input.file; delete authority.value; delete authority.draftText; delete authority.proxy;
@@ -365,7 +381,15 @@ async function openTab(command, epoch) {
   if (!destination || destination.protocol !== 'https:' || destination.origin !== command.origin || !workspace.origins.includes(destination.origin)) throw new Error('invalid_page');
   if (!await browserApi.permissions.contains({ origins: [destination.origin + '/*'] })) throw new Error('site_permission_required');
   await authorize(command, null, epoch);
-  const created = await browserApi.tabs.create({ url: destination.href, active: true });
+  // A browser running in the background with no window (Edge's startup boost,
+  // a closed last window) has nowhere to put a tab: open a window instead.
+  let created;
+  try { created = await browserApi.tabs.create({ url: destination.href, active: true }); }
+  catch {
+    const window = await browserApi.windows.create({ url: destination.href, focused: true, type: 'normal' });
+    created = window?.tabs?.[0];
+    if (!created) throw new Error('window_unavailable');
+  }
   if (created.incognito) throw new Error('unsupported_tab');
   attachedTabId = created.id; persist();
   setPhase(hostPaused ? 'paused' : 'attached');
@@ -403,6 +427,35 @@ async function fetchFile(command, file, epoch) {
   const base64 = parts.join('');
   if (Math.floor(base64.length * 3 / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0) !== file.size) throw new Error('file_unavailable');
   return { name: file.name, mediaType: file.mediaType, size: file.size, base64 };
+}
+/** A picture the page shows from another site (an image server), fetched by
+ * this worker with its site access: https only, an image type, at most 15 MB,
+ * re-encoded to a small JPEG. Works whether or not the tab is showing. */
+async function downloadPhoto(shown, epoch, command) {
+  const source = webUrl(shown.source);
+  if (!source || source.protocol !== 'https:') return null;
+  const response = await fetch(source.href, { credentials: 'omit', redirect: 'follow', cache: 'force-cache' });
+  if (!response.ok || !/^image\//.test(response.headers.get('content-type') ?? '')) return null;
+  const blob = await response.blob();
+  if (blob.size > 15 * 1024 * 1024 || !live() || epoch !== generation || Date.now() >= command.expiresAt) return null;
+  const bitmap = await createImageBitmap(blob);
+  try {
+    for (const longest of [768, 512]) {
+      const scale = Math.min(1, longest / Math.max(bitmap.width, bitmap.height));
+      const canvas = new OffscreenCanvas(Math.max(1, Math.round(bitmap.width * scale)), Math.max(1, Math.round(bitmap.height * scale)));
+      const context = canvas.getContext('2d');
+      context.fillStyle = 'white'; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      for (const quality of [0.8, 0.6, 0.4, 0.25]) {
+        const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg', quality })).arrayBuffer());
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        const base64 = btoa(binary);
+        if (base64.length <= PHOTO_BASE64_LIMIT) return { mediaType: 'image/jpeg', base64, width: canvas.width, height: canvas.height, alt: shown.alt, untrustedContent: true };
+      }
+    }
+    return null;
+  } finally { bitmap.close(); }
 }
 // A picture from another site cannot be read as pixels, so take a screenshot
 // of the attached tab and keep only the picture's area. The tab must be the
@@ -468,7 +521,8 @@ async function popupState() {
     : STATUS[phase] ?? STATUS.off;
   return { phase, status: sentence, family: config.family, origin: here ? webUrl(here.url).origin : null, tabId: here?.id ?? null,
     attachedHere: !!attachedHere, attached: attachedTabId !== null, asked: !!asked,
-    canAttach: !!here && !attachedHere && ['linked', 'attached', 'paused', 'off', 'reconnect'].includes(phase) && (windowsHost || phase !== 'unknown'),
+    // Only for a site this browser has not opened to Josi, or to switch browsers.
+    canAttach: !!here && !attachedHere && (!!asked || phase === 'standby' || (!windowsHost && phase !== 'unknown')),
     canStop: ['linked', 'attached', 'paused', 'reconnect'].includes(phase), canResume: phase === 'stopped' };
 }
 browserApi.runtime.onMessage.addListener((message, sender, sendResponse) => {

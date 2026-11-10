@@ -65,4 +65,19 @@ describe('credential cards', () => {
     expect(await executeCredentialCardTool(allowed, 'u2', 'request_credential_card', { kind: 'developer_token', provider: 'github' })).toMatchObject({ ok: true });
     expect(await executeCredentialCardTool(db(plain('super_admin')), 'u1', 'request_credential_card', { kind: 'developer_token', provider: 'github' })).toMatchObject({ ok: true });
   });
+  it('opens a sign-in card for an account when the application is set up, and says what is missing when it is not', async () => {
+    expect(CREDENTIAL_CARD_TOOLS.map((t) => t.def.name)).toContain('start_account_connection');
+    expect(await executeCredentialCardTool(db(plain('super_admin')), 'u1', 'start_account_connection', { provider: 'google' })).toMatchObject({ ok: false, code: 'application_not_set_up' });
+    expect(await executeCredentialCardTool(db(plain('member')), 'u2', 'start_account_connection', { provider: 'evilcorp' })).toMatchObject({ ok: false, code: 'bad_provider' });
+    const inserted: unknown[][] = [];
+    const ready = db([...plain('member'), (sql) => sql.includes('from oauth_clients') ? [{ provider: 'google', client_id: 'id', redirect_uri: 'https://josi.example.com/api/connections/google/callback', updated_at: '' }] : null], inserted);
+    const out = await executeCredentialCardTool(ready, 'u2', 'start_account_connection', { provider: 'google' }, 'thread-2') as { ok: boolean; message: string };
+    expect(out).toMatchObject({ ok: true, state: 'card_open' });
+    expect(out.message).toMatch(/Sign in with Google/);
+    const [params] = inserted;
+    expect(params[0]).toBe('u2'); expect(params[1]).toBe('credential_card'); expect(params[4]).toBe('/connections/google/start'); expect(params[6]).toBe('thread-2');
+    const body = (params[5] as { value: unknown }).value as { card: { kind: string; fields: unknown[] }; fixed: Record<string, unknown> };
+    expect(body.card).toMatchObject({ kind: 'account_connection', provider: 'google', fields: [] });
+    expect(body.fixed).toEqual({ native: true });
+  });
 });

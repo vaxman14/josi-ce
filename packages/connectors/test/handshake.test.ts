@@ -277,8 +277,8 @@ describe('storing a connection', () => {
     expect(events).toContain('connection.authorized');
   });
 
-  it('records the capability as available but NOT enabled', async () => {
-    // Consent to CONNECT is not consent to ACT.
+  it('records the capability as available and switched on', async () => {
+    // Connecting an account means Josi may use it; each switch turns one off.
     await upsertConnection(db, key, {
       ownerUserId: alice, provider: 'google', tokens,
       accountEmail: null, providerAccountId: null,
@@ -288,7 +288,15 @@ describe('storing a connection', () => {
       `select enabled, scopes_granted_at from connection_capabilities`,
     );
     expect(grant.scopes_granted_at).toBeTruthy();
-    expect(grant.enabled).toBe(false);
+    expect(grant.enabled).toBe(true);
+    expect((await can(db, { ownerUserId: alice, capability: 'google.calendar.read' })).allowed).toBe(true);
+  });
+
+  it('leaves a switch the person turned off alone when they reconnect', async () => {
+    const args = { ownerUserId: alice, provider: 'google' as const, tokens, accountEmail: null, providerAccountId: null, requestedCapabilities: ['google.calendar.read'] };
+    await upsertConnection(db, key, args);
+    await db.query(`update connection_capabilities set enabled = false`);
+    await upsertConnection(db, key, args);
     expect((await can(db, { ownerUserId: alice, capability: 'google.calendar.read' })).allowed).toBe(false);
   });
 
@@ -432,22 +440,16 @@ describe('enabling a capability', () => {
       .toEqual({ allowed: false, state: 'blocked_by_admin' });
   });
 
-  it('is NOT switched on by an administrator permitting it', async () => {
-    const connection = await connect('https://www.googleapis.com/auth/gmail.send');
-    await db.query(
-      `insert into admin_capability_policy (capability, allowed) values ('google.mail.send', true)`,
-    );
-    // The user never enabled it. An allow is not a grant.
-    expect((await can(db, { ownerUserId: alice, capability: 'google.mail.send' })))
-      .toEqual({ allowed: false, state: 'off' });
-    void connection;
+  it('is on from the moment the account is connected', async () => {
+    await connect('https://www.googleapis.com/auth/gmail.send');
+    expect((await can(db, { ownerUserId: alice, capability: 'google.mail.send' })).allowed).toBe(true);
   });
 
-  it('shows a write capability with its consequence before it is switched on', async () => {
+  it('shows a write capability with its consequence', async () => {
     const connection = await connect('https://www.googleapis.com/auth/gmail.send');
     const views = await capabilityViews(db, { connection, provider: 'google' });
     const send = views.find((v) => v.key === 'google.mail.send')!;
-    expect(send.state).toBe('off');
+    expect(send.state).toBe('on');
     expect(send.consequence).toMatch(/send email/i);
   });
 
