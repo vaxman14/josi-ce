@@ -159,7 +159,12 @@ import Foundation
         needsApproval = identity["enabled"].flag
         // Signing in makes this Mac a node of that account (docs/WINDOWS_CLIENT_NODE_SPEC.md):
         // right after an interactive sign-in macOS asks for an administrator once.
-        if identity["publicKey"].text.isEmpty, let fresh = freshSignIn, Date().timeIntervalSince(fresh) < 540, autoApprovedFor != owner {
+        var askAdministrator = true
+        #if DEBUG
+        // Automated test runs never raise the macOS administrator prompt.
+        if ProcessInfo.processInfo.environment["JOSI_NO_NODE_APPROVAL"] != nil { askAdministrator = false }
+        #endif
+        if askAdministrator, identity["publicKey"].text.isEmpty, let fresh = freshSignIn, Date().timeIntervalSince(fresh) < 540, autoApprovedFor != owner {
             autoApprovedFor = owner
             Task { @MainActor in _ = try? await self.approveAsAdministrator(api, owner: owner) }
         }
