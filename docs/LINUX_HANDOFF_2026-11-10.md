@@ -226,6 +226,13 @@ Windows and the Mac inherit it when they merge this branch's packages.
   iPhone still do not send `reply_to_message_id`, so a typed yes there is still refused.
 - Built from `a8ed2f3`; Ubuntu 24.04 VM upgraded beta.11 -> beta.12, all three e2e scripts
   PASS. claw's LAN install address serves beta.12; rerunning the install command upgrades.
+- **Installer update path** (`c15de66`, asked for by Roman after the upgrade showed every
+  install question again): on a machine that already has Josi, with no flags, the installer
+  says which version is here and which it becomes, shows the saved settings and asks one
+  question (go ahead, or change the settings first). Typed through a pty on the Ubuntu VM:
+  both answers work, repair ends with Josi running. Installer re-rendered for beta.12
+  (release folder, claw's LAN address, GitHub draft); packages unchanged. GitHub now has
+  ONE draft, `v1.2.8-beta.12`; the beta.11 draft is deleted.
 - Still open from Roman's run: the installer's doubled ghost (LINUX_FIX_LIST.md); the web
   card says "Not now", Josi's text says "Approve or Deny".
 
