@@ -22,7 +22,7 @@ export const CHROMIUM_EXTENSION_ID = 'peopadjeldgefmbfllgjgdndhabbagpl';
 export const FIREFOX_EXTENSION_ID = 'josi-browser@heyjosi.com';
 /** Store-assigned Chromium IDs; keep in step with BrowserHost.StoreExtensionIds
  * and chromiumStoreIds in apps/browser-extension/development-identity.json. */
-export const STORE_EXTENSION_IDS = [];
+export const STORE_EXTENSION_IDS = ['hnhfoacbnkiebihopmppfblmmmonhmbm'];
 export const MAX_FRAME = 200 * 1024;
 const PEER_FRAME = 4096;
 const SESSION_MS = 55000, COMMAND_MS = 20000, OBSERVATION_BYTES = 60000;
