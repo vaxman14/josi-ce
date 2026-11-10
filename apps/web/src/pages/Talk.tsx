@@ -86,14 +86,15 @@ const sentence = (action: string) => {
 /** Something Josi wants to do, asked right where the conversation is. "Not now"
  * decides nothing: declining is final and belongs to the Approvals page, so this
  * only puts the card away, and the request stays there. */
-function ApprovalCard({ approval, onApprove, onLater }: { approval: Approval; onApprove: () => Promise<void>; onLater: () => void }) {
+function ApprovalCard({ approval, onApprove, onLater, onStage = false }: { approval: Approval; onApprove: () => Promise<void>; onLater: () => void; onStage?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   return (
     <div className="approval-card w-full max-w-md rounded-lg p-4">
       <p className="font-display text-sm font-semibold">{sentence(approval.action)}</p>
       {/* The exact action, in words, before anyone agrees to it. */}
-      <p className="mt-1 whitespace-pre-wrap break-words text-sm text-lilac">{approval.summary}</p>
+      {/* On the stage a long email scrolls inside the card, so Approve is never pushed out of sight. */}
+      <p className={`mt-1 whitespace-pre-wrap break-words text-sm text-lilac ${onStage ? 'max-h-[22dvh] overflow-y-auto' : ''}`}>{approval.summary}</p>
       {approval.action_class === 'email_send' ? <Link to="/app/approvals" className="link mt-1 inline-flex min-h-11 items-center text-sm">See the email first</Link> : null}
       {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
       <div className="mt-3 flex flex-wrap gap-2">
@@ -349,7 +350,9 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
         ? { ...message, meta: { attachments: uploadedMeta } } : message));
       // Durable turn, as on Windows: accepted at once, followed live, and the
       // reply is shown the moment it is saved.
-      const turnId = await submitTurn(thread.id, body, attachmentIds);
+      // What Josi last said on this screen: a typed yes or no answers that, and nothing newer.
+      const answering = lastReply && /^[0-9a-f-]{36}$/i.test(lastReply.id) ? lastReply.id : null;
+      const turnId = await submitTurn(thread.id, body, attachmentIds, answering);
       accepted = true;
       if (spoken === undefined) setFiles([]);
       const outcome = await followTurn(thread.id, turnId, setActivity);
@@ -367,7 +370,8 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
         if (!reduced) setRevealing(result.reply);
         ghost.replied(isListReply(result.reply));
         setMessages((current) => [...current, {
-          id: `reply-${Math.random().toString(36).slice(2)}`,
+          // The saved message's own id, so a typed yes or no can name it.
+          id: saved?.id ?? `reply-${Math.random().toString(36).slice(2)}`,
           thread_id: thread.id, direction: 'out', channel: 'web', body: result.reply!,
           created_at: new Date().toISOString(),
         }]);
@@ -461,7 +465,8 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div className="ghost-stage absolute inset-0 overflow-hidden">
-          <div className="mx-auto flex h-full w-full max-w-2xl flex-col items-center justify-center gap-3 px-4 pb-2 pt-3">
+          {/* Taller than the stage (a small window, a long card): it scrolls, top first, instead of being cut off at both ends. */}
+          <div className="mx-auto flex h-full w-full max-w-2xl flex-col items-center justify-center gap-3 overflow-y-auto px-4 pb-2 pt-3 [justify-content:safe_center]">
             <GhostFigure clip={ghostView.clip} beat={ghostView.beat} reduced={reduced} />
             <div className="flex min-h-[10rem] w-full flex-col items-center gap-2 text-center" aria-live="polite">
               {backgroundOffline ? <p className="text-xs text-text-muted" role="status">Chat updates are offline. Showing the last saved conversation.</p> : null}
@@ -471,7 +476,8 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
               </> : lastReply ? <>
                 <span className="stage-label">Josi</span>
                 <div
-                  className="w-full cursor-pointer"
+                  // With a card under it the reply is kept short: the card says the same thing and has the buttons.
+                  className={`w-full cursor-pointer ${stageApproval || stageCard ? 'max-h-[3.3rem] overflow-hidden' : ''}`}
                   title="Open chat history"
                   onClick={event => { if (!(event.target as Element).closest('a')) openHistory(); }}
                 >
@@ -496,7 +502,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
               </span>
               {stageApproval ? (
                 <div className="flex w-full flex-col items-center gap-1 text-left">
-                  <ApprovalCard approval={stageApproval} onLater={() => setSettled(ids => [...ids, stageApproval.id])} onApprove={approve(stageApproval)} />
+                  <ApprovalCard onStage approval={stageApproval} onLater={() => setSettled(ids => [...ids, stageApproval.id])} onApprove={approve(stageApproval)} />
                   {waitingCount > 1 ? <button type="button" onClick={openHistory} className="link min-h-11 text-xs">{waitingCount - 1} more waiting in History</button> : null}
                 </div>
               ) : stageCard ? (

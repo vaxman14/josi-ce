@@ -41,9 +41,12 @@ export function failureMessage(code: string | null): string {
 }
 
 /** Submit a message; resolves with the accepted turn's id. */
-export async function submitTurn(threadId: string, message: string, attachmentIds: string[]): Promise<string> {
+/** `replyTo` is the assistant message on screen when the person sent this.
+ * A typed yes or no approves or denies only the request in that message. */
+export async function submitTurn(threadId: string, message: string, attachmentIds: string[], replyTo?: string | null): Promise<string> {
   const accepted = await api.post<{ turn: { id: string } }>(`/assistant/threads/${threadId}/turns`, {
     client_message_id: newId(), message, attachment_receipts: attachmentIds,
+    ...(replyTo ? { reply_to_message_id: replyTo } : {}),
   });
   return accepted.turn.id;
 }

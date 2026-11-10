@@ -98,8 +98,8 @@ export async function markActionsPresented(db:Db,args:{ownerUserId:string;thread
 }
 
 export interface ConversationalDecision { handled:boolean; reply?:string; action?:AssistantActionState; task?:Task }
-const YES=/^(?:yes|yes please|please do|do it|send it|approve|confirmed?)\s*[.!]?$/i;
-const NO=/^(?:no|no thanks|don't|do not|cancel|deny)\s*[.!]?$/i;
+const YES=/^(?:yes|yes please|please do|do it|send it|go ahead|approved?|i approve|confirmed?)\s*[.!]?$/i;
+const NO=/^(?:no|no thanks|don't|do not|don't send(?: it)?|do not send(?: it)?|cancel|deny|denied|decline|declined)\s*[.!]?$/i;
 const EMAIL_STATUS=/\b(?:was|is|did).{0,16}(?:email|it).{0,12}(?:sent|send)/i;
 const BARE_WHY=/^why\s*[?!.]?$/i;
 

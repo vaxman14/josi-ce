@@ -27,6 +27,24 @@ const emailSlots={recipient:'romanvaxman14@gmail.com',subject:'testing the coone
 const calendarSlots={title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00',calendar_source:{source_id:'source-main',provider:'google',account_id:'account-main',calendar_id:'primary',calendar_name:'Main'}};
 
 describe('transactional conversational action state',()=>{
+  it('takes the plain words people type for approving and refusing, and nothing looser',async()=>{
+    for(const word of ['approved','Approved.','go ahead','I approve','approve']){
+      const {task}=await prepared('email',emailSlots);
+      expect(await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:word}),word).toMatchObject({handled:true,action:{domain:'email'}});
+      expect((await getTask(db,task.id)).state,word).toBe('ready');
+    }
+    for(const word of ['denied','decline',"don't send it"]){
+      const {task}=await prepared('email',emailSlots);
+      expect((await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:word})).reply,word).toMatch(/^Denied\./);
+      expect((await getTask(db,task.id)).state,word).not.toBe('ready');
+    }
+    // Not approvals: these go to the model as ordinary talk.
+    const {task}=await prepared('email',emailSlots);
+    for(const word of ['ok','sure','approved by whom?','yes but change the subject'])
+      expect(await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:word}),word).toEqual({handled:false});
+    expect((await getTask(db,task.id)).state).not.toBe('ready');
+  });
+
   it('executes the exact immediately presented email approval once and keeps its audit evidence',async()=>{
     const {task,state}=await prepared('email',emailSlots);
     const first=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes'});
