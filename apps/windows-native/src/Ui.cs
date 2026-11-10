@@ -23,6 +23,7 @@ namespace Josi.Native {
     static BitmapImage mark;
 
     public static void Load() {
+      RoutePaste();
       using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Theme.xaml"))
       using (var reader = new System.IO.StreamReader(stream))
         Resources = (ResourceDictionary)XamlReader.Parse(Skin.Apply(reader.ReadToEnd()));
@@ -266,6 +267,40 @@ namespace Josi.Native {
     /// A box that reads as a box on the dark sheet background: taller, lighter
     /// edge. The theme's raised fill alone was invisible against a sheet.
     public static T Visible<T>(T box) where T : Control { box.MinHeight = 40; box.BorderBrush = Muted; box.Background = Card; return box; }
+    /// The clipboard's text, or null. Another program can hold the clipboard
+    /// for a moment, so this tries a few times.
+    public static string ClipboardText() {
+      for (var attempt = 0; attempt < 4; attempt++) {
+        try { return Clipboard.ContainsText() ? Clipboard.GetText() : null; }
+        catch (Exception) { System.Threading.Thread.Sleep(60); }
+      }
+      return null;
+    }
+    /// Paste in every text and password box reads the clipboard directly.
+    /// The text editor's own Paste did nothing on this PC (Ctrl+V and the
+    /// right-click menu alike) while a direct read worked, so the command is
+    /// answered here, ahead of the editor's handler.
+    static void RoutePaste() {
+      CommandManager.RegisterClassCommandBinding(typeof(TextBox), new CommandBinding(ApplicationCommands.Paste,
+        (s, e) => { var box = (TextBox)s; e.Handled = true; if (box.IsReadOnly) return; var text = ClipboardText(); if (string.IsNullOrEmpty(text)) return;
+          if (!box.AcceptsReturn) text = text.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ').Trim();
+          var at = box.SelectionStart; box.SelectedText = text; box.SelectionLength = 0; box.CaretIndex = at + text.Length; },
+        (s, e) => { e.CanExecute = !((TextBox)s).IsReadOnly; e.Handled = true; }));
+      CommandManager.RegisterClassCommandBinding(typeof(PasswordBox), new CommandBinding(ApplicationCommands.Paste,
+        (s, e) => { e.Handled = true; var text = ClipboardText(); if (string.IsNullOrWhiteSpace(text)) return; ((PasswordBox)s).Password = text.Trim(); },
+        (s, e) => { e.CanExecute = true; e.Handled = true; }));
+    }
+    /// A plain box with a Paste button, laid out like a secret row so the
+    /// boxes on a card line up (the Show column stays empty).
+    public static Grid PasteRow(TextBox box, string label) {
+      var row = new Grid();
+      row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+      row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, SharedSizeGroup = "paste" }); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, SharedSizeGroup = "show" });
+      var paste = Pill("Paste", () => { var text = ClipboardText(); if (string.IsNullOrWhiteSpace(text)) return; box.Text = text.Trim(); box.Focus(); box.CaretIndex = box.Text.Length; });
+      Automation.Derive(paste, "paste", label + " paste"); paste.Margin = new Thickness(8, 0, 0, 0);
+      Grid.SetColumn(box, 0); Grid.SetColumn(paste, 1); row.Children.Add(box); row.Children.Add(paste);
+      return row;
+    }
     /// A secret the person types or pastes: stars by default, Paste from the
     /// clipboard, Show to check it. Reading the value is explicit (`Value`).
     public sealed class SecretEntry : Grid {
@@ -273,8 +308,8 @@ namespace Josi.Native {
       public SecretEntry(string label) {
         Hidden = Visible(Secret(label)); Shown = Visible(Input(label)); Shown.Visibility = Visibility.Collapsed;
         ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var paste = Pill("Paste", () => { string text = null; try { text = Clipboard.ContainsText() ? Clipboard.GetText() : null; } catch (Exception) { } if (string.IsNullOrWhiteSpace(text)) return; text = text.Trim(); if (showing) Shown.Text = text; else Hidden.Password = text; Focus(); });
+        ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, SharedSizeGroup = "paste" }); ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto, SharedSizeGroup = "show" });
+        var paste = Pill("Paste", () => { var text = ClipboardText(); if (string.IsNullOrWhiteSpace(text)) return; text = text.Trim(); if (showing) Shown.Text = text; else Hidden.Password = text; Focus(); });
         Automation.Derive(paste, "paste", label + " paste");
         toggle = Pill("Show", () => Toggle()); Automation.Derive(toggle, "show", label + " show");
         paste.Margin = new Thickness(8, 0, 0, 0); toggle.Margin = new Thickness(8, 0, 0, 0);

@@ -129,7 +129,7 @@ namespace Josi.Native {
       var problem = Automation.Id(Ui.T("", 13, null, Ui.Error), "josi.credential-card.error");
       problem.Visibility = Visibility.Collapsed;
       var inputs = new List<Tuple<Wire, FrameworkElement>>();
-      var body = Ui.Stack(12);
+      var body = Ui.Stack(12); Grid.SetIsSharedSizeScope(body, true);
       foreach (var field in card["fields"].List) {
         var type = field["type"].Text; var label = field["label"].Text + (field["required"].Flag ? "" : " (optional)");
         FrameworkElement control;
@@ -138,7 +138,7 @@ namespace Josi.Native {
         else control = Ui.Visible(Ui.Input(field["placeholder"].Text.Length > 0 ? field["placeholder"].Text : null));
         if (type != "secret") Automation.Id(control, "josi.credential-card.field." + field["key"].Text);
         inputs.Add(Tuple.Create(field, control));
-        body.Children.Add(type == "confirm" ? control : type == "secret" ? Ui.Stack(5, Ui.T(label, 13.5), control) : Ui.Field(label, (Control)control));
+        body.Children.Add(type == "confirm" ? control : Ui.Stack(5, Ui.T(label, 13.5), type == "secret" ? control : Ui.PasteRow((TextBox)control, label)));
       }
       if (inputs.Count == 0) body.Children.Add(Ui.T("This card has nothing to fill in. Ask Josi to open it again.", 13, null, Ui.Error));
       Button save = null;
