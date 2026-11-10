@@ -71,7 +71,8 @@ async function call(tool, input) {
   const turn = req('POST', `/assistant/threads/${thread.id}/talk`, { message: `Please do this. E2E_TOOL:${tool}:${JSON.stringify(input)}`, attachmentIds: [] });
   let done = false; turn.finally(() => { done = true; });
   for (let i = 0; i < 600; i++) {
-    const seen = fake.requests.slice(mark).map(r => r.body?.messages ?? []).find(ms => ms.at(-1)?.role === 'tool');
+    // A picture rides after the tool message, so look for the last tool message, not the last message.
+    const seen = fake.requests.slice(mark).map(r => (r.body?.messages ?? []).filter(m => m.role === 'tool')).find(ms => ms.length && ms.at(-1).tool_call_id && fake.requests.slice(mark).some(q => JSON.stringify(q.answer ?? '').includes(ms.at(-1).tool_call_id)));
     if (seen) { await turn.catch(() => {}); const content = seen.at(-1).content; const text = typeof content === 'string' ? content : JSON.stringify(content); try { return JSON.parse(text); } catch { return { raw: text }; } }
     if (done) { const r = await turn; throw new Error(`${tool}: the turn ended without a tool result: ${JSON.stringify(r.json).slice(0, 300)}`); }
     if (pcId) {
