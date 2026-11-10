@@ -120,7 +120,14 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
                   let source = Bundle.main.url(forResource: family, withExtension: "json", subdirectory: "NativeMessagingHosts"),
                   let body = try? Data(contentsOf: source), body.count <= 4096 else { continue }
             let folder = browserFolder + "/NativeMessagingHosts", target = folder + "/com.heyjosi.browser.json"
-            if FileManager.default.fileExists(atPath: target) { continue }
+            // An existing file is replaced only when it is Josi's own (same host name
+            // and helper path), so an update can add the Chrome Web Store ID.
+            if let existing = FileManager.default.contents(atPath: target) {
+                guard existing != body, let value = try? JSONSerialization.jsonObject(with: existing) as? [String: Any],
+                      value["name"] as? String == "com.heyjosi.browser",
+                      value["path"] as? String == "/Applications/Josi.app/Contents/Helpers/JosiBrowserHost" else { continue }
+                try? body.write(to: URL(fileURLWithPath: target), options: .atomic); continue
+            }
             try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: target, contents: body, attributes: [.posixPermissions: 0o644])
         }

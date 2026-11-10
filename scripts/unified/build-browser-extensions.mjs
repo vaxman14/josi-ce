@@ -124,7 +124,9 @@ for (const family of STORES) {
   catalog.store.push({ family, store: family === 'chrome' ? 'Chrome Web Store (Chrome and Brave)' : family === 'edge' ? 'Microsoft Edge Add-ons' : 'Firefox Add-ons (AMO)',
     file: `store/josi-browser-control-${family}-${VERSION}.zip`, byteSize: written.byteSize, sha256: written.sha256 });
 }
-await writeFile(join(output, 'BrowserDistribution.json'), JSON.stringify({ chrome: identity.chromiumId, brave: identity.chromiumId, edge: identity.chromiumId, firefox: identity.firefoxId, safari: identity.safariId }) + '\n', { flag: 'wx' });
+// The development ID per family, and the Chrome Web Store IDs every Chromium
+// native host also accepts (the store build has its own ID).
+await writeFile(join(output, 'BrowserDistribution.json'), JSON.stringify({ chrome: identity.chromiumId, brave: identity.chromiumId, edge: identity.chromiumId, firefox: identity.firefoxId, safari: identity.safariId, chromiumStoreIds: storeIds }) + '\n', { flag: 'wx' });
 await writeFile(join(output, 'BrowserExtensionCatalog.json'), JSON.stringify(catalog, null, 2) + '\n', { flag: 'wx' });
 await writeFile(join(output, 'store', 'README.txt'), [
   `Josi Browser Control ${VERSION}: store packages.`, '',

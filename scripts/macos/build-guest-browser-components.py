@@ -105,8 +105,10 @@ def build(output, node):
     for family in ["chrome", "brave", "firefox"]:
         value = {"name": "com.heyjosi.browser", "description": "Josi isolated browser workspace",
                  "path": HELPERS + "/JosiBrowserHost", "type": "stdio"}
+        # Chrome and Brave also accept the Chrome Web Store build of the extension.
+        chromium = [identity[family]] + [i for i in identity.get("chromiumStoreIds", []) if i != identity[family]]
         value.update({"allowed_extensions": [identity[family]]} if family == "firefox"
-                     else {"allowed_origins": [f"chrome-extension://{identity[family]}/"]})
+                     else {"allowed_origins": [f"chrome-extension://{i}/" for i in chromium]})
         (manifests / (family + ".json")).write_text(json.dumps(value, indent=2) + "\n")
     result = {"compiled": True, "signed": False, "installed": False, "browserEnabled": False,
               "workspaceAuthorityConnected": False, "functionalAcceptancePassed": False,
