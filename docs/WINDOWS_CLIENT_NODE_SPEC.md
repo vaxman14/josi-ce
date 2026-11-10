@@ -63,7 +63,7 @@ key per server and user in the Windows key store.
   and is switched on by the `RELAY_ENABLED` build constant.
 - **Launch.** The client reconnects to the last server it was signed in to.
 - **Tray.** "Keep Josi running when I close the window" and "Start Josi when
-  I sign in to Windows" in General, both on by default. Started by Windows,
+  I sign in to Windows" under Settings, "Josi on this PC", both on by default. Started by Windows,
   Josi opens in the tray without a window.
 - **Sections.** Shown by what the person may use. `server` and `network`
   need the server's own PC and stay with the server edition.
@@ -74,3 +74,7 @@ key per server and user in the Windows key store.
   tested and the client build ships with it off.
 - A People screen switch for `pcControlAllowed`; today it is set through the
   route (or by asking Josi once a tool exists).
+- The elevation step is the client's own check: the server cannot verify
+  that Windows asked. It is recorded on the PC under `HKLM`.
+- Not driven live yet: the Windows elevation prompt, the tray-only start at
+  sign-in, and a member (not the owner) enrolling a PC.

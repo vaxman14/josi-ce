@@ -14,6 +14,11 @@ namespace Josi.Native {
     [STAThread]
     public static int Main(string[] args) {
       if (PcAdministrator.IsLaunch(args)) return PcAdministrator.Run(args);
+      // Josi starting itself elevated so the computer's administrator approves this PC as a node.
+      if (NodeApproval.IsLaunch(args)) return NodeApproval.Run(args);
+      // Started by Windows at sign-in: tray only, no window.
+      var background = args.Length == 1 && args[0] == AppPrefs.Background;
+      if (background) args = new string[0];
       // Chrome starting Josi as the browser extension's native host.
       if (BrowserHost.IsLaunch(args)) return BrowserHost.Run();
       // The server starting the device-consent window on its own screen (item 29).
@@ -48,7 +53,7 @@ namespace Josi.Native {
           if (link != null) AppLinks.Forward(link);
           // A demo copy is already open: hand it the scene and leave.
           if (Automation.Demo) { foreach (var scene in SceneLinks(launch)) AppLinks.Forward(scene); return 0; }
-          if (!AppLinks.Testing) Activation.ActivateExisting();
+          if (!AppLinks.Testing && !background) Activation.ActivateExisting();
           return 0;
         }
         // `--demo-reset` on its own, with no demo copy open: restore the seeded
@@ -58,6 +63,7 @@ namespace Josi.Native {
           catch (JosiException e) { Automation.Print(e.Message); return 1; }
         }
         AppLinks.Register();
+        AppPrefs.ApplyStartup();
         Notifications.Register();
         SendTo.Register();
         if (Flags.LocalWorkspace) BrowserHost.Register();
@@ -76,7 +82,7 @@ namespace Josi.Native {
         app.MainWindow = main;
         AppLinks.Listen(value => app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(value))));
         if (Flags.LocalWorkspace) BrowserBridge.Current.Start(main.Model, app.Dispatcher);
-        main.Show();
+        if (background && main.CanHide) main.StartHidden(); else main.Show();
         if (link != null) app.Dispatcher.BeginInvoke(new Action(() => main.ReceiveLink(link)));
         return app.Run();
       }
@@ -134,6 +140,25 @@ namespace Josi.Native {
     public void Reopen() { Show(); if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal; Activate(); }
     /// Really closes: the tray's Quit, or a closing with Shift held.
     public void Quit() { quitting = true; Close(); }
+    /// Whether this copy has a tray icon to live in.
+    public bool CanHide { get { return tray != null; } }
+    /// Started by Windows at sign-in: the window is created (so everything that
+    /// waits for it runs) and put away at once, leaving the tray icon.
+    public void StartHidden() {
+      ShowActivated = false; ShowInTaskbar = false; WindowState = WindowState.Minimized;
+      Show(); Hide();
+      WindowState = WindowState.Normal; ShowInTaskbar = true; ShowActivated = true;
+      // The server may not be reachable yet this early after Windows starts.
+      var retry = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+      EventHandler attempt = delegate {
+        if (Visibility == Visibility.Visible || Model.Screen != Screen.Connect) { retry.Stop(); return; }
+        var last = AppPrefs.LastServer;
+        if (!Model.Busy && last.Length > 0 && SessionStore.Load(last) != null) Model.Run(() => Model.Connect(last));
+      };
+      retry.Tick += attempt;
+      retry.Start();
+      Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, new Action(() => attempt(this, EventArgs.Empty)));
+    }
 
     /// Who is in control of this desktop: Josi working (with Pause and Stop),
     /// paused, or you after touching the mouse or keyboard (until Resume). Hidden when nothing is happening.
@@ -277,6 +302,12 @@ namespace Josi.Native {
       else if (Flags.Relay) {
         var paired = TunnelStore.Current.All().FirstOrDefault(p => SessionStore.Load(p.Origin) != null);
         if (paired != null) Loaded += delegate { if (Model.Screen == Screen.Connect) Model.Run(() => Model.ConnectPaired(paired)); };
+      }
+      // Otherwise the server this PC was last signed in to, by its own address.
+      if (!Automation.Demo && !AppLinks.Testing) {
+        var last = AppPrefs.LastServer;
+        if (last.Length > 0 && SessionStore.Load(last) != null)
+          Loaded += delegate { if (Model.Screen == Screen.Connect && !Model.Busy) Model.Run(() => Model.Connect(last)); };
       }
     }
 
@@ -482,7 +513,7 @@ namespace Josi.Native {
       // The X puts Josi in the tray: PC control, terminals and notifications
       // keep working, and other devices keep being answered. Quit is in the
       // tray menu (or Shift while closing). Demo and test copies close for real.
-      if (!quitting && tray != null && !Automation.Demo && !AppLinks.Testing && (Keyboard.Modifiers & ModifierKeys.Shift) == 0) {
+      if (!quitting && tray != null && AppPrefs.KeepRunning && !Automation.Demo && !AppLinks.Testing && (Keyboard.Modifiers & ModifierKeys.Shift) == 0) {
         e.Cancel = true; Hide(); tray.SayHidden(); return;
       }
       if (Model.RecoveryPending) {

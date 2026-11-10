@@ -47,6 +47,10 @@ FinishedHeadingLabel=Josi Client is installed
 [Files]
 Source: "{#SourceExe}"; DestDir: "{app}"; DestName: "Josi Client.exe"; Flags: ignoreversion
 
+[Registry]
+; "Start Josi when I sign in to Windows" is written by the app; uninstalling removes it.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "Josi Client"; ValueType: none; Flags: uninsdeletevalue dontcreatekey
+
 [Icons]
 Name: "{userprograms}\Josi Client"; Filename: "{app}\Josi Client.exe"
 

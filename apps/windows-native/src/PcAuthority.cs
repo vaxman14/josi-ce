@@ -12,11 +12,11 @@ namespace Josi.Native {
   /// approval is needed, and the person approves from setup, from PC Control,
   /// or when they turn control on from a chat card.
   sealed class PcAuthority {
-    readonly string owner, keyName;
+    readonly string origin, owner, keyName;
     DateTime nextCheck;
     bool approved;
     public PcAuthority(string origin, string owner) {
-      this.owner = owner;
+      this.origin = origin; this.owner = owner;
       keyName = KeyName(origin, owner);
     }
     /// The key name setup and the running app must agree on: one executor key
@@ -58,16 +58,30 @@ namespace Josi.Native {
     }
     /// Pair this PC: the person's password, once, in the protected form. Called
     /// from PC Control's "Approve This PC" and after a chat card turns control on.
-    public async Task<bool> Approve(JosiApi api, Window window) {
+    /// Two proofs: the computer's administrator (Windows asks for elevation,
+    /// once per server and account) and the person (a sign-in made in the last
+    /// few minutes, or else their password in the protected form). quiet: right
+    /// after signing in, never show the password form.
+    public async Task<bool> Approve(JosiApi api, Window window, bool quiet = false) {
       if (approved) return true;
       var identity = await api.Request("/admin/pc-control/identity");
       if (identity["publicKey"].Text.Length > 0) {
-        using (var existing = DeviceKey.Open(keyName))
+        using (var existing = DeviceKey.Open(keyName)) {
           if (existing == null || Convert.ToBase64String(existing.PublicPoint()) != identity["publicKey"].Text)
             throw new JosiException("This PC's executor key changed. Revoke its old PC identity under PC Control before pairing it again.");
+          approved = true; NeedsApproval = false; KeyChanged = false; return true;
+        }
       }
       using (var key = Key()) {
         var point = Convert.ToBase64String(key.PublicPoint());
+        if (!NodeApproval.Recorded(origin, owner, point) && !await NodeApproval.Request(origin, owner, point)) return false;
+        if (api.SignedInAt > DateTime.UtcNow.AddMinutes(-9)) {
+          try {
+            await api.Request("/admin/pc-control/identity", "POST", Wires.O("publicKey", point, "elevated", true));
+            approved = true; NeedsApproval = false; KeyChanged = false; return true;
+          } catch (JosiException e) when (e.Status == 401 || e.Status == 400) { /* An older server, or the sign-in is no longer fresh: the password decides. */ }
+        }
+        if (quiet) return false;
         var password = Dialogs.AskPassword(window, "Approve computer control on " + Environment.MachineName,
           "Bind this PC to your signed-in Josi account so Josi can work on it. This does not grant app, file, terminal or administrator permissions by itself; those are chosen under PC Control or in chat.\n\nPC: " + JosiApi.DeviceId + "\nKey: " + ProtectedWire.Digest(point).Substring(0,24) + "\n" + (key.Hardware ? "Windows hardware key" : "Windows protected software key"), "Approve this PC");
         if (password == null) return false;

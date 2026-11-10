@@ -38,7 +38,7 @@ namespace Josi.Native {
       var brand = Ui.Row(14, Ui.JosiMark(52), Ui.Stack(2, Ui.T("Josi", 28, FontWeights.SemiBold), Ui.Caption("Your assistant, on your own server.")));
       Ui.Detach(ghost);
       var page = Ui.Stack(28, Ui.Spread(Ui.Stack(28, brand, Ui.Heading("Welcome to Josi", "Your conversations, your work, your PC.")), ghost), Flags.ServerApp ? local : null,
-        Flags.Relay ? Elsewhere() : Flags.ServerApp ? null : Direct(),
+        Flags.ServerApp ? null : Direct(), Flags.Relay ? Elsewhere() : null,
         Flags.ServerApp ? Ui.Secondary("Closing this window leaves your server running for your other devices.") : null);
       page.IsEnabled = !model.Busy;
       Automation.Id(this, "josi.welcome", "Welcome to Josi");
@@ -54,7 +54,7 @@ namespace Josi.Native {
       address.KeyDown += (s, e) => { if (e.Key == Key.Enter) { e.Handled = true; connect(); } };
       return Ui.CardBox(null,
         Ui.Row(10, Ui.Icon(Glyph.Network, 22, Ui.Text), Ui.T("Connect to your server", 21, FontWeights.Bold)),
-        Ui.Secondary("Enter your server's HTTPS address, or an HTTP localhost address for a server on this PC."),
+        Ui.Secondary("Enter your server's address: its name (josi.example.com) or, on your own network, its address and port (192.168.1.20:8443). The connection is always encrypted."),
         Ui.Field("Server address", address),
         Automation.Id(Ui.Pill("Connect", connect, true), "josi.welcome.connect"));
     }
