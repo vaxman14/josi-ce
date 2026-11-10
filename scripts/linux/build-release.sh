@@ -52,7 +52,9 @@ if [ "$code" = 1 ]; then
   npm --prefix apps/web run build
 fi
 
-step "Runtime staging and payload inventory ($version)"
+# stage.py also builds the browser extension (scripts/unified/build-browser-extensions.mjs)
+# into a new folder and stages its chrome/ part as app/browser-extension/chrome.
+step "Runtime staging, browser extension and payload inventory ($version)"
 rm -rf "$base/stage/runtime/app/node_modules"
 python3 -B scripts/linux/stage.py
 

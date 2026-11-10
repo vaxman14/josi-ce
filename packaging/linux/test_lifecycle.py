@@ -198,6 +198,24 @@ class LinuxLifecycleTests(unittest.TestCase):
         self.assertIn("JOSI_PC_STATE='/var/lib/josi-pc'",wrapper)
         self.assertEqual(sorted(str(path.parent) for path,_ in files),sorted(lifecycle.BROWSER_DIRS))
         for _,text in files:self.assertEqual(json.loads(text)['path'],str(lifecycle.BROWSER_WRAPPER))
+    def test_own_browser_unit_follows_the_version_and_the_pc_account(self):
+        program=self.installation/'versions/1.3.0'
+        unit=self.obj.browser_unit('roman','roman',program).decode()
+        for line in ('PartOf=josi.service','After=josi-pc.service','User=roman','Group=roman','StateDirectory=josi-pc',
+                     'StateDirectoryMode=0700','Restart=always','RestartSec=5','Environment=JOSI_PC_STATE=/var/lib/josi-pc',
+                     f'Environment=JOSI_BROWSER_EXTENSION={program}/app/browser-extension/chrome',
+                     f'ExecStart={program}/node/bin/node {program}/app/packaging/linux/pc-executor/josi-browser.mjs',
+                     'WantedBy=josi.service'):
+            self.assertIn(line+'\n',unit)
+        self.assertNotIn('ProtectHome',unit)
+        with self.assertRaises(ValueError):self.obj.browser_unit('roman','x y',program)
+    def test_browser_answer_needs_pc_control_and_old_files_still_load(self):
+        self.assertFalse(lifecycle.normalize_settings({'browser':True})['browser'])
+        self.assertTrue(lifecycle.normalize_settings({'browser':True,'pcControlUser':'roman'})['browser'])
+        with self.assertRaises(ValueError):lifecycle.normalize_settings({'browser':'yes','pcControlUser':'roman'})
+        old=lifecycle.normalize_settings({'pcControlUser':'roman'});old.pop('browser')
+        path=self.root/'old-install.json';path.write_text(json.dumps(old));os.chmod(path,0o644)
+        self.assertFalse(lifecycle.load_settings(path)['browser'])
     def test_pc_account_must_be_a_login_user(self):
         with self.assertRaises(ValueError):lifecycle.pc_account('root')
         with self.assertRaises(KeyError):lifecycle.pc_account('josi-no-such-user')

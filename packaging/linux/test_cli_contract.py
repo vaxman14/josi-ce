@@ -64,6 +64,19 @@ class LinuxCliContract(unittest.TestCase):
         source = Path(__file__).resolve().parents[2].joinpath('scripts/linux/stage.py').read_text()
         self.assertIn("REPO/'scripts/linux/inventory.py'", source)
 
+    @unittest.skipUnless(shutil.which('node') and REPO.joinpath('scripts/unified/build-browser-extensions.mjs').is_file()
+                         and REPO.joinpath('apps/browser-extension').is_dir() and REPO.joinpath('packages/ops/dist/zip.js').is_file(),
+                         'node, the extension sources and a built packages/ops required')
+    def test_staging_builds_the_chrome_extension_into_the_app(self):
+        stage = module('stage_for_test', REPO / 'scripts/linux/stage.py')
+        app = Path(tempfile.mkdtemp(prefix='josi-stage-'))
+        self.addCleanup(shutil.rmtree, app, True)
+        stage.stage_browser_extension(app)
+        manifest = json.loads((app / 'browser-extension/chrome/manifest.json').read_text())
+        self.assertEqual(manifest['manifest_version'], 3)
+        self.assertIn('key', manifest)  # the fixed development identity, so the ID never changes
+        stage.stage_browser_extension(app)  # again over an existing staged copy
+
     def test_staging_puts_the_pc_executor_under_the_app_folder(self):
         source = REPO.joinpath('scripts/linux/stage.py').read_text()
         self.assertIn("executor=REPO/'packaging/linux/pc-executor'", source)
@@ -100,8 +113,8 @@ class LinuxCliContract(unittest.TestCase):
 
     def test_uninstall_removes_pc_control(self):
         source = HERE.joinpath('josi-uninstall.sh').read_text()
-        self.assertIn('systemctl disable --now josi-pc.service', source)
-        self.assertIn('rm -f /etc/systemd/system/josi-pc.service', source)
+        self.assertIn('systemctl disable --now josi-browser.service josi-pc.service', source)
+        self.assertIn('rm -f /etc/systemd/system/josi-browser.service /etc/systemd/system/josi-pc.service', source)
         self.assertIn('groupdel josi-pc', source)
         lifecycle = module('lifecycle_for_uninstall', HERE / 'lifecycle.py')
         for folder in lifecycle.BROWSER_DIRS:
@@ -210,6 +223,8 @@ class InstallCliTests(unittest.TestCase):
         self.assertEqual(mode, 'install')
         self.assertEqual(answers, {'addressMode': 'proxy', 'publicUrl': 'https://josi.example.com', 'port': 9000, 'pcControlUser': 'roman'})
         self.assertEqual(self.cli.parse(['x', '--no-pc-control'])[2], {'pcControlUser': None})
+        self.assertEqual(self.cli.parse(['x', '--browser'])[2], {'browser': True})
+        self.assertEqual(self.cli.parse(['x', '--no-browser'])[2], {'browser': False})
         self.assertEqual(self.cli.parse(['x', '--upgrade'])[:2], ('upgrade', 0))
         self.assertEqual(self.cli.parse(['x', '--recover'])[:2], ('recover', 0))
         for bad in (['x', '--bogus'], ['x', '--port', 'eighty'], ['x', '--domain']):

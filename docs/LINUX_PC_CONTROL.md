@@ -46,7 +46,30 @@ passwordless sudo, and `pc_environment` says whether it does.
 | browser tools | the Josi browser extension with a natively packaged Chrome, Chromium, Edge, Brave or Firefox on the same machine (`browser.mjs`, `josi-browser-host.mjs`) |
 
 On a server with no desktop the screen tools answer
-`control_surface_unavailable` and everything else works.
+`control_surface_unavailable` and everything else works, unless Josi has her
+own browser (below).
+
+## Josi's own browser (headless machines)
+
+The installer asks "Give Josi her own browser?" (`--browser` / `--no-browser`).
+Yes adds `josi-browser.service` (`pc-executor/josi-browser.mjs`), running as
+the PC-control user:
+
+- a hidden X screen (Xvfb, 1600x1000) with openbox, its X cookie in
+  `/var/lib/josi-pc/browser/Xauthority`;
+- Chrome for Testing 157.0.8103.50, downloaded once and checked against its
+  pinned SHA-256 (the distro Chromium is a snap on Ubuntu and cannot start
+  native hosts; Chrome for Testing still loads an unpacked extension);
+- the Josi extension loaded from the release (`app/browser-extension/chrome`,
+  id `peopadjeldgefmbfllgjgdndhabbagpl`) and its native host registered in the
+  profile, so the PC service links it with no prompt.
+
+`josi-pc.mjs` prefers this screen (`display.json`), so the browser tools,
+screenshots, clicks, typing and keys all work on a machine with no monitor.
+Chrome runs with its sandbox; where the kernel refuses the user namespaces it
+needs (some Ubuntu releases), it falls back to `--no-sandbox` and logs that.
+Checked by hand on Debian 13: Chrome up on `:90`, extension loaded, window
+listed and photographed through xdotool and ImageMagick.
 
 ## Commands on the server
 

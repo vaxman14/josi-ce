@@ -14,6 +14,7 @@ The answers (the one-command installer asks for them, or passes its own flags):
     --public-url https://HOST         proxy: the address of your own reverse proxy
     --port N                          the browser port (default 8080)
     --pc-control-user USER | --no-pc-control
+    --browser | --no-browser          with PC control: Josi's own browser (default: yes)
 
 Anything not given keeps the saved answer in /etc/josi/install.json, or the
 default. The one-command installer (`curl ... | sudo bash`) runs the first
@@ -145,6 +146,9 @@ def fail(message):
 def lifecycle_module():
     """The validation rules of lifecycle.py, shared so both sides agree."""
     path = LIFECYCLE if LIFECYCLE.is_file() else Path(__file__).resolve().with_name('lifecycle.py')
+    # Never leave a __pycache__ in the verified program folder: the payload
+    # check counts every file in it.
+    sys.dont_write_bytecode = True
     spec = importlib.util.spec_from_file_location('josi_lifecycle', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -169,6 +173,8 @@ def parse(argv):
             index += 1; continue  # this command never asks; accepted for symmetry
         if name == '--no-pc-control' and value is None:
             answers['pcControlUser'] = None; index += 1; continue
+        if name in ('--browser', '--no-browser') and value is None:
+            answers['browser'] = name == '--browser'; index += 1; continue
         if name not in FLAGS and name != '--interactive-uid':
             fail(f'unknown option {name[:40]}; see the top of {__file__}')
         if value is None:
@@ -200,6 +206,10 @@ def resolve_settings(answers, current, lifecycle=None):
     base = dict(saved) if saved else {'addressMode': 'lan', 'lanAddress': primary_ip(),
         'port': current.get('publicPort') if isinstance(current.get('publicPort'), int) else 8080}
     base.update(answers)
+    # Josi's own browser defaults to yes when PC control is first turned on;
+    # an install saved without it (or with it off) keeps that.
+    if 'browser' not in answers and (not saved or (answers.get('pcControlUser') and not saved.get('pcControlUser'))):
+        base['browser'] = True
     if base.get('addressMode') == 'lan' and not base.get('lanAddress'):
         base['lanAddress'] = primary_ip()
     try:

@@ -19,7 +19,7 @@
 #
 #   ... | sudo bash -s -- --yes --address-mode lan|domain|proxy --port 8080 \
 #         [--lan-address IP] [--domain NAME --email ADDRESS] [--public-url https://HOST] \
-#         [--pc-control-user USER | --no-pc-control]
+#         [--pc-control-user USER | --no-pc-control] [--browser | --no-browser]
 #
 # In a terminal it shows its progress on stderr: the ghost, each step with a
 # spinner and its time, the download in megabytes, and one bar for the whole
@@ -410,8 +410,8 @@ cleanup() {
 # mistakes early.
 
 YES=0 TTY=0 styled=0 QL=0 QH=0 ERR='' CL='' MARK='>'
-A_MODE='' A_LAN='' A_DOMAIN='' A_EMAIL='' A_URL='' A_PORT='' A_PC='' A_NOPC=0 GIVEN=' '
-S_MODE='' S_LAN='' S_DOMAIN='' S_EMAIL='' S_URL='' S_PORT='' S_PC='' CUR_PORT='' LAN_IP='' SUDO_REAL=''
+A_MODE='' A_LAN='' A_DOMAIN='' A_EMAIL='' A_URL='' A_PORT='' A_PC='' A_NOPC=0 A_BROWSER='' GIVEN=' '
+S_MODE='' S_LAN='' S_DOMAIN='' S_EMAIL='' S_URL='' S_PORT='' S_PC='' S_BROWSER='' CUR_PORT='' LAN_IP='' SUDO_REAL=''
 CLI_ARGS=()
 
 usage() {
@@ -426,6 +426,7 @@ Josi installer. Without options it asks its questions on the terminal.
   --public-url https://HOST        proxy: the address your reverse proxy serves
   --port N                         the browser port (default 8080)
   --pc-control-user USER           let Josi control this computer as USER
+  --browser, --no-browser          with PC control: Josi's own browser (Chrome on a hidden screen, ~600 MB)
   --no-pc-control                  do not
 
 Anything not given keeps the saved answer, or the default.
@@ -440,6 +441,8 @@ parse_args() {
     case $name in
       --yes | -y) YES=1; shift; continue ;;
       --no-pc-control) A_NOPC=1 A_PC='' GIVEN+='pc '; CLI_ARGS+=(--no-pc-control); shift; continue ;;
+      --browser) A_BROWSER=1 GIVEN+='browser '; CLI_ARGS+=(--browser); shift; continue ;;
+      --no-browser) A_BROWSER=0 GIVEN+='browser '; CLI_ARGS+=(--no-browser); shift; continue ;;
       --help | -h) usage; exit 0 ;;
       --address-mode | --lan-address | --domain | --email | --public-url | --port | --pc-control-user) ;;
       *) printf 'Josi installer: unknown option %s (try --help)\n' "${name:0:40}" >&2; exit 2 ;;
@@ -476,8 +479,10 @@ load_saved() {
 import json, shlex, sys
 value = json.load(open(sys.argv[1]))
 for key, name in (('addressMode', 'S_MODE'), ('lanAddress', 'S_LAN'), ('domain', 'S_DOMAIN'), ('email', 'S_EMAIL'),
-                  ('publicUrl', 'S_URL'), ('port', 'S_PORT'), ('pcControlUser', 'S_PC')):
+                  ('publicUrl', 'S_URL'), ('port', 'S_PORT'), ('pcControlUser', 'S_PC'), ('browser', 'S_BROWSER')):
     item = value.get(key)
+    if isinstance(item, bool):
+        item = int(item)
     print(name + '=' + shlex.quote('' if item is None else str(item)))
 PY
   ) || return 0
@@ -553,8 +558,23 @@ open_tty() {
   local -a st
   [ "$YES" = 0 ] || return 0
   { exec 5<>/dev/tty; } 2>/dev/null || return 0
+  trap '' TTOU TTIN
   # Fields after the "(comm)" one: state ppid pgrp session tty tpgid.
-  read -r -a st <<< "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null)"
+  # Debian's sudo, with use_pty, hands the terminal to the script a moment after
+  # starting it, so wait up to two seconds for the foreground; sudo-rs never
+  # does. A last probe reads with SIGTTIN ignored: a background read fails at
+  # once (status 1) where a readable terminal just times out (status > 128).
+  local tries=0 probe=1
+  while :; do
+    read -r -a st <<< "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null)"
+    [ "${#st[@]}" -ge 6 ] && [ "${st[2]}" = "${st[5]}" ] && break
+    tries=$((tries + 1)); [ "$tries" -le 40 ] || break
+    sleep 0.05
+  done
+  if [ "${#st[@]}" -ge 6 ] && [ "${st[2]}" != "${st[5]}" ]; then
+    read -r -t 0.05 -u 5 _ 2>/dev/null; probe=$?
+    [ "$probe" -gt 128 ] && st[5]=${st[2]}
+  fi
   if [ "${#st[@]}" -lt 6 ] || [ "${st[2]}" != "${st[5]}" ]; then
     exec 5>&-
     printf 'Josi installer: this terminal cannot be read here; using the saved or default answers (see --help).\n' >&3
@@ -731,6 +751,61 @@ ask_pc() {
   done
 }
 
+ask_browser() {
+  local d
+  case $GIVEN in *' browser '*) return 0 ;; esac
+  if [ "$A_NOPC" = 1 ] || [ -z "$A_PC" ]; then return 0; fi
+  while :; do
+    q_clear
+    q "${BOLD}Give Josi her own browser?${RST}"
+    q "${DIM}A hidden screen with Chrome she can use for web pages, about 600 MB.${RST}"
+    q ''
+    if [ "$A_BROWSER" = 0 ]; then d=n; else d=y; fi
+    ask 'Add it? (y/n):' "$d" choice
+    REPLY=${REPLY:-$d}
+    case ${REPLY,,} in
+      y | yes) A_BROWSER=1; return 0 ;;
+      n | no) A_BROWSER=0; return 0 ;;
+      *) ERR='Type y or n.' ;;
+    esac
+  done
+}
+
+# Josi's own browser: Chrome for Testing (the launcher downloads it) on Xvfb.
+# Every library it needs, picking whichever name this release has (Debian 13
+# and Ubuntu 24.04+ renamed several to ...t64). One by one if the batch fails.
+browser_packages() {
+  local item name pick
+  REPLY=''
+  for item in xvfb xauth unzip openbox xdotool wmctrl imagemagick fonts-liberation fonts-noto-color-emoji \
+      libnss3 libgbm1 libxkbcommon0 libxss1 libdrm2 libxcomposite1 libxdamage1 libxrandr2 libxshmfence1 \
+      libpango-1.0-0 libcairo2 ca-certificates libasound2t64/libasound2 libgtk-3-0t64/libgtk-3-0 \
+      libcups2t64/libcups2 libatk-bridge2.0-0t64/libatk-bridge2.0-0 libatk1.0-0t64/libatk1.0-0 \
+      libglib2.0-0t64/libglib2.0-0; do
+    pick=''
+    for name in ${item//\// }; do
+      case $(apt-cache policy "$name" 2>/dev/null | awk '/Candidate:/ { print $2 }') in
+        '' | '(none)') ;;
+        *) pick=$name; break ;;
+      esac
+    done
+    if [ -n "$pick" ]; then REPLY+=" $pick"; else printf 'No package for %s\n' "$item" >&3; fi
+  done
+  return 0
+}
+
+install_browser_packages() {
+  local name names
+  browser_packages
+  names=$REPLY  # the screen's drawing reuses REPLY
+  # shellcheck disable=SC2086
+  run apt_get install -y -q --no-install-recommends $names && return 0
+  for name in $names; do
+    run apt_get install -y -q --no-install-recommends "$name" || printf 'Browser package %s was not installed\n' "$name" >&3
+  done
+  return 0
+}
+
 summary() {
   local address how pc
   q_clear
@@ -747,6 +822,9 @@ summary() {
   q "  ${LILAC}Port${RST}          $A_PORT"
   if [ "$A_MODE" = domain ] && [ -n "$A_EMAIL" ]; then q "  ${LILAC}Certificates${RST}  notices to $A_EMAIL"; fi
   q "  ${LILAC}PC control${RST}    $pc"
+  if [ "$pc" != no ]; then
+    if [ "$A_BROWSER" = 1 ]; then q "  ${LILAC}Own browser${RST}   yes, Chrome on a hidden screen"; else q "  ${LILAC}Own browser${RST}   no"; fi
+  fi
   q ''
   ask 'Install Josi now? (y/n):' y choice
   REPLY=${REPLY:-y}
@@ -765,12 +843,15 @@ questions() {
   [ -n "$A_URL" ] || A_URL=$S_URL
   [ -n "$A_PORT" ] || A_PORT=${S_PORT:-${CUR_PORT:-8080}}
   case $GIVEN in *' pc '*) ;; *) if [ -n "$S_PC" ]; then A_PC=$S_PC; else A_NOPC=1; fi ;; esac
+  # The browser defaults to yes with PC control, unless it was saved as no.
+  [ -n "$A_BROWSER" ] || { [ "$S_BROWSER" = 0 ] && [ -n "$S_PC" ] && A_BROWSER=0; } || A_BROWSER=1
   [ "$TTY" = 1 ] || return 0  # nothing asked: the flags alone go to the install command
   q_header
   while :; do
     ask_mode
     ask_port
     ask_pc
+    ask_browser
     if summary; then break; fi
   done
   if [ "$styled" = 1 ]; then printf '\e[%dA\r\e[J' $((QL + QH)) >&5; fi
@@ -780,7 +861,13 @@ questions() {
     domain) CLI_ARGS+=(--domain "$A_DOMAIN"); if [ -n "$A_EMAIL" ]; then CLI_ARGS+=(--email "$A_EMAIL"); fi ;;
     *) CLI_ARGS+=(--public-url "$A_URL") ;;
   esac
-  if [ "$A_NOPC" = 1 ] || [ -z "$A_PC" ]; then CLI_ARGS+=(--no-pc-control); else CLI_ARGS+=(--pc-control-user "$A_PC"); fi
+  if [ "$A_NOPC" = 1 ] || [ -z "$A_PC" ]; then
+    CLI_ARGS+=(--no-pc-control)
+  elif [ "$A_BROWSER" = 1 ]; then
+    CLI_ARGS+=(--pc-control-user "$A_PC" --browser)
+  else
+    CLI_ARGS+=(--pc-control-user "$A_PC" --no-browser)
+  fi
   return 0
 }
 
@@ -875,6 +962,7 @@ main() {
       # shellcheck disable=SC2086
       run apt_get install -y -q --no-install-recommends $helpers || printf 'Desktop helpers were not installed\n' >&3
     fi
+    if [ "$A_NOPC" != 1 ] && [ -n "$A_PC" ] && [ "$A_BROWSER" = 1 ]; then install_browser_packages; fi
   fi
   finish
 

@@ -125,6 +125,22 @@ class InstallerQuestionsTests(unittest.TestCase):
         self.assertEqual(args, '--address-mode|domain|--domain|josi.example.com|--email|me@example.com|--port|9443|--no-pc-control|')
         self.assertEqual(state, '1  mode port pc ')
 
+    def test_browser_flags_and_default(self):
+        result = self.shell('parse_args --pc-control-user roman --no-browser; questions; printf "%s|%s" "$A_BROWSER" "${CLI_ARGS[*]}"')
+        self.assertEqual(result.stdout, '0|--pc-control-user roman --no-browser')
+        result = self.shell('S_PC=roman; questions; printf %s "$A_BROWSER"')
+        self.assertEqual(result.stdout, '1')
+        result = self.shell('S_PC=roman S_BROWSER=0; questions; printf %s "$A_BROWSER"')
+        self.assertEqual(result.stdout, '0')
+
+    @unittest.skipUnless(Path('/usr/bin/apt-cache').exists(), 'apt required')
+    def test_browser_packages_pick_names_this_release_has(self):
+        result = self.shell('exec 3>/dev/null; browser_packages; printf %s "$REPLY"')
+        names = result.stdout.split()
+        self.assertIn('xvfb', names)
+        self.assertTrue({'libasound2', 'libasound2t64'} & set(names), names)
+        self.assertFalse({'libasound2', 'libasound2t64'} <= set(names), names)
+
     def test_unknown_flag_and_missing_value_are_refused(self):
         self.assertEqual(self.shell('parse_args --bogus').returncode, 2)
         self.assertEqual(self.shell('parse_args --port').returncode, 2)

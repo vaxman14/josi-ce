@@ -47,7 +47,16 @@ First it asks, on the terminal, with the ghost in Plum & Gold:
 3. **Let Josi control this computer?** If yes, Josi runs commands, works with
    files and starts programs as the Linux user you name (default: the user
    who ran sudo), through `josi-pc.service`.
-4. A summary to confirm.
+4. With PC control: **Give Josi her own browser?** (default yes; `--browser` /
+   `--no-browser`). Then the installer adds Xvfb, xauth, openbox, the desktop
+   tools, fonts and Chrome's libraries (each under the name this Debian or
+   Ubuntu release uses, such as `libasound2t64` or `libasound2`), and
+   `josi-browser.service` runs `pc-executor/josi-browser.mjs` as the PC
+   control user. It downloads a pinned Chrome for Testing into
+   `/var/lib/josi-pc/browser` (about 600 MB) and starts it on a hidden screen
+   with the Josi extension (`app/browser-extension/chrome`, built by
+   `scripts/unified/build-browser-extensions.mjs` during staging).
+5. A summary to confirm.
 
 The answers are saved in `/etc/josi/install.json` and are the defaults the next
 time. Nothing is asked with `--yes`, `JOSI_YES=1` or without a terminal; then

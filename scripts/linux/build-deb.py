@@ -33,7 +33,7 @@ def main() -> None:
     # in /etc/systemd/system and run the program kept in /var/lib/josi, so
     # left enabled they would start again at the next boot. Its data stays
     # unless josi-uninstall --purge is used. An upgrade leaves them alone.
-    units = ('josi.service josi-update.path josi-update.timer josi-pc.service '
+    units = ('josi.service josi-update.path josi-update.timer josi-pc.service josi-browser.service '
         + ' '.join(f'josi-ce-{role}.service' for role in ('database', 'voice', 'voice-control', 'web', 'worker', 'proxy')))
     prerm = control / 'prerm'
     prerm.write_text('#!/bin/sh\nset -e\nif [ "$1" = remove ] && [ -d /run/systemd/system ]; then\n'

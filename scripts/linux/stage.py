@@ -63,6 +63,23 @@ def bundle_cli(architecture):
     (target/'bin/claude').symlink_to('../claude/claude')
     copy(REPO/'packaging/linux/subscription-cli.lock.json',target/'inputs.lock.json')
 
+def stage_browser_extension(app):
+    """The unpacked Chrome extension Josi's own browser loads
+    (JOSI_BROWSER_EXTENSION=<version>/app/browser-extension/chrome). The
+    builder refuses an existing folder, so it gets a new one each time."""
+    import tempfile
+    # The builder zips the store packages with the compiled packages/ops.
+    if not (REPO/'packages/ops/dist/zip.js').is_file():
+        raise SystemExit('Build the code first (npx tsc -b): the browser extension build needs packages/ops/dist/zip.js')
+    with tempfile.TemporaryDirectory(prefix='josi-extensions-') as scratch:
+        output=Path(scratch)/'out'
+        subprocess.run(['node',str(REPO/'scripts/unified/build-browser-extensions.mjs'),str(output)],cwd=REPO,check=True,stdout=subprocess.DEVNULL)
+        chrome=output/'chrome'
+        if not (chrome/'manifest.json').is_file():raise SystemExit('The browser extension build made no chrome/manifest.json')
+        target=app/'browser-extension/chrome'
+        if target.exists():shutil.rmtree(target)
+        shutil.copytree(chrome,target,symlinks=False)
+
 def main():
     architecture={'x86_64':'x86_64','aarch64':'aarch64'}[platform.machine()]
     if RUNTIME.exists():shutil.rmtree(RUNTIME)
@@ -84,6 +101,7 @@ def main():
             if path.is_file() and not path.name.startswith('test') and '__pycache__' not in path.parts:
                 copy(path,app/'packaging/linux/pc-executor'/path.relative_to(executor))
     else:print('warning: packaging/linux/pc-executor/josi-pc.mjs is missing; this build has no PC control',file=sys.stderr)
+    stage_browser_extension(app)
     for name in ('bounded_http.py','gateway.py','model_smoke.py','posix_helper.py','runtime_config.py','settings.py','tts.py','windows_helper.py'):
         copy(REPO/'services/voice-box'/name,app/'services/voice-box'/name)
     if sys.argv[1:]==['--code-only']:return

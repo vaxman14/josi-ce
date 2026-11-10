@@ -27,8 +27,8 @@ systemctl disable josi.service $children >/dev/null 2>&1
 
 # PC control: the executor runs as a person's own account, so it goes in
 # either case; the install command sets it up again when it is chosen.
-systemctl disable --now josi-pc.service >/dev/null 2>&1
-rm -f /etc/systemd/system/josi-pc.service
+systemctl disable --now josi-browser.service josi-pc.service >/dev/null 2>&1
+rm -f /etc/systemd/system/josi-browser.service /etc/systemd/system/josi-pc.service
 rmdir /etc/systemd/system/josi.service.wants 2>/dev/null
 # Its browser native-messaging host: the wrapper and each browser's manifest.
 rm -f /usr/lib/josi/josi-browser-host /etc/opt/chrome/native-messaging-hosts/com.heyjosi.browser.json \

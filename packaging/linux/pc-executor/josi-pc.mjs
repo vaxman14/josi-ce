@@ -140,8 +140,13 @@ const cleanAbsolute = value => typeof value === 'string' && value.startsWith('/'
   ? (value.length > 1 ? posix.normalize(value).replace(/\/+$/, '') : '/') : null;
 const within = (folder, root) => folder === root || folder.startsWith((root === '/' ? '' : root) + '/');
 const scopeOf = (claim, kinds) => (claim.requirements || []).find(r => kinds.includes(r.scope?.kind))?.scope ?? null;
-function isProtected(path) {
+// Josi's own Chrome (josi-browser.service) lives in the state folder; its
+// program may be worked on like any other, its profile and keys may not.
+const OWN_BROWSER = join(STATE, 'browser');
+const ownBrowserProgram = path => /^chrome-[0-9.]+$/.test(path.slice(OWN_BROWSER.length + 1).split('/')[0] ?? '') && within(path, OWN_BROWSER);
+function isProtected(path, { program = false } = {}) {
   let real = path; try { real = realpathSync(path); } catch { /* missing */ }
+  if (program && ownBrowserProgram(real)) return false;
   return PROTECTED.some(root => within(path, root) || within(real, root));
 }
 /** A folder that is exactly what it says: no symbolic link anywhere on the way. */
@@ -191,7 +196,7 @@ function environment() {
     kind: 'desktop_environment', user: ME.username, home: HOME, computer: hostname(), os: osName(), linux: release(),
     is64Bit: ['x64', 'arm64'].includes(arch()), processors: cpus().length,
     folders: { home: HOME, ...xdgFolders(), temp: '/tmp' }, shells, tools, drives: drives(),
-    desktop: display ? { session: display.kind, display: display.DISPLAY ?? display.WAYLAND_DISPLAY, screenControl: !!display.x11 && !!which('xdotool') }
+    desktop: display ? { session: display.virtual ? "a hidden screen with Josi's own Chrome (josi-browser.service)" : display.kind, display: display.DISPLAY ?? display.WAYLAND_DISPLAY, screenControl: !!display.x11 && !!which('xdotool') }
       : { session: 'none', note: 'This server has no graphical session for this user: commands, terminals, files and programs work; windows and screenshots do not.' },
     administrator: sudo ? 'This user has passwordless sudo, so commands may use sudo.' : 'This user has no passwordless sudo; commands that need root cannot run.',
     josiApp: 'josi-pc.service (Linux server)', untrustedContent: true,
@@ -203,6 +208,12 @@ let displayCache = { at: 0, value: null };
 function graphical() {
   if (Date.now() - displayCache.at < 15000) return displayCache.value;
   let found = null;
+  // Josi's own hidden screen first (josi-browser.mjs), while its X server runs.
+  const own = readJson(join(STATE, 'display.json'));
+  if (own?.DISPLAY && Number.isInteger(own.pid) && existsSync('/proc/' + own.pid)) {
+    displayCache = { at: Date.now(), value: { DISPLAY: own.DISPLAY, XAUTHORITY: own.XAUTHORITY, kind: 'x11', x11: true, virtual: true } };
+    return displayCache.value;
+  }
   try {
     for (const pid of readdirSync('/proc')) {
       if (!/^\d+$/.test(pid)) continue;
@@ -386,7 +397,7 @@ async function launch(payload, claim) {
   const scope = scopeOf(claim, ['application']); const application = cleanAbsolute(payload.application);
   if (!scope || !application || application !== cleanAbsolute(scope.target)) refuse('application_missing');
   if (!existsSync(application)) refuse('application_missing');
-  if (isProtected(application) || application === process.execPath) refuse('protected_surface');
+  if (isProtected(application, { program: true }) || application === process.execPath) refuse('protected_surface');
   const extra = payload.arguments ? splitArgs(String(payload.arguments)) : [];
   let file = application, args = extra;
   if (application.endsWith('.desktop')) {
@@ -449,7 +460,7 @@ function checkedWindow(payload, claim) {
   const scope = scopeOf(claim, ['application']);
   const info = windowInfo(String(payload.windowId ?? '')); if (!info) refuse('window_gone');
   if (!info.application || !scope || info.application !== scope.target) refuse('application_changed');
-  if (isProtected(info.application) || info.processId === process.pid) refuse('protected_surface');
+  if (isProtected(info.application, { program: true }) || info.processId === process.pid) refuse('protected_surface');
   return info;
 }
 function observation(id, info, action) {

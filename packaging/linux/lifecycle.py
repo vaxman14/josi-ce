@@ -45,7 +45,12 @@ VERSION_PATTERN = r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?'
 # The installer's answers: how people reach Josi, its port and PC control.
 # Written by josi-ce-server-install (root), read here and by Runtime.mjs.
 SETTINGS = Path('/etc/josi/install.json')
-SETTINGS_KEYS = {'schemaVersion','addressMode','appUrl','lanAddress','domain','email','publicUrl','port','pcControlUser'}
+SETTINGS_KEYS = {'schemaVersion','addressMode','appUrl','lanAddress','domain','email','publicUrl','port','pcControlUser','browser'}
+# Josi's own browser (josi-browser.service): Chrome for Testing on a hidden
+# Xvfb screen, run by the launcher as the PC control account.
+BROWSER_UNIT = 'josi-browser.service'
+BROWSER_LAUNCHER = 'app/packaging/linux/pc-executor/josi-browser.mjs'
+BROWSER_EXTENSION = 'app/browser-extension/chrome'
 # PC control: josi-pc.service runs the executor as the chosen human account.
 # The web service and the executor meet only in data/pc-spool (root:josi-pc 2770).
 PC_UNIT = 'josi-pc.service'
@@ -89,7 +94,10 @@ def normalize_settings(value):
     port = value.get('port', 8080)
     if mode not in ('lan','domain','proxy'): raise ValueError('Invalid address mode')
     if not isinstance(port, int) or isinstance(port, bool) or not 1024 <= port <= 65535: raise ValueError('Invalid port')
-    result = {'schemaVersion':1,'addressMode':mode,'lanAddress':None,'domain':None,'email':None,'publicUrl':None,'port':port,'pcControlUser':None}
+    result = {'schemaVersion':1,'addressMode':mode,'lanAddress':None,'domain':None,'email':None,'publicUrl':None,'port':port,
+              'pcControlUser':None,'browser':False}
+    browser = value.get('browser', False)
+    if not isinstance(browser, bool): raise ValueError('Invalid browser answer')
     if mode == 'lan':
         result['lanAddress'] = _host(value.get('lanAddress') or '127.0.0.1')
         result['appUrl'] = f"http://{result['lanAddress']}:{port}"
@@ -115,6 +123,7 @@ def normalize_settings(value):
     if user:
         if not isinstance(user, str) or not USERNAME.fullmatch(user): raise ValueError('Invalid PC control user')
         result['pcControlUser'] = user
+        result['browser'] = browser  # only with PC control
     return result
 
 def load_settings(path=SETTINGS):
@@ -127,7 +136,9 @@ def load_settings(path=SETTINGS):
             raise ValueError('Unsafe install settings file')
         value = json.loads(os.read(descriptor, 4097))
     finally: os.close(descriptor)
-    if not isinstance(value, dict) or set(value) != SETTINGS_KEYS: raise ValueError('Invalid install settings')
+    # A file saved before the browser answer existed has no 'browser' key.
+    if not isinstance(value, dict) or set(value) not in (SETTINGS_KEYS, SETTINGS_KEYS - {'browser'}):
+        raise ValueError('Invalid install settings')
     normal = normalize_settings(value)
     if normal['appUrl'] != value['appUrl']: raise ValueError('Invalid install settings address')
     return normal
@@ -722,6 +733,7 @@ class Lifecycle:
                 path.unlink()
                 subprocess.run(['/usr/bin/systemctl','daemon-reload'], check=True, timeout=60)
             self.apply_browser_host(False)
+            self.apply_own_browser(None, None, settings)
             return False
         if not (self.installed/PC_EXECUTOR).is_file(): raise ValueError('This Josi version has no PC control executor')
         user, group = pc_account(settings['pcControlUser'])
@@ -731,6 +743,9 @@ class Lifecycle:
             durable(path, text, replace=path.exists(), mode=0o644)
             subprocess.run(['/usr/bin/systemctl','daemon-reload'], check=True, timeout=60)
         subprocess.run(['/usr/bin/systemctl','enable',PC_UNIT], check=True, capture_output=True, timeout=60)
+        try: self.apply_own_browser(user.pw_name, group, settings)
+        except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+            self.progress("Josi's own browser was not set up: "+str(error)[:200], 'pc-control')
         # Browser control is a part of PC control, never a reason to fail it.
         try: self.apply_browser_host(True)
         except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
@@ -781,12 +796,50 @@ class Lifecycle:
         put(BROWSER_WRAPPER, wrapper, 0o755)
         for path, text in files: put(path, text, 0o644)
 
+    def browser_unit(self, user, group, program=None):
+        """Josi's own browser, as the PC control account, from this version."""
+        program = program or self.installed
+        if not USERNAME.fullmatch(user) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.-]{0,31}', group):
+            raise ValueError('Unsafe PC control account')
+        command = [program/'node/bin/node', program/BROWSER_LAUNCHER]
+        if any(re.search(r'[\s"\'\\]', str(value)) for value in [*command, program/BROWSER_EXTENSION]):
+            raise ValueError('Unsafe systemd argument')
+        lines = ['[Unit]',"Description=Josi's own browser for "+user,'PartOf='+PARENT_UNIT,'After='+PC_UNIT,
+                 '[Service]','Type=simple','User='+user,'Group='+group,'StateDirectory=josi-pc','StateDirectoryMode=0700',
+                 'Environment=JOSI_PC_STATE=/var/lib/josi-pc','Environment=JOSI_BROWSER_EXTENSION='+str(program/BROWSER_EXTENSION),
+                 'ExecStart='+' '.join(str(value) for value in command),'Restart=always','RestartSec=5',
+                 '[Install]','WantedBy='+PARENT_UNIT,'']
+        return '\n'.join(lines).encode()
+
+    def apply_own_browser(self, user, group, settings):
+        """Write josi-browser.service for the current version, or remove it
+        when the browser or PC control is off."""
+        if self.isolated: return False
+        path = UNIT_DIR/BROWSER_UNIT
+        if path.is_symlink(): raise ValueError('Linked browser unit')
+        if not user or not settings.get('browser'):
+            if path.exists():
+                subprocess.run(['/usr/bin/systemctl','disable','--now',BROWSER_UNIT], capture_output=True, timeout=70)
+                path.unlink()
+                subprocess.run(['/usr/bin/systemctl','daemon-reload'], check=True, timeout=60)
+            return False
+        if not (self.installed/BROWSER_LAUNCHER).is_file() or not (self.installed/BROWSER_EXTENSION/'manifest.json').is_file():
+            raise ValueError("This Josi version has no browser launcher or extension")
+        text = self.browser_unit(user, group)
+        if not path.exists() or path.read_bytes() != text:
+            durable(path, text, replace=path.exists(), mode=0o644)
+            subprocess.run(['/usr/bin/systemctl','daemon-reload'], check=True, timeout=60)
+        subprocess.run(['/usr/bin/systemctl','enable',BROWSER_UNIT], check=True, capture_output=True, timeout=60)
+        return True
+
     def start_pc_control(self):
-        """Restart the executor on the current version. Never fatal: Josi
-        itself runs without it and systemd keeps retrying."""
-        if self.isolated or not (UNIT_DIR/PC_UNIT).exists(): return
-        self.progress('Starting services', 'pc-control')
-        subprocess.run(['/usr/bin/systemctl','restart',PC_UNIT], capture_output=True, timeout=70)
+        """Restart the executor (and Josi's browser) on the current version.
+        Never fatal: Josi itself runs without them and systemd keeps retrying."""
+        if self.isolated: return
+        for unit in (PC_UNIT, BROWSER_UNIT):
+            if (UNIT_DIR/unit).exists():
+                self.progress('Starting services', unit.removesuffix('.service'))
+                subprocess.run(['/usr/bin/systemctl','restart',unit], capture_output=True, timeout=70)
 
     def check_owned(self, program):
         if self.isolated: return
@@ -803,9 +856,10 @@ class Lifecycle:
                 raise ValueError('Unowned service definition')
 
     def stop(self):
-        if not self.isolated and (UNIT_DIR/PC_UNIT).exists():
-            self.progress('Stopping services', 'pc-control')
-            subprocess.run(['/usr/bin/systemctl','stop',PC_UNIT], capture_output=True, timeout=70)
+        for unit in (BROWSER_UNIT, PC_UNIT):
+            if not self.isolated and (UNIT_DIR/unit).exists():
+                self.progress('Stopping services', unit.removesuffix('.service'))
+                subprocess.run(['/usr/bin/systemctl','stop',unit], capture_output=True, timeout=70)
         for role in STOP:
             self.progress('Stopping services', role)
             if self.isolated:
@@ -1104,10 +1158,13 @@ class Lifecycle:
                 for role in restart:
                     subprocess.run(['/usr/bin/systemctl','restart',UNIT_PREFIX+role+'.service'], capture_output=True, timeout=70)
                 raise
-            pc_before = (UNIT_DIR/PC_UNIT).read_bytes() if (UNIT_DIR/PC_UNIT).exists() else None
+            units = lambda: [(UNIT_DIR/unit).read_bytes() if (UNIT_DIR/unit).exists() else None for unit in (PC_UNIT, BROWSER_UNIT)]
+            pc_before = units()
             if self.apply_pc_control(cfg, settings):
-                if (UNIT_DIR/PC_UNIT).read_bytes() != pc_before: self.start_pc_control()
-                else: subprocess.run(['/usr/bin/systemctl','start',PC_UNIT], capture_output=True, timeout=70)
+                if units() != pc_before: self.start_pc_control()
+                else:
+                    for unit in (PC_UNIT, BROWSER_UNIT):
+                        if (UNIT_DIR/unit).exists(): subprocess.run(['/usr/bin/systemctl','start',unit], capture_output=True, timeout=70)
             self.record_applied(cfg, settings)
             durable(self.root/'status.json',{'installed':True,'version':cfg['version'],'publicPort':cfg['publicPort']},replace=True,mode=0o644)
             return restart
