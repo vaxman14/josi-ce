@@ -28,7 +28,7 @@ function BrowserView({ sessionId, initial, onEnded }: { sessionId: string; initi
   useEffect(() => {
     let alive = true;
     const control = new AbortController();
-    let seq = 0, current: string | null = null;
+    let seq = 0;
     void (async () => {
       while (alive) {
         try {
@@ -43,10 +43,10 @@ function BrowserView({ sessionId, initial, onEnded }: { sessionId: string; initi
           const width = Number(res.headers.get('X-Frame-Width')) || size.current?.width || 0;
           const height = Number(res.headers.get('X-Frame-Height')) || size.current?.height || 0;
           size.current = { width, height };
-          const url = URL.createObjectURL(blob);
+          // An inline image, not a temporary blob link: nothing to revoke while the browser still needs it.
+          const url = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob); });
+          if (!alive) return;
           setFrame({ url, width, height });
-          if (current) URL.revokeObjectURL(current);
-          current = url;
           setProblem('');
         } catch {
           if (!alive) return;
@@ -61,7 +61,7 @@ function BrowserView({ sessionId, initial, onEnded }: { sessionId: string; initi
         .then(() => setProblem(''))
         .catch((e) => { if (e instanceof ApiError && e.status === 410) endedRef.current(); else setProblem(e instanceof Error ? e.message : 'Input was not delivered.'); });
     }, 100);
-    return () => { alive = false; control.abort(); window.clearInterval(sender); if (current) URL.revokeObjectURL(current); };
+    return () => { alive = false; control.abort(); window.clearInterval(sender); };
   }, [sessionId]);
 
   const point = useCallback((clientX: number, clientY: number) => {

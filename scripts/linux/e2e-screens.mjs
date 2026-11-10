@@ -129,7 +129,8 @@ try {
     await page.waitForTimeout(1_000);
     await page.screenshot({ path: join(out, 'sign-in-card.png') });
     const answers = [];
-    page.on('response', (r) => { if (r.url().includes('/api/live-signin')) answers.push(`${r.request().method()} ${new URL(r.url()).pathname} ${r.status()}`); });
+    let sid = '';
+    page.on('response', (r) => { if (r.url().includes('/api/live-signin')) { answers.push(`${r.request().method()} ${new URL(r.url()).pathname} ${r.status()}`); const m = /sessions\/([0-9a-f-]{36})/.exec(r.url()); if (m) sid = m[1]; } });
     await open.click();
     const panel = page.getByTestId('josi.live-signin');
     try { await panel.waitFor({ timeout: 20_000 }); }
@@ -138,9 +139,24 @@ try {
       const alerts = await page.locator('[role=alert]').allInnerTexts().catch(() => []);
       throw new Error(`the panel never opened. Server answers: ${JSON.stringify(answers)}; alerts: ${JSON.stringify(alerts)}; ${String(error.message).slice(0, 80)}`);
     }
-    const picture = panel.locator('img').first();
-    await picture.waitFor({ timeout: 30_000 });
-    await page.waitForFunction(() => { const i = document.querySelector('[data-testid="josi.live-signin"] img'); return i && i.naturalWidth > 200; }, null, { timeout: 30_000 });
+    // The real picture: an inline image the size of her screen, not the loading spinner.
+    try {
+      await page.waitForFunction(() => { const i = document.querySelector('[data-testid="josi.live-signin"] img[src^="data:image/jpeg"]'); return !!i && i.naturalWidth >= 800; }, null, { timeout: 40_000 });
+    } catch (error) {
+      await page.screenshot({ path: join(out, 'sign-in-no-picture.png') });
+      const probe = await page.evaluate(async (id) => {
+        try {
+          const r = await fetch(`/api/live-signin/sessions/${id}/frame?after=0&wait=3000`, { credentials: 'same-origin', cache: 'no-store' });
+          const blob = await r.blob(); const head = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+          let decoded = 'no';
+          try { const bmp = await createImageBitmap(blob); decoded = `${bmp.width}x${bmp.height}`; } catch (e) { decoded = 'decode failed: ' + e.message; }
+          return { status: r.status, type: blob.type, size: blob.size, head: [...head].map((x) => x.toString(16)).join(''), enc: r.headers.get('content-encoding'), hdrType: r.headers.get('content-type'), decoded };
+        } catch (e) { return { error: String(e) }; }
+      }, sid);
+      console.log('frame probe in the page:', JSON.stringify(probe));
+      const imgs = await page.evaluate(() => [...document.querySelectorAll('img')].map((i) => ({ src: i.src.slice(0, 12), complete: i.complete, w: i.naturalWidth, h: i.naturalHeight, inPanel: !!i.closest('[data-testid="josi.live-signin"]') })).filter((i) => i.inPanel));
+      throw new Error(`no live picture arrived; the panel said: images: ${JSON.stringify(imgs)}; ${(await panel.innerText()).replace(/\s+/g, ' ').slice(0, 200)}; answers: ${JSON.stringify(Object.entries(answers.reduce((m, x) => { const k = x.replace(/[0-9a-f]{8}-[0-9a-f-]{27}/, ':id'); m[k] = (m[k] ?? 0) + 1; return m; }, {})))}`);
+    }
     const privacy = await panel.getByTestId('josi.live-signin.privacy').innerText();
     if (!/never sees/i.test(privacy)) throw new Error('the panel does not say Josi never sees the screen: ' + privacy);
     await page.screenshot({ path: join(out, 'sign-in-live-view.png') });

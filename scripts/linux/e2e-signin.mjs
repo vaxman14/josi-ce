@@ -129,7 +129,9 @@ await step('1 a browser card opens a live view of Josi\'s own Chrome', async () 
   assert(opened.kind === 'browser', 'wrong session kind');
   globalThis.SESSION = opened.id;
   const picture = await frame(opened.id, 0, 30000);
+  if (process.env.E2E_SAVE_FRAME) (await import('node:fs')).writeFileSync(process.env.E2E_SAVE_FRAME, picture.jpeg);
   assert(picture.jpeg[0] === 0xff && picture.jpeg[1] === 0xd8, 'the first picture is not a JPEG');
+  assert(picture.jpeg[picture.jpeg.length - 2] === 0xff && picture.jpeg[picture.jpeg.length - 1] === 0xd9, 'the picture does not end like a JPEG (cut short)');
   assert(picture.width > 200 && picture.height > 200, 'the picture has no size');
   return `first picture ${picture.width}x${picture.height}, ${picture.jpeg.length} bytes`;
 });

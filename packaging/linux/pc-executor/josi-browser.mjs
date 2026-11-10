@@ -123,7 +123,7 @@ async function serve() {
     log('hidden screen', display, 'is up');
     let sandbox = true, quickFailures = 0;
     while (alive(server) && !stopping) {
-      const args = [`--user-data-dir=${PROFILE}`, `--load-extension=${EXTENSION}`, '--no-first-run', '--no-default-browser-check',
+      const args = [`--user-data-dir=${PROFILE}`, `--load-extension=${EXTENSION}`, '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble', '--hide-crash-restore-bubble',
         '--password-store=basic', '--disable-dev-shm-usage', '--disable-features=Translate,MediaRouter', '--window-position=0,0',
         `--window-size=${WIDTH},${HEIGHT}`, '--start-maximized', ...(sandbox ? [] : ['--no-sandbox']), 'about:blank'];
       const startedAt = Date.now();
