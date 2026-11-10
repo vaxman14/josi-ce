@@ -28,7 +28,11 @@ import {
 import { saveSmtpProfiles, SmtpConfigurationError } from '@josi-ce/mail';
 import { describeProvider, discoverModels, saveModelConfiguration, ModelConfigurationError } from '@josi-ce/llm';
 import { reconcileWorkspaceMount } from '@josi-ce/storage';
-import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
+import {
+  CAPABILITIES, buildAuthUrl, clearSystemMailAccount, clientStatuses, connectionsFor, createStateStore, grantsMailSend, isHeyJosiClient,
+  loadClient, NoClientError, saveClient, scopesFor, setSystemMailAccount, systemMailAccount, SystemMailAccountError,
+} from '@josi-ce/connectors';
+import { canonicalDeployment, SETUP_MAIL_RETURN } from '../http/connectorRoutes.js';
 import { claudeSubscriptionRouter, claudeSubscriptionStatus } from '../http/claudeSubscriptionRoutes.js';
 import { codexSubscriptionRouter, codexSubscriptionStatus } from '../http/codexSubscriptionRoutes.js';
 import { hasCapability, readLocalExecutors } from '@josi-ce/core';
@@ -51,7 +55,7 @@ import { archiveUpload } from '../http/archiveUpload.js';
 import { asyncRoute, param } from '../http/async.js';
 import { blockingFailures, runHostChecks } from './hostChecks.js';
 import { STEP_DESCRIPTORS, SETUP_STEPS, canSubmit, nextStep, type SetupStep } from './steps.js';
-import { assertModelIsOffered, verifyLlm, verifyOAuthClient, verifySmtp, SETUP_PROBE_KEY, type VerifyOutcome } from './verifySteps.js';
+import { assertModelIsOffered, verifyAccountMail, verifyLlm, verifyOAuthClient, verifySmtp, SETUP_PROBE_KEY, type VerifyOutcome } from './verifySteps.js';
 import { probeProgress } from '../http/probeProgress.js';
 
 export interface SetupRoutesCtx {
@@ -74,6 +78,9 @@ export interface SetupRoutesCtx {
   restoreReader?: import('@josi-ce/ops').RestoreReader;
   attachmentsDir?: string | null;
   version?: string;
+  /** The browser-facing address, for the Google and Microsoft return addresses
+   * the email step shows. */
+  appUrl?: string;
 }
 
 /** Everything setup is allowed to claim it checked.
@@ -322,6 +329,108 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
     '/models/probe-progress',
     asyncRoute(async (_req, res) => res.json(probeProgress(SETUP_PROBE_KEY))),
   );
+
+  // ---------------------------------------------- email through an account
+  // The email step offers two ways: an SMTP server, or the owner's own Google
+  // or Microsoft account. The second needs three things setup otherwise leaves
+  // for later: the provider's application keys, the owner's account connected,
+  // and that account chosen for Josi's own email. They are done here, for the
+  // owner setup just created, and only while the email step is open.
+
+  /** The owner, when the email step is the current one or is being redone. */
+  async function mailStepOwner(): Promise<{ id: string }> {
+    const state = await getSetupState(db);
+    if (state.completed) throw new SetupError(404, 'not found');
+    if (!canSubmit('smtp', state.completed_steps ?? []).ok) throw new SetupError(409, 'Email is not the current setup step.');
+    const [owner] = await db.query<{ id: string }>("select id from users where role='super_admin' order by created_at limit 1");
+    if (!owner) throw new SetupError(409, 'Complete owner setup before configuring email.');
+    return owner;
+  }
+  const mailRoute = (work: (req: import('express').Request, res: import('express').Response) => Promise<unknown>) =>
+    asyncRoute(async (req, res) => {
+      try { return await work(req, res); }
+      catch (err) {
+        if (err instanceof SetupError) return res.status(err.status).json({ error: err.message });
+        if (err instanceof VaultLockedError) return res.status(423).json({ error: 'Unlock the Vault first.' });
+        throw err;
+      }
+    });
+
+  /** What the email step can offer, and how far the account way has got. */
+  r.get('/mail-account', mailRoute(async (_req, res) => {
+    const state = await getSetupState(db);
+    if (state.completed) throw new SetupError(404, 'not found');
+    const bases = await mailAccountBases(ctx);
+    const clients = await clientStatuses(db);
+    const [owner] = await db.query<{ id: string }>("select id from users where role='super_admin' order by created_at limit 1");
+    const connections = owner ? await connectionsFor(db, { ownerUserId: owner.id }) : [];
+    const chosen = await systemMailAccount(db);
+    return res.json({
+      available: !!bases,
+      publicAddress: bases?.connect ?? null,
+      reason: bases ? null : MAIL_ACCOUNT_NEEDS_HTTPS,
+      providers: MAIL_ACCOUNT_PROVIDERS.map((provider) => {
+        const client = clients.find((c) => c.provider === provider);
+        const connection = connections.find((c) => c.provider === provider && c.status === 'active');
+        return {
+          provider,
+          configured: !!client?.configured,
+          clientId: client?.configured ? client.clientId : null,
+          // Both are registered with the provider: the first connects the
+          // account, the second is the sign-in button on the login page.
+          redirectUris: bases ? [`${bases.connect}/api/connections/${provider}/callback`, `${bases.signIn}/api/auth/${provider}/callback`] : [],
+          connected: connection ? { email: connection.account_email, canSend: grantsMailSend(connection) } : null,
+        };
+      }),
+      chosen: chosen ? { provider: chosen.provider, email: chosen.accountEmail, active: chosen.active } : null,
+    });
+  }));
+
+  /** Save one provider's application keys and ask the provider whether it knows them. */
+  r.put('/mail-account/client/:provider', mailRoute(async (req, res) => {
+    const owner = await mailStepOwner();
+    const provider = param(req, 'provider');
+    if (!isMailAccountProvider(provider)) throw new SetupError(404, 'no such provider');
+    const bases = await mailAccountBases(ctx);
+    if (!bases) throw new SetupError(409, MAIL_ACCOUNT_NEEDS_HTTPS);
+    const clientId = str(req.body?.clientId, 400);
+    const clientSecret = asSecret(req.body?.clientSecret);
+    if (!clientId) throw new SetupError(400, 'Enter the client ID.');
+    if (clientSecret.isEmpty) throw new SetupError(400, 'Enter the client secret.');
+    const key = requireMasterKey(ctx);
+    await saveClient(db, key, {
+      provider, clientId, clientSecret: clientSecret.reveal(),
+      redirectUri: `${bases.connect}/api/connections/${provider}/callback`, actorUserId: owner.id,
+    });
+    const verification = await verifyOAuthClient({ db, masterKey: key, provider, fetchImpl: ctx.connectorFetch });
+    return res.json({ ok: verification.status === 'passed', verification });
+  }));
+
+  /** Start connecting the owner's account. Answers the address to open; the
+   * provider sends the browser back to /api/connections/:provider/callback,
+   * which finishes a setup handshake without a session (connectorRoutes). */
+  r.post('/mail-account/start', mailRoute(async (req, res) => {
+    const owner = await mailStepOwner();
+    const provider = str(req.body?.provider, 16);
+    if (!isMailAccountProvider(provider)) throw new SetupError(400, 'Choose Google or Microsoft.');
+    const key = requireMasterKey(ctx);
+    let client;
+    try { client = await loadClient(db, key, provider); }
+    catch (err) {
+      if (err instanceof NoClientError) throw new SetupError(409, 'Save the client ID and secret first.');
+      throw err;
+    }
+    if (isHeyJosiClient(client)) throw new SetupError(409, 'Save the client ID and secret first.');
+    // The whole bundle once, as the Connections page asks it, so the owner is
+    // not sent back to the consent screen for calendar or files later.
+    const capabilities = CAPABILITIES.filter((c) => c.provider === provider).map((c) => c.key);
+    const scopes = scopesFor(provider, capabilities);
+    const { state, challenge } = await createStateStore(db, key).start({
+      userId: owner.id, sessionId: null, provider, capabilities, scopes, returnPath: SETUP_MAIL_RETURN,
+    });
+    await appendEvent(db, { actorUserId: owner.id, actor: 'user', kind: 'connection.handshake_started', payload: { provider, capabilities, during: 'setup' } });
+    return res.json({ url: buildAuthUrl(client, { state, scopes, codeChallenge: challenge }) });
+  }));
 
   /** One endpoint per step. The step name is in the PATH, never in the body,
    * and the server checks it against the state machine before doing anything. */
@@ -927,6 +1036,33 @@ async function applyStep(
         return;
       }
 
+      // The other way: Josi's own email through the Google or Microsoft
+      // account the owner connected a moment ago in this step.
+      if (body.account && typeof body.account === 'object') {
+        const account = body.account as Record<string, unknown>;
+        const provider = str(account.provider, 16);
+        if (!isMailAccountProvider(provider)) throw new SetupError(400, 'Choose Google or Microsoft.');
+        const name = provider === 'google' ? 'Google' : 'Microsoft';
+        const accountTestTo = str(body.testTo, 320);
+        if (!accountTestTo) {
+          throw new SetupError(400, 'Enter an address to send a test message to. Josi does not report mail as working without sending one.');
+        }
+        const accountKey = requireMasterKey(ctx);
+        const [accountOwner] = await db.query<{ id: string }>("select id from users where role='super_admin' order by created_at limit 1");
+        if (!accountOwner) throw new SetupError(409, 'Complete owner setup before configuring email.');
+        const connection = (await connectionsFor(db, { ownerUserId: accountOwner.id, provider })).find((c) => c.status === 'active');
+        if (!connection) throw new SetupError(409, `Connect your ${name} account first.`);
+        try {
+          await setSystemMailAccount(db, { connectionId: connection.id, fromName: str(account.fromName, 120) || 'Josi', actorUserId: accountOwner.id });
+        } catch (err) {
+          if (err instanceof SystemMailAccountError) throw new SetupError(409, err.message);
+          throw err;
+        }
+        const outcome = await verifyAccountMail({ db, masterKey: accountKey, to: accountTestTo, fetchImpl: ctx.connectorFetch });
+        await recordVerification(db, { item: 'smtp', status: outcome.status, category: outcome.category ?? null, detail: outcome.detail, target: outcome.target ?? null });
+        return { verification: outcome };
+      }
+
       const system = (body.system ?? {}) as Record<string, unknown>;
       const comms = (body.communications ?? {}) as Record<string, unknown>;
 
@@ -979,6 +1115,9 @@ async function applyStep(
           security: str(comms.security, 16) || 'starttls', username: str(comms.username, 320) || null, password: asSecret(comms.password),
           fromName: str(comms.fromName, 120) || null, fromAddress: str(comms.fromAddress, 320), clearPassword: bool(comms.clearPassword) },
       });
+      // An SMTP server was chosen, so a connected account stops sending
+      // Josi's own email. The account itself stays connected.
+      await clearSystemMailAccount(db, vaultOwner.id);
       // The message goes out now, with the credentials that were just stored.
       const outcome = await verifySmtp({
         db, masterKey: requireMasterKey(ctx), to: testTo, transport: ctx.mailTransport,
@@ -1126,12 +1265,32 @@ async function runVerification(
     return verifyLlm({ db, masterKey, fetchImpl: ctx.llmFetch });
   }
 
+  if (await systemMailAccount(db)) {
+    return verifyAccountMail({ db, masterKey: requireMasterKey(ctx), to: str(body.to, 320), fetchImpl: ctx.connectorFetch });
+  }
   return verifySmtp({
     db,
     masterKey: requireMasterKey(ctx),
     to: str(body.to, 320),
     transport: ctx.mailTransport,
   });
+}
+
+// ------------------------------------------------- email through an account
+
+const MAIL_ACCOUNT_PROVIDERS = ['google', 'microsoft'] as const;
+type MailAccountProviderName = typeof MAIL_ACCOUNT_PROVIDERS[number];
+const isMailAccountProvider = (value: string): value is MailAccountProviderName => (MAIL_ACCOUNT_PROVIDERS as readonly string[]).includes(value);
+const MAIL_ACCOUNT_NEEDS_HTTPS = 'Google and Microsoft only return to a public HTTPS address, and this Josi was set up with a local one. Use an SMTP server now; you can add Google or Microsoft later under Connectors once Josi has a domain.';
+
+/** The two addresses a provider must be told about, or null when this Josi
+ * has no public HTTPS address to return to. Connecting returns to the address
+ * stored with the application; sign-in returns to APP_URL, as authRoutes builds it. */
+async function mailAccountBases(ctx: SetupRoutesCtx): Promise<{ connect: string; signIn: string } | null> {
+  const appUrl = (ctx.appUrl ?? '').replace(/\/$/, '');
+  const { publicHttpsBase: base } = await canonicalDeployment(ctx.db, appUrl);
+  if (!base) return null;
+  return { connect: base, signIn: appUrl.startsWith('https://') ? appUrl : base };
 }
 
 // ------------------------------------------------------------------- review
@@ -1172,7 +1331,7 @@ async function reviewItems(ctx: SetupRoutesCtx): Promise<ReviewItemInput[]> {
       key: 'smtp',
       label: 'Email sending',
       required: false,
-      configured: !!systemMail,
+      configured: !!systemMail || !!(await systemMailAccount(db)),
       verification: verifications.get('smtp') ?? null,
     },
   ];
@@ -1265,6 +1424,10 @@ async function buildReviewDetail(db: Db): Promise<Record<string, unknown>> {
         }
       : null,
     telemetry: { enabled: telemetry?.enabled ?? false },
+    mailAccount: await (async () => {
+      const chosen = await systemMailAccount(db);
+      return chosen ? { provider: chosen.provider, email: chosen.accountEmail, fromName: chosen.fromName, active: chosen.active } : null;
+    })(),
     reminders: [
       'Back up the installation master key separately. A database backup alone cannot restore your saved credentials.',
     ],

@@ -11,7 +11,7 @@
 //   * The callback believes the stored handshake, not the query string.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, asSecret, loadMasterKey, VaultError, VaultLockedError, type Db, type LoadOptions, type MasterKey,
+  appendEvent, asSecret, getSetupState, loadMasterKey, VaultError, VaultLockedError, type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
   CAPABILITIES, CapabilityError, ConnectorError, NoClientError, NEXTCLOUD_STORAGE_CAPABILITY,
@@ -35,6 +35,9 @@ import { isNativeClient } from './cookies.js';
  * binding still holds and a leaked code is useless without that session and
  * the PKCE verifier kept here. */
 const NATIVE_CONNECTION_RETURN = '/app/connections/native-return';
+/** Where first-run setup's own handshake returns: the email step, which
+ * connects the owner's account before any session exists. */
+export const SETUP_MAIL_RETURN = '/setup?mail=connected';
 const NATIVE_CONNECTION_URI = 'josi://connections/callback';
 /** An app that asks for the outcome itself (start with `poll: true`) needs no
  * link back from the browser: the callback keeps what the provider returned
@@ -76,7 +79,7 @@ function storageCapabilityFor(provider: Provider): string {
   return isOAuthProvider(provider) ? STORAGE_CAPABILITY[provider] : NEXTCLOUD_STORAGE_CAPABILITY;
 }
 
-async function canonicalDeployment(db: Db, fallback: string): Promise<{ origin: string; publicHttpsBase: string | null }> {
+export async function canonicalDeployment(db: Db, fallback: string): Promise<{ origin: string; publicHttpsBase: string | null }> {
   const configured = fallback.replace(/\/$/, '');
   let publicOrigin: string | null = null;
   let parsed: URL | null = null;
@@ -156,6 +159,17 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
     void (async () => {
       const provider = param(req, 'provider'), state = req.query.state;
       if (!isOAuthRouteProvider(provider) || typeof state !== 'string' || !state || state.length > 512) return next();
+      // First-run setup has no session at all. Its email step starts a
+      // handshake for the owner it just created; that handshake, and only
+      // while setup is still open, is finished here. The stored state says who
+      // is connecting, exactly as it does for every other handshake.
+      const [setupPending] = await db.query<{ id: string }>(
+        `select id from oauth_states where id = $1 and provider = $2 and return_path = $3 and session_id is null and consumed_at is null and expires_at > now()`,
+        [state, provider, SETUP_MAIL_RETURN]);
+      if (setupPending && !(await getSetupState(db)).completed) {
+        return finishHandshake(req, res, provider, state, typeof req.query.error === 'string', String(req.query.code ?? ''), null, null,
+          (reason) => `/setup?mail=failed&reason=${encodeURIComponent(reason)}`);
+      }
       const [pending] = await db.query<{ id: string }>(
         `select id from oauth_states where id = $1 and provider = $2 and return_path = $3 and consumed_at is null and expires_at > now()`,
         [state, provider, NATIVE_CONNECTION_RETURN]);
@@ -421,11 +435,11 @@ export function connectorRoutes(ctx: ConnectorRoutesCtx): Router {
    * set: answer JSON and accept only a native handshake; unset: redirect the
    * browser and refuse a native handshake. */
   async function finishHandshake(req: Request, res: Response, provider: OAuthProvider, state: string, declined: boolean,
-    code: string, sessionId: string | null, nativeOnly: string | null) {
+    code: string, sessionId: string | null, nativeOnly: string | null, failTo?: (reason: string) => string) {
     {
       const fail = (reason: string) => nativeOnly
         ? res.status(409).json({ error: reason, reason })
-        : res.redirect(`/app/connections?error=${encodeURIComponent(reason)}`);
+        : res.redirect(failTo ? failTo(reason) : `/app/connections?error=${encodeURIComponent(reason)}`);
 
       // The provider itself can refuse — a person clicking "cancel" lands here.
       if (declined) {
@@ -686,7 +700,7 @@ export function adminConnectorRoutes(ctx: ConnectorRoutesCtx): Router {
         suggestedRedirectUris: PROVIDERS.map((provider) => ({
           provider,
           uri: `${appUrl}/api/connections/${provider}/callback`,
-          additionalUris: provider === 'google' ? [`${appUrl}/api/auth/google/callback`] : [],
+          additionalUris: provider === 'google' || provider === 'microsoft' ? [`${appUrl}/api/auth/${provider}/callback`] : [],
         })),
       });
     }),

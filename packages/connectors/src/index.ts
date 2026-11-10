@@ -21,3 +21,4 @@ export * from './workflows.js';
 export * from './obsidian.js';
 export * from './developerCredentials.js';
 export * from './heyJosi.js';
+export * from './systemMail.js';

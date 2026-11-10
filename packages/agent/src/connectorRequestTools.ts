@@ -7,7 +7,7 @@
 // per connector, standing until revoked; a request unanswered for a week
 // expires and the member is told.
 import { json, type Db, type MasterKey } from '@josi-ce/core';
-import { OAUTH_PROVIDERS, DEVELOPER_SERVICE_CATALOG, isDeveloperService, mayConnect, allowDeveloperServiceFor, revokeDeveloperServiceFor } from '@josi-ce/connectors';
+import { accountMailSender, OAUTH_PROVIDERS, DEVELOPER_SERVICE_CATALOG, isDeveloperService, mayConnect, allowDeveloperServiceFor, revokeDeveloperServiceFor } from '@josi-ce/connectors';
 import { loadProfile, smtpTransport } from '@josi-ce/mail';
 import type { ToolSpec } from './tools.js';
 import { providerName } from './credentialCardTools.js';
@@ -45,8 +45,9 @@ async function emailOwners(db: Db, key: MasterKey | null, subject: string, text:
   try {
     const owners = await db.query<{ email: string }>(`select email from users where role = 'super_admin' and status = 'active' and email <> ''`);
     if (!owners.length) return false;
-    const profile = await loadProfile(db, key, 'system');
-    await smtpTransport(profile).send({ from: `${profile.fromName} <${profile.fromAddress}>`, replyTo: profile.fromAddress, to: owners.map((o) => o.email), cc: [],
+    const account = await accountMailSender(db, key);
+    const profile = account?.profile ?? await loadProfile(db, key, 'system');
+    await (account?.transport ?? smtpTransport(profile as Awaited<ReturnType<typeof loadProfile>>)).send({ from: `${profile.fromName} <${profile.fromAddress}>`, replyTo: profile.fromAddress, to: owners.map((o) => o.email), cc: [],
       subject, text, headers: { 'Auto-Submitted': 'auto-generated' }, attachments: [] });
     return true;
   } catch { return false; }

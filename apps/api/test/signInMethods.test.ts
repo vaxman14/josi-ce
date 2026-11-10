@@ -105,7 +105,7 @@ async function challenge(b: ReturnType<typeof browser>) {
 
 describe('what the sign-in page offers', () => {
   it('reports passkeys and email codes when the server can do them', async () => {
-    expect((await browser().get('/auth/methods')).body).toEqual({ passkey: true, passkeyOrigin: ORIGIN, emailCode: true, appleUrl: null });
+    expect((await browser().get('/auth/methods')).body).toEqual({ passkey: true, passkeyOrigin: ORIGIN, emailCode: true, appleUrl: null, google: false, microsoft: false });
   });
 
   it('hides each one when its feature is off', async () => {

@@ -34,6 +34,13 @@ export const SETUP_EXEMPT_PREFIXES = ['/setup'] as const;
  * expose login and recovery routes during setup. */
 const ALWAYS_AVAILABLE_PATHS = new Set(['/auth/csrf']);
 
+/** Where Google and Microsoft send the browser back after the owner connects
+ * an account in setup's email step. The address is the one registered with the
+ * provider, so it cannot live under /setup. Letting it through opens nothing:
+ * the route behind it acts only on an unspent handshake that setup itself
+ * started, and answers 401 for anything else. */
+const SETUP_OAUTH_RETURN = /^\/connections\/(google|microsoft)\/callback$/;
+
 function isSetupPath(path: string): boolean {
   return SETUP_EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 }
@@ -89,6 +96,7 @@ export function setupGate(db: Db, setupTokenSha256?: string | null, cookieSecure
     }
 
     if (!completed) {
+      if (req.method === 'GET' && SETUP_OAUTH_RETURN.test(req.path)) { next(); return; }
       if (setupPath) {
         if (expected && !handoffs.authorized(readCookie(req, SETUP_SESSION_COOKIE))) {
           const supplied = req.get('x-josi-setup-token') ?? '';

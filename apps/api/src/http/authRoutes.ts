@@ -2,12 +2,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import {
   SESSION_TTL_SECONDS, consumeAuthToken, createSession, issueAuthToken, login, peekAuthToken,
-  revokeSession, setPassword, verifyPassword, startGoogleLogin, consumeGoogleLogin, GOOGLE_NATIVE_RETURN_URI, relyingParty,
+  revokeSession, setPassword, verifyPassword, startGoogleLogin, consumeGoogleLogin, GOOGLE_NATIVE_RETURN_URI, type LoginProvider, relyingParty,
   MfaError, adoptMfa, assertCanAdoptMfa, beginMfaSetup, enableMfa, disableMfa, completeMfaLogin, verifyMfaFactor,
 } from '@josi-ce/auth';
 import { appendEvent, loadMasterKey, VaultError, VaultLockedError, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
-import { buildAuthUrl, exchangeCode, fetchIdentity, hostedCall, hostedLink, loadClient } from '@josi-ce/connectors';
+import { accountMailSender, buildAuthUrl, exchangeCode, fetchIdentity, hostedCall, hostedLink, loadClient } from '@josi-ce/connectors';
 import { generateURI } from 'otplib';
 import QRCode from 'qrcode';
 import { asyncRoute, param } from './async.js';
@@ -72,35 +72,41 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
 
   const NATIVE_GOOGLE_RETURN_URI = GOOGLE_NATIVE_RETURN_URI;
 
-  async function startGoogle(returnUri: string | null, req: Request, res: Response) {
+  /** What each provider is asked for at sign-in: who this is, nothing else.
+   * Microsoft says who through Graph, which needs User.Read. */
+  const LOGIN_SCOPES: Record<LoginProvider, string> = { google: 'openid email profile', microsoft: 'openid email profile User.Read' };
+
+  async function startLogin(provider: LoginProvider, returnUri: string | null, req: Request, res: Response) {
+    const unavailable = `${provider}_unavailable`;
     if (returnUri !== null && returnUri !== NATIVE_GOOGLE_RETURN_URI) {
       return res.status(400).json({ error: 'unsupported native redirect URI' });
     }
     if (ctx.masterKey === false) {
       return returnUri
-        ? res.redirect(nativeCallback(returnUri, { error: 'google_unavailable' }))
-        : res.redirect('/login?error=google_unavailable');
+        ? res.redirect(nativeCallback(returnUri, { error: unavailable }))
+        : res.redirect(`/login?error=${unavailable}`);
     }
     let key; let saved;
     try {
       key = loadMasterKey(ctx.masterKey ?? {});
-      saved = await loadClient(db, key, 'google');
+      saved = await loadClient(db, key, provider);
     } catch {
       return returnUri
-        ? res.redirect(nativeCallback(returnUri, { error: 'google_unavailable' }))
-        : res.redirect('/login?error=google_unavailable');
+        ? res.redirect(nativeCallback(returnUri, { error: unavailable }))
+        : res.redirect(`/login?error=${unavailable}`);
     }
-    const redirectUri = `${await publicAppUrl()}/api/auth/google/callback`;
+    const redirectUri = `${await publicAppUrl()}/api/auth/${provider}/callback`;
     let started;
-    try { started = await startGoogleLogin(db, key, returnUri); }
-    catch { return returnUri ? res.redirect(nativeCallback(returnUri, { error: 'google_unavailable' })) : res.redirect('/login?error=google_unavailable'); }
+    try { started = await startGoogleLogin(db, key, returnUri, provider); }
+    catch { return returnUri ? res.redirect(nativeCallback(returnUri, { error: unavailable })) : res.redirect(`/login?error=${unavailable}`); }
     // A native app checks state itself, and its browser never saw this request.
     if (returnUri === null) setGoogleStateCookie(res, started.state, cookieOpts(req));
     return res.redirect(buildAuthUrl(
       { ...saved, redirectUri },
-      { state: started.state, scopes: 'openid email profile', codeChallenge: started.challenge },
+      { state: started.state, scopes: LOGIN_SCOPES[provider], codeChallenge: started.challenge },
     ));
   }
+  const startGoogle = (returnUri: string | null, req: Request, res: Response) => startLogin('google', returnUri, req, res);
 
   /** Hands the SPA a CSRF token before it posts anything, including login. */
   r.get('/csrf', (req, res) => {
@@ -184,8 +190,10 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       if (user && ctx.masterKey !== false) {
         try {
           const { token } = await issueAuthToken(db, { userId: user.id, purpose: 'reset' });
-          const profile = await loadProfile(db, loadMasterKey(ctx.masterKey ?? {}), 'system');
-          const transport = ctx.mailTransport ?? smtpTransport(profile);
+          const mailKey = loadMasterKey(ctx.masterKey ?? {});
+          const account = await accountMailSender(db, mailKey, { fetchImpl: ctx.connectorFetch });
+          const profile = account?.profile ?? await loadProfile(db, mailKey, 'system');
+          const transport = ctx.mailTransport ?? account?.transport ?? smtpTransport(profile as Awaited<ReturnType<typeof loadProfile>>);
           const base = await publicAppUrl();
           await transport.send({
             from: `${profile.fromName} <${profile.fromAddress}>`, replyTo: profile.fromAddress,
@@ -214,18 +222,36 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return startGoogle(null, req, res);
   }));
 
+  r.get('/microsoft/start', asyncRoute(async (req, res) => {
+    // Same hop as Google: the state cookie belongs to the address Microsoft returns to.
+    const canonical = new URL(await publicAppUrl());
+    if (req.query.canonical !== '1' && req.get('host') !== canonical.host) {
+      return res.redirect(`${canonical.origin}/api/auth/microsoft/start?canonical=1`);
+    }
+    return startLogin('microsoft', null, req, res);
+  }));
+
   r.get('/google/native/start', asyncRoute(async (req, res) => {
     const returnUri = typeof req.query.redirect_uri === 'string' ? req.query.redirect_uri : '';
     return startGoogle(returnUri, req, res);
   }));
 
+  // The same for Microsoft. The iPhone app names the parameter return_uri;
+  // both names are read, and the allow-list is Google's.
+  r.get('/microsoft/native/start', asyncRoute(async (req, res) => {
+    const named = typeof req.query.return_uri === 'string' ? req.query.return_uri : req.query.redirect_uri;
+    return startLogin('microsoft', typeof named === 'string' ? named : '', req, res);
+  }));
+
   r.get('/native/config', asyncRoute(async (_req, res) => {
-    let googleSignIn = false;
+    let googleSignIn = false, microsoftSignIn = false;
     if (ctx.masterKey !== false) {
+      const key = loadMasterKey(ctx.masterKey ?? {});
       try {
-        await loadClient(db, loadMasterKey(ctx.masterKey ?? {}), 'google');
+        await loadClient(db, key, 'google');
         googleSignIn = true;
       } catch { /* configuration is intentionally reported only as a boolean */ }
+      try { await loadClient(db, key, 'microsoft'); microsoftSignIn = true; } catch { /* the same */ }
     }
     const appUrl = await publicAppUrl();
     const enrollmentDeepLink = appUrl.startsWith('https://')
@@ -237,6 +263,8 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       googleSignIn,
       appleSignIn: !!ctx.appleNativeClientId,
       nativeGoogleStart: `${appUrl}/api/auth/google/native/start`,
+      microsoftSignIn,
+      nativeMicrosoftStart: `${appUrl}/api/auth/microsoft/native/start`,
       passkeySignIn: ctx.passkeysEnabled !== false && !!relyingParty(ctx.appUrl),
       nativePasskeyStart: `${appUrl}/api/auth/passkey/native/start`,
       enrollmentDeepLink,
@@ -295,15 +323,15 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     await disableMfa(db, req.user!.id, typeof req.body?.password === 'string' ? req.body.password : '');
     return res.json({ enabled: false });
   }));
-  r.get('/google/callback', asyncRoute(async (req, res) => {
+  const loginCallback = (provider: LoginProvider) => asyncRoute(async (req, res) => {
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     const providerError = typeof req.query.error === 'string' ? req.query.error : '';
-    if (!state || ctx.masterKey === false) return res.redirect('/login?error=google_signin_failed');
+    if (!state || ctx.masterKey === false) return res.redirect(`/login?error=${provider}_signin_failed`);
     let key; let pending;
     try {
       key = loadMasterKey(ctx.masterKey ?? {});
-      pending = await consumeGoogleLogin(db, key, state, !providerError && !!code);
+      pending = await consumeGoogleLogin(db, key, state, !providerError && !!code, provider);
     } catch {
       // Preserve the native error return without opening a credential or
       // trusting an arbitrary stored URI. The valid state remains unconsumed.
@@ -312,12 +340,12 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
         [createHash('sha256').update(state).digest('hex')],
       );
       return hint?.native_return_uri === NATIVE_GOOGLE_RETURN_URI
-        ? res.redirect(nativeCallback(NATIVE_GOOGLE_RETURN_URI, { error: 'google_unavailable', state }))
-        : res.redirect('/login?error=google_unavailable');
+        ? res.redirect(nativeCallback(NATIVE_GOOGLE_RETURN_URI, { error: `${provider}_unavailable`, state }))
+        : res.redirect(`/login?error=${provider}_unavailable`);
     }
-    if (!pending) return res.redirect('/login?error=google_signin_expired');
+    if (!pending) return res.redirect(`/login?error=${provider}_signin_expired`);
     if (providerError || !code) {
-      const error = providerError === 'access_denied' ? 'google_declined' : 'google_signin_failed';
+      const error = providerError === 'access_denied' ? `${provider}_declined` : `${provider}_signin_failed`;
       return pending.nativeReturnUri
         ? res.redirect(nativeCallback(pending.nativeReturnUri, { error, state }))
         : res.redirect(`/login?error=${error}`);
@@ -325,36 +353,36 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     if (!pending.nativeReturnUri) {
       const ours = holdsGoogleState(req, state);
       clearGoogleStateCookie(res);
-      if (!ours) return res.redirect('/login?error=google_signin_failed');
+      if (!ours) return res.redirect(`/login?error=${provider}_signin_failed`);
     }
     const verifier = pending.verifier!;
-    const saved = await loadClient(db, key, 'google');
-    const redirectUri = `${await publicAppUrl()}/api/auth/google/callback`;
+    const saved = await loadClient(db, key, provider);
+    const redirectUri = `${await publicAppUrl()}/api/auth/${provider}/callback`;
     const tokens = await exchangeCode(
       { ...saved, redirectUri },
-      { code, verifier, scopes: 'openid email profile' },
+      { code, verifier, scopes: LOGIN_SCOPES[provider] },
       { fetchImpl: ctx.connectorFetch },
     );
-    const identity = await fetchIdentity('google', tokens.accessToken, { fetchImpl: ctx.connectorFetch });
+    const identity = await fetchIdentity(provider, tokens.accessToken, { fetchImpl: ctx.connectorFetch });
     const [user] = await db.query<{ id: string; email: string; username: string; role: string; display_name: string | null; mfa_enabled_at: string | null }>(
       `select distinct u.id, u.email, u.username, u.role, u.display_name, u.mfa_enabled_at
        from users u join connections c on c.owner_user_id = u.id
-       where u.status = 'active' and c.provider = 'google' and c.status = 'active'
+       where u.status = 'active' and c.provider = $3 and c.status = 'active'
          and ((c.provider_account_id is not null and c.provider_account_id = $1)
            or (c.account_email is not null and lower(c.account_email) = lower($2)))
        limit 1`,
-      [identity.accountId, identity.email],
+      [identity.accountId, identity.email, provider],
     );
     if (!user) {
       return pending.nativeReturnUri
-        ? res.redirect(nativeCallback(pending.nativeReturnUri, { error: 'google_not_linked', state }))
-        : res.redirect('/login?error=google_not_linked');
+        ? res.redirect(nativeCallback(pending.nativeReturnUri, { error: `${provider}_not_linked`, state }))
+        : res.redirect(`/login?error=${provider}_not_linked`);
     }
     if (pending.nativeReturnUri) {
-      const nativeCode = await issueNativeCode(db, user.id, 'auth.google_native_code_issued');
+      const nativeCode = await issueNativeCode(db, user.id, `auth.${provider}_native_code_issued`);
       return res.redirect(nativeCallback(pending.nativeReturnUri, { code: nativeCode, state }));
     }
-    // Google answers for the first factor only, like an emailed code.
+    // The provider answers for the first factor only, like an emailed code.
     if (user.mfa_enabled_at) {
       setMfaChallengeCookie(res, await issueMfaChallenge(req, user.id, true), cookieOpts(req));
       return res.redirect('/login?mfa=pending');
@@ -364,9 +392,11 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
       userId: user.id, ip: clientIp(req), userAgent: req.header('user-agent'), ttlSeconds,
     });
     setSessionCookie(res, token, ttlSeconds, cookieOpts(req)); issueCsrfToken(res, cookieOpts(req));
-    await appendEvent(db, { actorUserId: user.id, actor: 'user', kind: 'auth.google_login', subjectType: 'user', subjectId: user.id });
+    await appendEvent(db, { actorUserId: user.id, actor: 'user', kind: `auth.${provider}_login`, subjectType: 'user', subjectId: user.id });
     return res.redirect('/app');
-  }));
+  });
+  r.get('/google/callback', loginCallback('google'));
+  r.get('/microsoft/callback', loginCallback('microsoft'));
 
   /** Redeems a code from any browser sign-in. The code does not record how it was
    * earned, so the route says what to write in the audit log: a passkey sign-in
@@ -401,6 +431,7 @@ export function authRoutes(ctx: AuthRoutesCtx): Router {
     return res.json({ user: publicUser(redeemed), sessionToken: token });
   });
   r.post('/google/native/exchange', exchangeNativeCode('auth.google_native_login'));
+  r.post('/microsoft/native/exchange', exchangeNativeCode('auth.microsoft_native_login'));
   r.post('/native/exchange', exchangeNativeCode('auth.native_login'));
 
   r.post('/apple/native/exchange', asyncRoute(async (req, res) => {

@@ -233,6 +233,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     backupWriter: cfg.backupWriter,
     restoreReader: cfg.restoreReader,
     attachmentsDir: cfg.attachmentStorageRoot ?? null,
+    appUrl: cfg.appUrl,
     version: process.env.JOSI_VERSION ?? '0.1.0',
   }));
   api.use('/auth', authRoutes({
@@ -242,6 +243,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   }));
   api.use('/auth', signInRoutes({
     db, cookieSecure: cfg.cookieSecure, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport,
+    connectorFetch: cfg.connectorFetch,
     passkeysEnabled: cfg.passkeysEnabled, emailCodesEnabled: cfg.emailCodesEnabled, appleWebSignInUrl: cfg.appleWebSignInUrl,
   }));
   // Phase 7 owns /connections now: the Phase 1 router proved the ownership
@@ -323,7 +325,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     releaseFetch: cfg.releaseFetch,
   }));
   api.use('/admin/improvements', improvementRoutes(db));
-  api.use('/settings-changes', settingsChangeRoutes({ db, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport, appUrl:cfg.appUrl }));
+  api.use('/settings-changes', settingsChangeRoutes({ db, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport, connectorFetch: cfg.connectorFetch, appUrl:cfg.appUrl }));
   api.use('/admin/network', networkRoutes({ db }));
   if (cfg.relay) {
     api.use('/admin/hey-josi', adminRelayRoutes({ db, relay: cfg.relay, masterKey: cfg.masterKeyCheck }));

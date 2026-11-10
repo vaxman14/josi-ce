@@ -15,7 +15,7 @@ import {
   type LlmErrorCategory,
 } from '@josi-ce/llm';
 import { classifySmtpError, loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
-import { ENDPOINTS, loadClient, NoClientError } from '@josi-ce/connectors';
+import { accountMailSender, ENDPOINTS, loadClient, NoClientError } from '@josi-ce/connectors';
 import { VaultLockedError, type Db, type MasterKey } from '@josi-ce/core';
 import { trackProbe } from '../http/probeProgress.js';
 
@@ -200,6 +200,48 @@ export async function verifySmtp(
     // `classifySmtpError` is the fallback for anything thrown before that.
     const category = (err as { category?: string }).category ?? classifySmtpError(err);
     return { ...failed(category, describeSmtp(category, profile.host)), target: to, configurationVersion: profile.configurationVersion };
+  }
+}
+
+/** The same real message, through the Google or Microsoft account the owner
+ * chose for Josi's own email instead of an SMTP server. */
+export async function verifyAccountMail(
+  opts: { db: Db; masterKey: MasterKey; to: string; fetchImpl?: typeof fetch; transport?: SmtpTransport },
+): Promise<VerifyOutcome> {
+  const to = opts.to.trim();
+  if (!to || !to.includes('@')) return failed('malformed_request', 'Enter an address to send the test message to.');
+  let sender;
+  try {
+    sender = await accountMailSender(opts.db, opts.masterKey, { fetchImpl: opts.fetchImpl });
+  } catch (err) {
+    if (err instanceof VaultLockedError) return failed('vault_locked', 'Unlock the Vault before testing email.');
+    return failed('provider_error', 'The connected account could not be read. Connect it again.');
+  }
+  if (!sender) return failed('malformed_request', 'No connected account has been chosen for email, so there is nothing to test.');
+  const name = sender.provider === 'google' ? 'Google' : 'Microsoft';
+  try {
+    await (opts.transport ?? sender.transport).send({
+      from: `${sender.profile.fromName} <${sender.profile.fromAddress}>`, replyTo: sender.profile.fromAddress,
+      to: [to], cc: [], subject: 'Josi test message',
+      text:
+        'This is the test message Josi sends during setup.\n\n'
+        + `If you are reading it, this installation can send mail through the ${name} account you connected.\n\n`
+        + 'Nothing else about your installation is in this message.',
+      headers: { 'Auto-Submitted': 'auto-generated' }, attachments: [],
+    });
+    return {
+      status: 'passed',
+      detail: `A test message was sent to ${to} from ${sender.profile.fromAddress}. Check that it arrived.`,
+      target: to,
+    };
+  } catch (err) {
+    const category = (err as { category?: string }).category ?? 'provider_error';
+    const detail = category === 'insufficient_scope' ? `${name} did not allow Josi to send email from that account. Connect it again and allow sending.`
+      : category === 'revoked' || category === 'expired' ? `The ${name} account needs to be connected again.`
+      : category === 'rate_limited' ? `${name} asked Josi to slow down. Try the test again in a minute.`
+      : category === 'network' ? `Josi could not reach ${name}. Check this server's internet connection.`
+      : `${name} refused the test message.`;
+    return { ...failed(category, detail), target: to };
   }
 }
 

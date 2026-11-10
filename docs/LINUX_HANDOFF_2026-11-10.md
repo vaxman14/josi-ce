@@ -147,11 +147,54 @@ reach claw, stop after step 3, push, and tell Roman exactly where you stopped.
 Still untested with the REAL model on gate (only the fake model so far): sign-in cards
 and `send me that report`. Ask Roman to try them when he is on gate.
 
+## Added on the Mac, 2026-11-10: email through an account, Microsoft sign-in
+Asked for by Roman after the take-over. All shared code (packages and apps/web), so
+Windows and the Mac inherit it when they merge this branch's packages.
+
+- **Setup's email step is a question first.** Two cards: "Google or Microsoft account"
+  or "SMTP server", plus Skip. Each form stays hidden until its card is chosen
+  (`EmailStep` in apps/web/src/pages/Setup.tsx). With no public HTTPS address the
+  account card is shown but off, with the reason under it.
+- **The account way, inside setup:** save the provider's client ID and secret
+  (`PUT /api/setup/mail-account/client/:provider`, checked with the provider), connect
+  the owner's account (`POST /api/setup/mail-account/start`; the provider returns to the
+  ordinary `/api/connections/:provider/callback`, which setupGate lets through and
+  connectorRoutes finishes for a handshake setup itself started, with no session), then
+  `POST /api/setup/steps/smtp` with `{account:{provider,fromName},testTo}` sends a real
+  test message. Two redirect addresses are shown to register: `/api/connections/<p>/callback`
+  and `/api/auth/<p>/callback`.
+- **Josi's own email through that account** (sign-in codes, password resets, notices to
+  the owner): `packages/connectors/src/systemMail.ts`, table `system_mail_account`
+  (migration 0124). `accountMailSender()` is tried first everywhere system mail is sent;
+  the SMTP system profile is the other way. Saving an SMTP server (setup or Admin)
+  switches back to SMTP. Gmail API `messages/send`, Graph `me/sendMail`, text only.
+- **Sign in with Google** needs nothing more: it works once the Google keys exist and the
+  person's Google account is connected, which the step above does for the owner.
+- **Sign in with Microsoft is new**: `/api/auth/microsoft/start` and
+  `/callback`, same rules as Google (state held by the starting browser, PKCE, the
+  person's own connected Microsoft account, authenticator still asked). States carry
+  their provider (`auth_oauth_states.provider`). `/api/auth/methods` now says `google`
+  and `microsoft`; the login page hides either button when its keys are missing.
+  For the native apps (asked for by the iPhone session, build 32): `GET /api/auth/native/config`
+  adds `microsoftSignIn` and `nativeMicrosoftStart`; `GET /api/auth/microsoft/native/start`
+  takes `return_uri` or `redirect_uri` (`josi://auth/callback` only); `POST
+  /api/auth/microsoft/native/exchange {code}` answers like Google's.
+- **Not done:** an Admin screen to pick or change the sending account after setup (today:
+  redo it by saving SMTP, or in setup); a Microsoft button in the Windows and Mac apps
+  (the server side is ready); HTML or attachments through the account sender.
+- **Needs a real try on gate:** a real Google and a real Microsoft app (only fake
+  providers so far). Tests: `setup.test.ts` ("email through a Google or Microsoft
+  account"), `microsoftSignIn.test.ts`, `packages/connectors/test/systemMail.test.ts`.
+
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
 (text files she writes); one new draft release when this lands; login terminal may run
 any command shown on the card; live view owner-only with grants; sign-ins persist until
 cleared; light thinking by default; live view opens inside the chat.
+Later the same day: setup asks account or SMTP before showing either form; choosing an
+account saves the keys, connects it and tests it in setup; Josi's own email goes out
+through it; it also turns on sign-in with that provider; Microsoft sign-in is added;
+with no public HTTPS address the account choice is shown but off; all in beta.11.
 
 ## Where things are
 Test VMs and builds on claw `roman@10.10.1.3` (`~/josi-linux`); VMs `josi-debian13-vm`

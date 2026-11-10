@@ -16,12 +16,13 @@ import { checkLoginRate, recordLoginAttempt, verifyPassword, beginPcPasskey, fin
 import { createHash } from 'node:crypto';
 import { addMessage, json, loadMasterKey, PcControl, type PcPolicy, type PcPreset, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
+import { accountMailSender } from '@josi-ce/connectors';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
 import { clientIp } from './cookies.js';
 import { localExecutorPaired, pairLocalExecutor } from './pcLocalPairing.js';
 
-interface Ctx { db: Db; masterKey?: LoadOptions | false; mailTransport?: SmtpTransport; appUrl?:string }
+interface Ctx { db: Db; masterKey?: LoadOptions | false; mailTransport?: SmtpTransport; connectorFetch?: typeof fetch; appUrl?:string }
 type Policy = 'self' | 'super_admin';
 interface Row {
   id: string; proposer_user_id: string; proposer: string; scope: 'personal' | 'administrator'; area: string; sensitive: boolean; title: string; summary: string;
@@ -271,8 +272,10 @@ async function notifySuperAdmins(ctx: Ctx, db: Db, row: Row, by: { username: str
   try {
     const admins = await db.query<{ email: string }>(`select email from users where role = 'super_admin' and status = 'active' and email <> ''`);
     if (!admins.length) return false;
-    const profile = await loadProfile(db, loadMasterKey(ctx.masterKey ?? {}), 'system');
-    const transport = ctx.mailTransport ?? smtpTransport(profile);
+    const mailKey = loadMasterKey(ctx.masterKey ?? {});
+    const account = await accountMailSender(db, mailKey, { fetchImpl: ctx.connectorFetch });
+    const profile = account?.profile ?? await loadProfile(db, mailKey, 'system');
+    const transport = ctx.mailTransport ?? account?.transport ?? smtpTransport(profile as Awaited<ReturnType<typeof loadProfile>>);
     const when = new Date().toISOString();
     await transport.send({
       from: `${profile.fromName} <${profile.fromAddress}>`, replyTo: profile.fromAddress,

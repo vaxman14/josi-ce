@@ -20,6 +20,10 @@ function GoogleG() {
   return <svg aria-hidden viewBox="0 0 18 18" className="h-[18px] w-[18px]"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92a8.78 8.78 0 0 0 2.68-6.62z" /><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.8.54-1.84.86-3.04.86-2.34 0-4.32-1.58-5.03-3.7H.96v2.33A9 9 0 0 0 9 18z" /><path fill="#FBBC05" d="M3.97 10.72a5.41 5.41 0 0 1 0-3.44V4.95H.96a9 9 0 0 0 0 8.1z" /><path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 0 0 .96 4.95l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z" /></svg>;
 }
 
+function MicrosoftLogo() {
+  return <svg aria-hidden viewBox="0 0 18 18" className="h-[18px] w-[18px]"><path fill="#F25022" d="M1 1h7.5v7.5H1z" /><path fill="#7FBA00" d="M9.5 1H17v7.5H9.5z" /><path fill="#00A4EF" d="M1 9.5h7.5V17H1z" /><path fill="#FFB900" d="M9.5 9.5H17V17H9.5z" /></svg>;
+}
+
 function AppleLogo() {
   return <svg aria-hidden viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="currentColor"><path d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9-.1 0-2.7-1-2.7-4.1zM13.9 5c.7-.9 1.2-2 1-3.2-1 0-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.1 1.2.1 2.3-.6 3.1-1.5z" /></svg>;
 }
@@ -56,11 +60,12 @@ export function Login() {
   useEffect(() => {
     const reason = searchParams.get('error');
     if (!reason) return;
-    setError(reason === 'google_not_linked'
-      ? 'That Google account is not linked to a Josi account. Sign in with your password, then connect Google first.'
-      : reason === 'google_unavailable'
-        ? 'Google sign-in is not configured on this Josi installation.'
-        : 'Google sign-in did not finish. Please try again.');
+    const name = reason.startsWith('microsoft_') ? 'Microsoft' : 'Google';
+    setError(reason.endsWith('_not_linked')
+      ? `That ${name} account is not linked to a Josi account. Sign in with your password, then connect ${name} first.`
+      : reason.endsWith('_unavailable')
+        ? `${name} sign-in is not configured on this Josi installation.`
+        : `${name} sign-in did not finish. Please try again.`);
   }, [searchParams]);
 
   // A password reset or Google sign-in that still owes the authenticator. Its
@@ -189,7 +194,8 @@ export function Login() {
               </form>
             </> : null}
 
-            <a href="/api/auth/google/start" className={`btn-google ${providerButton}`}><GoogleG />Continue with Google</a>
+            {methods?.google === false ? null : <a href="/api/auth/google/start" className={`btn-google ${providerButton}`}><GoogleG />Continue with Google</a>}
+            {methods?.microsoft ? <a href="/api/auth/microsoft/start" className={`btn-google ${providerButton}`}><MicrosoftLogo />Continue with Microsoft</a> : null}
             {methods?.appleUrl ? <a href={methods.appleUrl} className={`btn-apple ${providerButton}`}><AppleLogo />Continue with Apple</a> : null}
 
             {methods && (passkey || emailCode) ? (

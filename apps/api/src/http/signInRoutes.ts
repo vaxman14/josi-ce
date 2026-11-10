@@ -18,6 +18,7 @@ import {
 } from '@josi-ce/auth';
 import { appendEvent, loadMasterKey, type Db, type LoadOptions } from '@josi-ce/core';
 import { loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
+import { accountMailSender, loadClient } from '@josi-ce/connectors';
 import { asyncRoute, param } from './async.js';
 import { clientIp, cookieSecureFor, isNativeClient, issueCsrfToken, setSessionCookie, type CookieSecurePolicy } from './cookies.js';
 import { requireAuth } from './authz.js';
@@ -31,6 +32,8 @@ export interface SignInRoutesCtx {
   appUrl: string;
   masterKey?: LoadOptions | false;
   mailTransport?: SmtpTransport;
+  /** Google/Microsoft HTTP, for Josi's own email through a connected account. */
+  connectorFetch?: typeof fetch;
   passkeysEnabled?: boolean;
   emailCodesEnabled?: boolean;
   /** Set once Sign in with Apple exists on the web. Until then the button is hidden. */
@@ -65,9 +68,22 @@ export function signInRoutes(ctx: SignInRoutesCtx): Router {
   async function systemMail() {
     if (ctx.emailCodesEnabled === false || ctx.masterKey === false) return null;
     try {
-      const profile = await loadProfile(db, loadMasterKey(ctx.masterKey ?? {}), 'system');
+      const key = loadMasterKey(ctx.masterKey ?? {});
+      // A Google or Microsoft account the owner chose for Josi's own email
+      // sends first; the SMTP system profile is the other way.
+      const account = await accountMailSender(db, key, { fetchImpl: ctx.connectorFetch });
+      if (account) return { profile: account.profile, transport: ctx.mailTransport ?? account.transport };
+      const profile = await loadProfile(db, key, 'system');
       return { profile, transport: ctx.mailTransport ?? smtpTransport(profile) };
     } catch { return null; }
+  }
+
+  /** Whether the owner registered this provider's application. Sign-in still
+   * needs the person's own connected account to match; this is only whether
+   * the button can lead anywhere. */
+  async function providerSignIn(provider: 'google' | 'microsoft'): Promise<boolean> {
+    if (ctx.masterKey === false) return false;
+    try { await loadClient(db, loadMasterKey(ctx.masterKey ?? {}), provider); return true; } catch { return false; }
   }
 
   async function person(id: string): Promise<Person | undefined> {
@@ -138,6 +154,8 @@ export function signInRoutes(ctx: SignInRoutesCtx): Router {
       passkeyOrigin: rp?.origin ?? null,
       emailCode: !!(await systemMail()),
       appleUrl: ctx.appleWebSignInUrl || null,
+      google: await providerSignIn('google'),
+      microsoft: await providerSignIn('microsoft'),
     });
   }));
 

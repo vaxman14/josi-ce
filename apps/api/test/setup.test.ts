@@ -201,7 +201,8 @@ const llmResolve = async () => ['93.184.216.34'];
  *
  * `invalid_grant` is the PASSING answer: the client credential was accepted and
  * the deliberately-bogus authorization code was not. See verifyOAuthClient. */
-const connectorFetch: typeof fetch = async () =>
+let providerStub: typeof fetch | null = null;
+const connectorFetch: typeof fetch = async (url, init) => providerStub ? providerStub(url, init) :
   new Response(JSON.stringify({ error: 'invalid_grant' }), {
     status: 400, headers: { 'Content-Type': 'application/json' },
   });
@@ -883,6 +884,156 @@ describe('the two SMTP profiles', () => {
     expect(smtp.verification.target).toBe('owner@example.test');
     // Optional, so it does not stop the installation being finished.
     expect(smtp.blocking).toBe(false);
+  });
+});
+
+// ------------------------------------------------- email through an account
+describe('email through a Google or Microsoft account', () => {
+  /** What the provider was asked, and a provider that says yes to all of it. */
+  let asked: Array<{ url: string; body: string }> = [];
+  function provider(scope: string): typeof fetch {
+    return async (url, init) => {
+      const address = String(url), body = typeof init?.body === 'string' ? init.body : String(init?.body ?? '');
+      asked.push({ url: address, body });
+      const reply = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+      if (address.includes('/token')) {
+        return body.includes('authorization_code') && !body.includes('provider-code')
+          ? reply({ error: 'invalid_grant' }, 400)
+          : reply({ access_token: 'access-1', refresh_token: 'refresh-1', expires_in: 3600, scope });
+      }
+      if (address.includes('userinfo')) return reply({ sub: 'google-owner-1', email: 'owner@gmail.test' });
+      if (address.endsWith('/v1.0/me')) return reply({ id: 'ms-owner-1', mail: 'owner@outlook.test' });
+      if (address.includes('/messages/send')) return reply({ id: 'sent-1' });
+      if (address.endsWith('/me/sendMail')) return new Response(null, { status: 202 });
+      return reply({ error: { code: 'unexpected' } }, 500);
+    };
+  }
+  beforeEach(() => { asked = []; });
+  afterEach(() => { providerStub = null; });
+  const state = async () => (await call('/api/setup/mail-account')).body;
+
+  it('offers the account way only with a public HTTPS address', async () => {
+    await runWizard('domain');
+    await call('/api/setup/steps/domain', { method: 'POST', body: { domain: 'localhost', tlsMode: 'bundled_caddy' } });
+    const offered = await state();
+    expect(offered.available).toBe(false);
+    expect(offered.reason).toMatch(/public HTTPS address/);
+    expect(offered.providers.every((p: { redirectUris: string[] }) => p.redirectUris.length === 0)).toBe(true);
+  });
+
+  it('refuses keys and connecting until email is the step in hand', async () => {
+    await runWizard('llm');
+    const early = await call('/api/setup/mail-account/client/google', { method: 'PUT', body: { clientId: 'id', clientSecret: 'secret' } });
+    expect(early.status).toBe(409);
+    expect(await db.query('select 1 from oauth_clients')).toHaveLength(0);
+    expect((await call('/api/setup/mail-account/start', { method: 'POST', body: { provider: 'google' } })).status).toBe(409);
+  });
+
+  for (const [name, scope, sendUrl, email] of [
+    ['google', 'openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.send', '/messages/send', 'owner@gmail.test'],
+    ['microsoft', 'openid email offline_access User.Read Mail.Send', '/me/sendMail', 'owner@outlook.test'],
+  ] as const) {
+    it(`saves the ${name} keys, connects the owner with no session, and sends the test through the account`, async () => {
+      providerStub = provider(scope);
+      await runWizard('smtp');
+      const [owner] = await db.query<{ id: string }>(`select id from users where role='super_admin'`);
+
+      // Nothing to connect with yet.
+      expect((await call('/api/setup/mail-account/start', { method: 'POST', body: { provider: name } })).status).toBe(409);
+
+      const saved = await call(`/api/setup/mail-account/client/${name}`, { method: 'PUT', body: { clientId: 'client-id-123456', clientSecret: 'a-client-secret' } });
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+      const [client] = await db.query<{ redirect_uri: string; client_secret_enc: string }>('select redirect_uri, client_secret_enc from oauth_clients where provider=$1', [name]);
+      expect(client.redirect_uri).toBe(`https://josi.example.test/api/connections/${name}/callback`);
+      expect(client.client_secret_enc).not.toContain('a-client-secret');
+      const offered = (await state()).providers.find((p: { provider: string }) => p.provider === name);
+      expect(offered.configured).toBe(true);
+      expect(offered.redirectUris).toEqual([
+        `https://josi.example.test/api/connections/${name}/callback`, `https://josi.example.test/api/auth/${name}/callback`,
+      ]);
+      expect(JSON.stringify(await state())).not.toContain('a-client-secret');
+
+      const started = await call('/api/setup/mail-account/start', { method: 'POST', body: { provider: name } });
+      expect(started.status, JSON.stringify(started.body)).toBe(200);
+      const consent = new URL(started.body.url);
+      expect(consent.searchParams.get('redirect_uri')).toBe(`https://josi.example.test/api/connections/${name}/callback`);
+      expect(consent.searchParams.get('scope')).toContain(name === 'google' ? 'gmail.send' : 'Mail.Send');
+      const handshake = consent.searchParams.get('state')!;
+
+      // The provider sends the browser back with no Josi cookie of any kind.
+      const back = await fetch(`${base}/api/connections/${name}/callback?state=${encodeURIComponent(handshake)}&code=provider-code`, { redirect: 'manual' });
+      expect(back.status).toBe(302);
+      expect(back.headers.get('location')).toBe('/setup?mail=connected');
+      const [connection] = await db.query<{ owner_user_id: string; account_email: string; status: string }>('select owner_user_id, account_email, status from connections where provider=$1', [name]);
+      expect(connection).toEqual({ owner_user_id: owner.id, account_email: email, status: 'active' });
+      // Once only.
+      const again = await fetch(`${base}/api/connections/${name}/callback?state=${encodeURIComponent(handshake)}&code=provider-code`, { redirect: 'manual' });
+      expect(again.status).toBe(401);
+      expect((await state()).providers.find((p: { provider: string }) => p.provider === name).connected).toEqual({ email, canSend: true });
+
+      // No address to test with is still a refusal, and chooses nothing.
+      expect((await call('/api/setup/steps/smtp', { method: 'POST', body: { account: { provider: name } } })).status).toBe(400);
+      expect(await db.query('select 1 from system_mail_account')).toHaveLength(0);
+
+      asked = [];
+      const smtpMessages = sentMail.length;
+      const done = await call('/api/setup/steps/smtp', { method: 'POST', body: { account: { provider: name, fromName: 'Josi at home' }, testTo: 'someone@example.test' } });
+      expect(done.status, JSON.stringify(done.body)).toBe(200);
+      expect(done.body.verification.status).toBe('passed');
+      expect(done.body.nextStep).toBe('security');
+      const send = asked.find((request) => request.url.includes(sendUrl))!;
+      expect(send).toBeTruthy();
+      const raw = name === 'google' ? Buffer.from(JSON.parse(send.body).raw, 'base64url').toString() : Buffer.from(send.body, 'base64').toString();
+      expect(raw).toContain('To: someone@example.test');
+      expect(raw).toContain(`From: "Josi at home" <${email}>`);
+      expect(raw).toContain('Subject: Josi test message');
+      expect(sentMail).toHaveLength(smtpMessages);
+      expect(await db.query('select provider, from_name from system_mail_account')).toEqual([{ provider: name, from_name: 'Josi at home' }]);
+      expect(await db.query('select 1 from smtp_profiles')).toHaveLength(0);
+
+      const review = await call('/api/setup/review');
+      const item = (review.body.items as Array<{ key: string; status: string }>).find((i) => i.key === 'smtp')!;
+      expect(item.status).toBe('configured_and_tested');
+      expect(review.body.summary.mailAccount).toEqual({ provider: name, email, fromName: 'Josi at home', active: true });
+      expect((await call('/api/setup/verify/smtp', { method: 'POST', body: { to: 'again@example.test' } })).body.status).toBe('passed');
+    });
+  }
+
+  it('records a refused test without losing the choice, and SMTP takes over when it is chosen instead', async () => {
+    providerStub = provider('openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.send');
+    await runWizard('smtp');
+    await call('/api/setup/mail-account/client/google', { method: 'PUT', body: { clientId: 'client-id', clientSecret: 'a-client-secret' } });
+    const started = await call('/api/setup/mail-account/start', { method: 'POST', body: { provider: 'google' } });
+    const handshake = new URL(started.body.url).searchParams.get('state')!;
+    await fetch(`${base}/api/connections/google/callback?state=${encodeURIComponent(handshake)}&code=provider-code`, { redirect: 'manual' });
+
+    const yes = providerStub;
+    providerStub = async (url, init) => String(url).includes('/messages/send')
+      ? new Response(JSON.stringify({ error: { status: 'PERMISSION_DENIED', message: 'private words from the provider' } }), { status: 403, headers: { 'Content-Type': 'application/json' } })
+      : yes(url, init);
+    const refused = await call('/api/setup/steps/smtp', { method: 'POST', body: { account: { provider: 'google' }, testTo: 'someone@example.test' } });
+    expect(refused.status).toBe(200);
+    expect(refused.body.verification.status).toBe('failed');
+    expect(refused.body.verification.detail).toMatch(/did not allow Josi to send email/);
+    expect(JSON.stringify(refused.body)).not.toContain('private words');
+    expect(await db.query('select 1 from system_mail_account')).toHaveLength(1);
+
+    // Redo the step with a mail server: the account stops sending Josi's own email.
+    const smtp = await call('/api/setup/steps/smtp', { method: 'POST', body: SMTP_BODY });
+    expect(smtp.status, JSON.stringify(smtp.body)).toBe(200);
+    expect(await db.query('select 1 from system_mail_account')).toHaveLength(0);
+    expect(await db.query(`select 1 from connections where provider='google' and status='active'`)).toHaveLength(1);
+    expect(sentMail.at(-1)?.to).toEqual(['owner@example.test']);
+  });
+
+  it('gives a stranger nothing at the provider return address during setup', async () => {
+    await runWizard('smtp');
+    const res = await fetch(`${base}/api/connections/google/callback?state=made-up&code=anything`, { redirect: 'manual' });
+    expect(res.status).toBe(401);
+    expect(await db.query('select 1 from connections')).toHaveLength(0);
+    // Every other connection route is still shut.
+    expect((await call('/api/connections')).status).toBe(503);
+    expect((await call('/api/connections/google/start', { method: 'POST', body: {} })).status).toBe(503);
   });
 });
 

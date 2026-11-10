@@ -13,7 +13,7 @@
 // connections and the facts everyone may know (address, model names, version).
 import { networkInterfaces } from 'node:os';
 import type { Db } from '@josi-ce/core';
-import { OAUTH_PROVIDERS, clientStatuses, sharedGoogleAvailable, DEVELOPER_SERVICE_CATALOG, type OAuthProvider } from '@josi-ce/connectors';
+import { OAUTH_PROVIDERS, clientStatuses, sharedGoogleAvailable, systemMailAccount, DEVELOPER_SERVICE_CATALOG, type OAuthProvider } from '@josi-ce/connectors';
 import type { ToolSpec } from './tools.js';
 
 export const SETUP_TOPICS = ['all', 'address', 'connectors', 'models', 'mail', 'pc_control', 'members', 'version'] as const;
@@ -164,10 +164,13 @@ export async function executeSetupStatusTool(db: Db, userId: string, name: strin
   if (want('mail') && admin) {
     const profiles = await db.query<{ kind: string; copy_from_system: boolean; host: string | null; port: number | null; security: string | null; username: string | null; has_password: boolean; from_name: string | null; from_address: string | null; verified_at: string | null }>(
       'select kind, copy_from_system, host, port, security, username, password_enc is not null as has_password, from_name, from_address, verified_at::text as verified_at from smtp_profiles order by kind');
+    const account = await systemMailAccount(db);
     out.mail = {
       smtp: profiles.map((p) => ({ profile: p.kind, copiesSystem: p.copy_from_system, host: p.host, port: p.port, security: p.security, username: p.username, password: p.has_password ? 'set' : 'not set', from: p.from_address ? `${p.from_name ?? ''} <${p.from_address}>`.trim() : null, verified: !!p.verified_at })),
-      configured: profiles.some((p) => p.kind === 'system' && p.host),
-      note: profiles.some((p) => p.kind === 'system' && p.host) ? null : 'No mail server yet: invitations, sign-in codes and reports cannot be emailed. Set it up by asking Josi; the password goes into a card.',
+      // Josi's own email can go out through a connected Google or Microsoft account instead of a mail server.
+      account: account?.active ? { provider: account.provider, from: account.accountEmail } : null,
+      configured: !!account?.active || profiles.some((p) => p.kind === 'system' && p.host),
+      note: account?.active || profiles.some((p) => p.kind === 'system' && p.host) ? null : 'No mail server yet: invitations, sign-in codes and reports cannot be emailed. Set it up by asking Josi; the password goes into a card.',
     };
   }
   if (want('pc_control') && admin) {

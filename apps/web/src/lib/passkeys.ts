@@ -5,7 +5,7 @@ import { api } from './api';
 const toBytes = (value: string) => Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
 const fromBytes = (value: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-export interface SignInMethods { passkey: boolean; passkeyOrigin: string | null; emailCode: boolean; appleUrl: string | null }
+export interface SignInMethods { passkey: boolean; passkeyOrigin: string | null; emailCode: boolean; appleUrl: string | null; google?: boolean; microsoft?: boolean }
 
 /** The server can do it, this browser can do it, and this is the address the
  * passkeys belong to. Reached any other way, a passkey could not work. */

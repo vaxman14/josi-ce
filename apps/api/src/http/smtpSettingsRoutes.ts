@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { appendEvent, loadMasterKey, VaultError, VaultLockedError } from '@josi-ce/core';
 import { listSmtpProfiles, loadProfile, saveSmtpProfiles, removeSmtpProfile, smtpTransport,
   MailError, NoProfileError, SmtpConfigurationError, type SmtpProfileInput, type SmtpProfileVersions } from '@josi-ce/mail';
+import { clearSystemMailAccount } from '@josi-ce/connectors';
 import type { MailRoutesCtx } from './mailRoutes.js';
 import { asyncRoute, param } from './async.js';
 import { requireSuperAdmin } from './authz.js';
@@ -52,6 +53,10 @@ export function smtpSettingsRoutes(context: MailRoutesCtx): Router {
     if (!exact(req.body, ['system', 'communications', 'expected'])) throw new SmtpConfigurationError(400, 'Review both exact email profiles.');
     await saveSmtpProfiles(db, key(), { actorUserId: req.user!.id, expected: versions(req.body.expected),
       system: input(req.body.system, 'system'), communications: input(req.body.communications, 'communications') });
+    // Saving a mail server for system mail is choosing it: a Google or
+    // Microsoft account picked in setup stops sending Josi's own email.
+    const systemHost = (req.body.system as { host?: unknown } | null)?.host;
+    if (typeof systemHost === 'string' && systemHost.trim()) await clearSystemMailAccount(db, req.user!.id);
     return res.json({ saved: true, ...(await listSmtpProfiles(db)) });
   }));
   r.delete('/:kind', handle(async (req, res) => {
