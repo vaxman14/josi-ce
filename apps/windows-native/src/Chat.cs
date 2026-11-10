@@ -291,8 +291,10 @@ namespace Josi.Native {
       return Regex.Replace(text, @"\*\*|`", "");
     }
     public void Pause() { voice.Stop(); }
+    // No inset here: a text box hands its own Padding to the content host, so
+    // one in the template too puts the caret a line below and right of the hint.
     static ControlTemplate EditorTemplate() {
-      return (ControlTemplate)System.Windows.Markup.XamlReader.Parse("<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='TextBox'><Border Background='{TemplateBinding Background}'><ScrollViewer x:Name='PART_ContentHost' Margin='{TemplateBinding Padding}' Focusable='False'/></Border></ControlTemplate>");
+      return (ControlTemplate)System.Windows.Markup.XamlReader.Parse("<ControlTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' TargetType='TextBox'><Border Background='{TemplateBinding Background}'><ScrollViewer x:Name='PART_ContentHost' Focusable='False'/></Border></ControlTemplate>");
     }
 
     async void LoadModelName() {

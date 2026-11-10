@@ -195,7 +195,7 @@ async function startAccountConnection(db: Db, userId: string, input: Record<stri
   const path = `/connections/${provider}/start`;
   const card: CredentialCard = { kind: ACCOUNT_CONNECTION_KIND, provider, title: `Connect ${name}`,
     intro: `Sign in with ${name} in your browser and allow Josi. You come back here on your own when it is done. Your ${name} password is typed on ${name}'s page only; Josi never sees it.`,
-    fields: [], help: { text: 'What Josi may do with the account stays off until you turn it on by asking.', url: null }, done: `Your ${name} account is connected.` };
+    fields: [], help: { text: 'Everything the account grants starts on. Ask Josi to turn any of it off.', url: null }, done: `Your ${name} account is connected.` };
   await db.query(`update settings_change_proposals set state = 'expired' where proposer_user_id = $1 and area = $2 and path = $3 and state in ('proposed', 'approved')`, [userId, CREDENTIAL_CARD_AREA, path]);
   const [row] = await db.query<{ id: string }>(
     `insert into settings_change_proposals(proposer_user_id, scope, area, sensitive, title, summary, method, path, body, thread_id)
