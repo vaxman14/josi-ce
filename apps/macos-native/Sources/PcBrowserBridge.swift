@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SafariServices
 import ServiceManagement
 
 /// The running Josi's side of the browser extension on this Mac. Safari's
@@ -14,12 +15,15 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
     private static let sessionMs: Int64 = 55_000, commandSeconds = 20.0, observationBytes = 60_000
     private static let uploadBytes = 8 * 1024 * 1024, chunkBytes = 120 * 1024, presenceTabs = 30
     private static let safariExtension = "com.heyjosi.ce.unified.workspace-safari"
-    private static let allowedKey = "josi.pc.browserProfiles", workspaceKey = "josi.pc.browserWorkspace"
+    private static let allowedKey = "josi.pc.browserProfiles", workspaceKey = "josi.pc.browserWorkspace", lastKey = "josi.pc.browserLast"
 
     private final class Pending: @unchecked Sendable {
         let commandId = UUID().uuidString.lowercased()
         var command: [String: Wire] = [:], activity = "", value: String?, shown = false
         var file: Data?, fileName = "", mediaType = ""
+        /// A Safari download Josi saves for the extension: authorized first, then
+        /// its pieces in order, at most 8 MB.
+        var authorized = false, saving = Data(), saved: String?
         private let lock = NSLock(); private var continuation: CheckedContinuation<PcOutcome, Never>?, result: PcOutcome?
         func wait() async -> PcOutcome {
             await withCheckedContinuation { next in
@@ -116,10 +120,22 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
                   let source = Bundle.main.url(forResource: family, withExtension: "json", subdirectory: "NativeMessagingHosts"),
                   let body = try? Data(contentsOf: source), body.count <= 4096 else { continue }
             let folder = browserFolder + "/NativeMessagingHosts", target = folder + "/com.heyjosi.browser.json"
-            if FileManager.default.fileExists(atPath: target) { continue }
+            // An existing file is replaced only when it is Josi's own (same host name
+            // and helper path), so an update can add the Chrome Web Store ID.
+            if let existing = FileManager.default.contents(atPath: target) {
+                guard existing != body, let value = try? JSONSerialization.jsonObject(with: existing) as? [String: Any],
+                      value["name"] as? String == "com.heyjosi.browser",
+                      value["path"] as? String == "/Applications/Josi.app/Contents/Helpers/JosiBrowserHost" else { continue }
+                try? body.write(to: URL(fileURLWithPath: target), options: .atomic); continue
+            }
             try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: target, contents: body, attributes: [.posixPermissions: 0o644])
         }
+    }
+    /// Safari ships extensions turned off: this opens the Josi extension in
+    /// Safari's settings, where the person turns on "Josi Browser Control".
+    static func openSafariExtensionSettings() {
+        SFSafariApplication.showPreferencesForExtension(withIdentifier: safariExtension) { _ in }
     }
     static var brokerNeedsApproval: Bool { SMAppService.agent(plistName: "com.heyjosi.ce.browser.plist").status == .requiresApproval }
     private func ownerConnection() -> NSXPCConnection {
@@ -201,7 +217,14 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
                 if discovered != found { discovered = found; didChange = true }
                 return Self.reply(id, true, ["profileDiscovered": .bool(true)])
             }
+            // One browser is linked at a time. Another allowed browser waits (standby)
+            // unless the person chose it in its popup ("Use this browser").
+            if !payload["explicit"].flag, live(), let current = link, current.profileId != known.profileId {
+                return Self.reply(id, true, ["standby": .bool(true), "family": .string(current.family)])
+            }
             if let link { end(link, "replaced") }
+            // Remembered so a closed browser can be started again from chat.
+            UserDefaults.standard.set(try? JSONEncoder().encode(known), forKey: Self.lastKey)
             let made = Link(profileId: known.profileId, family: browser.family, browser: known.browser, application: known.application)
             if withTab, let origin = Self.originOf(payload["url"].text) {
                 made.tabId = payload["attachedTabId"].integer; made.url = payload["url"].text; made.title = payload["title"].text; made.origins = [origin]
@@ -219,10 +242,12 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
             return Self.reply(id, true, ["index": .number(Double(index)), "base64": .string(piece.base64EncodedString()), "last": .bool(index == count - 1)])
         case "browser.poll":
             link.lastPoll = Date()
-            if link.tabId >= 0 {
-                // The extension reports the attached tab; a tab it no longer has detaches.
-                if payload["tabId"] == .null { link.tabId = -1; link.url = nil; link.title = nil; didChange = true }
-                else if let origin = Self.originOf(payload["url"].text), payload["url"].text != link.url || payload["title"].text != link.title {
+            // The extension names the tab Josi uses: the one the person is looking at,
+            // or the one Josi is working in (held while a task runs and shortly after).
+            if payload["tabId"] == .null { if link.tabId >= 0 { link.tabId = -1; link.url = nil; link.title = nil; didChange = true } }
+            else if case .number = payload["tabId"], payload["tabId"].integer >= 0, link.sent == nil || payload["tabId"].integer == link.tabId {
+                if payload["tabId"].integer != link.tabId { link.tabId = payload["tabId"].integer; didChange = true }
+                if let origin = Self.originOf(payload["url"].text), payload["url"].text != link.url || payload["title"].text != link.title {
                     link.url = payload["url"].text; link.title = payload["title"].text; didChange = true
                     if !link.origins.contains(origin), link.origins.count < 128 { link.origins.append(origin) }
                 }
@@ -244,6 +269,7 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
                   command["sessionId"].text == link.sessionId else { return Self.reply(id, false) }
             let expectedTab = sent.command["tabId"].map { $0.integer } ?? link.tabId
             guard actual == .null || actual["tabId"].integer == expectedTab else { return Self.reply(id, false) }
+            sent.authorized = true
             var authority: [String: Wire] = ["commandId": .string(sent.commandId), "sessionId": .string(link.sessionId), "allowed": .bool(true)]
             if let value = sent.value { authority["value"] = .string(value) }
             if let file = sent.file {
@@ -270,11 +296,76 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
             let code = payload["code"].text
             sent.finish(ok ? (true, result) : pcRefuse(code.isEmpty ? "not_verified" : code))
             return Self.reply(id, true)
+        case "browser.save":
+            // Safari's download, piece by piece, for the authorized download in flight.
+            guard let sent = link.sent, sent.authorized, sent.command["kind"]?.text == "download", payload["commandId"].text == sent.commandId,
+                  sent.saved == nil, payload["index"].integer * Self.chunkBytes == sent.saving.count, payload["chunks"].integer >= 1,
+                  payload["size"].integer > 0, payload["size"].integer <= Self.uploadBytes,
+                  let piece = Data(base64Encoded: payload["base64"].text), !piece.isEmpty, piece.count <= Self.chunkBytes,
+                  sent.saving.count + piece.count <= payload["size"].integer else { return Self.reply(id, false) }
+            sent.saving.append(piece)
+            guard payload["last"].flag else { return Self.reply(id, true, ["index": payload["index"]]) }
+            guard sent.saving.count == payload["size"].integer, let name = Self.saveDownload(sent.saving, name: payload["name"].text) else { sent.saving = Data(); return Self.reply(id, false) }
+            sent.saved = name; sent.saving = Data()
+            return Self.reply(id, true, ["index": payload["index"], "file": .string(name)])
         case "browser.stop":
             end(link, "local_takeover"); self.link = nil; didChange = true
             return Self.reply(id, true)
         default: return Self.reply(id, false)
         }
+    }
+    /// Writes a downloaded file into ~/Downloads under a name no file has yet,
+    /// never following a link. Returns the name it was given.
+    private static func saveDownload(_ data: Data, name: String) -> String? {
+        var clean = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_").replacingOccurrences(of: "\0", with: "")
+        while clean.hasPrefix(".") { clean.removeFirst() }
+        clean = String(clean.prefix(200)); if clean.isEmpty { clean = "download" }
+        var folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads").path
+        #if DEBUG
+        if let test = ProcessInfo.processInfo.environment["JOSI_DOWNLOADS_DIR"] { folder = test }
+        #endif
+        let stem = (clean as NSString).deletingPathExtension, ext = (clean as NSString).pathExtension
+        for attempt in 0..<100 {
+            let candidate = attempt == 0 ? clean : "\(stem) (\(attempt + 1))" + (ext.isEmpty ? "" : ".\(ext)")
+            let fd = open(folder + "/" + candidate, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o644)
+            if fd < 0 { if errno == EEXIST { continue }; return nil }
+            defer { close(fd) }
+            let written = data.withUnsafeBytes { write(fd, $0.baseAddress, data.count) }
+            return written == data.count ? candidate : nil
+        }
+        return nil
+    }
+    /// The browser last linked, while it is still allowed and installed.
+    private var lastBrowser: Allowed? {
+        guard let data = UserDefaults.standard.data(forKey: Self.lastKey), let last = try? JSONDecoder().decode(Allowed.self, from: data),
+              allowedBrowsers.contains(where: { $0.application == last.application }), FileManager.default.fileExists(atPath: last.application) else { return nil }
+        return last
+    }
+    private var linked: Bool { lock.lock(); defer { lock.unlock() }; return live() }
+    private func showing(_ target: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard live(), let link, link.tabId >= 0 else { return false }
+        return Self.originOf(link.url) == target
+    }
+    /// Starts the approved browser with the approved https page, and waits up to
+    /// 40 seconds for the extension to link and show it. A refusal, or nil when ready.
+    private func launch(_ scope: Wire, url: String, cancel: PcCancel) async -> PcOutcome? {
+        let target = scope["target"].text
+        guard let last = lastBrowser, scope["application"].text == last.application else { return pcRefuse("browser_not_linked") }
+        guard Self.originOf(url) == target, url.hasPrefix("https://"), let page = URL(string: url), let host = page.host else { return pcRefuse("invalid_page") }
+        await MainActor.run { PcExecutor.shared.beginExternal("Opening \(host)") }
+        defer { Task { @MainActor in PcExecutor.shared.endExternal() } }
+        do {
+            let configuration = NSWorkspace.OpenConfiguration(); configuration.activates = true
+            _ = try await NSWorkspace.shared.open([page], withApplicationAt: URL(fileURLWithPath: last.application), configuration: configuration)
+        } catch { return pcRefuse("browser_did_not_start") }
+        let deadline = Date().addingTimeInterval(40)
+        while Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(500))
+            if cancel.isCancelled || blocked { return pcRefuse("paused") }
+            if showing(target) { return nil }
+        }
+        return pcRefuse("browser_not_responding")
     }
     private static func tab(_ value: Wire, active: Bool) -> Tab? {
         guard case .number = value["tabId"], value["tabId"].integer >= 0, let origin = originOf(value["url"].text) else { return nil }
@@ -296,7 +387,13 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
     /// sites and titles of its open tabs. Never paths or page content.
     func presence() -> Wire? {
         lock.lock(); defer { lock.unlock() }
-        guard live(), let link else { return nil }
+        guard live(), let link else {
+            // No browser running: name the last one used, with no tabs, so
+            // "open mercari.com" can start it. Without one, desktop work only.
+            guard let last = lastBrowser else { return nil }
+            return ["connected": .bool(true), "browser": ["family": .string(last.family), "application": .string(last.application), "profile": "Default",
+                                                          "origin": .null, "title": .null, "tabs": .array([])]]
+        }
         let attached = link.tabId >= 0
         var browser: [String: Wire] = ["family": .string(link.family), "application": .string(link.application), "profile": "Default",
                                        "origin": attached ? (Self.originOf(link.url).map { .string($0) } ?? .null) : .null,
@@ -310,12 +407,12 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
 
     // ------------------------------------------------------------ approved browser work
     /// Queues one approved command for the extension's next poll, or says why not.
-    private func queue(_ request: Wire) -> Result<Pending, PcRefusal> {
+    private func queue(_ request: Wire, launched: Bool = false) -> Result<Pending, PcRefusal> {
         let payload = request["payload"], scope = request["requirements"].list.first?["scope"] ?? .null
         let kind = payload["kind"].text
         let pending = Pending()
         lock.lock()
-        guard live(), let link else { lock.unlock(); return .failure(PcRefusal("browser_not_linked", "No browser is linked to Josi on this Mac. In Safari, turn on the Josi extension (Safari > Settings > Extensions).")) }
+        guard live(), let link else { lock.unlock(); return .failure(PcRefusal("browser_not_linked", "No browser is linked to Josi on this Mac. In Safari, turn on \"Josi Browser Control\" (Safari > Settings > Extensions; Josi's PC Control page has a button for it), then allow Josi on every website from its toolbar button.")) }
         guard scope["application"].text == link.application, scope["profile"].text == "Default" else { lock.unlock(); return .failure(PcRefusal("browser_changed")) }
         let target = scope["target"].text
         guard Self.originOf(target) == target, let site = URL(string: target)?.host else { lock.unlock(); return .failure(PcRefusal("invalid_site")) }
@@ -329,6 +426,10 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
             if !link.origins.contains(target) { link.origins.append(target) }
             command["kind"] = "attach"; command["tabId"] = .number(Double(tab.id)); command["origin"] = .string(target)
             pending.activity = "Attaching a tab on \(site)"
+        case "open" where launched && link.tabId >= 0 && Self.originOf(link.url) == target:
+            // The browser opened the page itself; read it.
+            command["kind"] = "inspect"; command["origin"] = .string(target); command["maxOutputBytes"] = .number(Double(Self.observationBytes))
+            pending.activity = "Reading \(site)"
         case "open":
             let url = payload["url"].text
             guard Self.originOf(url) == target, url.hasPrefix("https://") else { lock.unlock(); return .failure(PcRefusal("invalid_page")) }
@@ -372,8 +473,15 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
         return .success(pending)
     }
     func dispatch(_ request: Wire, cancel: PcCancel) async -> PcOutcome {
+        // Opening a page while the browser is closed starts it with that page,
+        // then reads the page once the extension has linked and shows it.
+        var launched = false
+        if request["payload"]["kind"].text == "open", !linked {
+            if let refusal = await launch(request["requirements"].list.first?["scope"] ?? .null, url: request["payload"]["url"].text, cancel: cancel) { return refusal }
+            launched = true
+        }
         let pending: Pending
-        switch queue(request) {
+        switch queue(request, launched: launched) {
         case .failure(let refusal): return refusal.outcome
         case .success(let queued): pending = queued
         }

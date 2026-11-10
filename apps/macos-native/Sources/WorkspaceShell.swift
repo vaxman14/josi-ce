@@ -10,12 +10,13 @@ struct WorkspaceView: View {
         [("My World", "globe.americas", "my-world"), ("Chat", "bubble.left.and.bubble.right", "chat"), ("Tasks", "checklist", "tasks"), ("Approvals", "checkmark.shield", "approvals"),
          ("Email", "envelope", "email"), ("Calendar", "calendar", "calendar"), ("Contacts", "person.crop.circle", "contacts"),
          ("Vault", "lock.shield", "vault"), ("Connections", "link", "connections"), ("Settings", "gearshape", "settings")]
+            + (model.canControlPc ? [("PC Control", "desktopcomputer", "pc-control")] : [])
     }
     private var admin: [Item] {
         var items: [Item] = [("Overview", "square.grid.2x2", "overview"), ("People", "person.2", "people"),
                              ("Backups", "externaldrive.badge.timemachine", "backups")]
         if JosiFlags.serverApp { items += [("Model", "square.3.layers.3d", "models"), ("Network & address", "globe", "network")] }
-        items += [("Developer Services", "hammer", "developer-services"), ("Custom APIs", "curlybraces", "custom-apis"), ("PC Control", "desktopcomputer", "pc-control")]
+        items += [("Developer Services", "hammer", "developer-services"), ("Custom APIs", "curlybraces", "custom-apis")]
         return items
     }
     private var title: String {
@@ -53,7 +54,7 @@ struct WorkspaceView: View {
                     case "network": if model.isAdministrator, JosiFlags.serverApp { NativeNetworkView() }
                     case "developer-services": if model.isAdministrator { NativeDeveloperServicesView() }
                     case "custom-apis": if model.isAdministrator { NativeCustomApisView() }
-                    case "pc-control": if model.isAdministrator { NativePcControlView() }
+                    case "pc-control": if model.canControlPc { NativePcControlView() }
                     case "automation": if JosiFlags.localWorkspace { AutomationView() }
                     case "channels": if JosiFlags.channels { NativeChannelsView() }
                     default: ChatView()

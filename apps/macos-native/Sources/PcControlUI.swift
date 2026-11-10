@@ -14,7 +14,7 @@ struct PcRequestCards: View {
     private static let everyday: Set<String> = ["desktop.view", "explorer.view", "folder.read", "folder.write", "file.rename", "file.move",
                                                 "app.launch", "app.view", "app.control", "app.close", "browser.view", "browser.fill"]
     var body: some View {
-        if model.isAdministrator, pc.needsApproval || !pc.requests.isEmpty || pc.browserDiscovery != nil || pc.browserHelperNeedsApproval {
+        if model.canControlPc, pc.needsApproval || !pc.requests.isEmpty || pc.browserDiscovery != nil || pc.browserHelperNeedsApproval {
             ScrollView {
                 VStack(spacing: 10) {
                     if pc.needsApproval { approveCard }
@@ -23,7 +23,10 @@ struct PcRequestCards: View {
                         card {
                             Text("Let Josi reach your browser").font(JosiFont.headline)
                             NativeLeanNote(text: "Josi's browser helper is waiting for your OK in System Settings > General > Login Items & Extensions. Turn on Josi there, then turn on the Josi extension in Safari > Settings > Extensions.")
-                            Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }.buttonStyle(JosiOutlineButtonStyle())
+                            HStack {
+                                Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }.buttonStyle(JosiOutlineButtonStyle())
+                                Button("Turn On Josi in Safari") { PcBrowserBridge.openSafariExtensionSettings() }.buttonStyle(JosiOutlineButtonStyle())
+                            }
                         }
                     }
                     ForEach(pc.requests, id: \.identifier) { requestCard($0) }

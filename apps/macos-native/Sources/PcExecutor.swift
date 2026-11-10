@@ -133,7 +133,7 @@ import Foundation
         }
     }
     private func tick(_ model: JosiModel) async {
-        guard let api = model.api, model.screen == .workspace, model.isAdministrator, !busy else { return }
+        guard let api = model.api, model.screen == .workspace, model.canControlPc, !busy else { return }
         let owner = model.user["id"].text
         guard !owner.isEmpty else { return }
         do {

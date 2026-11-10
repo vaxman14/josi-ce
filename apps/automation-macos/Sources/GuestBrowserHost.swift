@@ -101,13 +101,18 @@ import Darwin
               [20, 32].contains(hash.count), let signing = info[kSecCodeInfoIdentifier as String] as? String,
               let team = info[kSecCodeInfoTeamIdentifier as String] as? String else { throw GuestBrowserError.unavailable }
         let configData = try Data(contentsOf: URL(fileURLWithPath: configuration))
-        guard configData.count <= 4096, let config = try JSONSerialization.jsonObject(with: configData) as? [String: String],
-              let extensionId = config[family], !extensionId.isEmpty, extensionId.utf8.count <= 128 else { throw GuestBrowserError.invalid }
+        guard configData.count <= 4096, let config = try JSONSerialization.jsonObject(with: configData) as? [String: Any],
+              let development = config[family] as? String, !development.isEmpty, development.utf8.count <= 128 else { throw GuestBrowserError.invalid }
+        // Chrome and Brave also run the Chrome Web Store build, which has its own ID.
+        let store = family == "firefox" ? [] : ((config["chromiumStoreIds"] as? [String]) ?? []).filter { $0.range(of: "^[a-p]{32}$", options: .regularExpression) != nil }
         let own = CommandLine.arguments
+        let extensionId: String
         if family == "firefox" {
-            guard own.count == 3, own[2] == extensionId else { throw GuestBrowserError.invalid }
+            guard own.count == 3, own[2] == development else { throw GuestBrowserError.invalid }
+            extensionId = development
         } else {
-            guard own.count == 2, own[1] == "chrome-extension://\(extensionId)/" else { throw GuestBrowserError.invalid }
+            guard own.count == 2, let id = ([development] + store).first(where: { own[1] == "chrome-extension://\($0)/" }) else { throw GuestBrowserError.invalid }
+            extensionId = id
         }
         return try JSONSerialization.data(withJSONObject: [
             "kind": "browser-process", "family": family, "extensionId": extensionId,

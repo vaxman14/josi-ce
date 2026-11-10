@@ -37,7 +37,8 @@ function manifestFor(family, { store }) {
     manifest_version: 3, name: 'Josi Browser Control', version: VERSION,
     description: 'Lets the Josi app on your computer use your browser, only with your permissions. Never touches passwords or payment details.',
     icons: { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png', 128: 'icons/icon-128.png' },
-    permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage', 'alarms', 'downloads'],
+    // Safari has no downloads API: the worker hands downloads to Josi instead.
+    permissions: ['nativeMessaging', 'activeTab', 'tabs', 'scripting', 'storage', 'alarms', ...(family === 'safari' ? [] : ['downloads'])],
     // Site access once, at install (as other assistant extensions do), so no
     // site needs a click in the browser. Each site and action is still
     // decided in Josi's PC Control: saved permissions or the owner's approval.
@@ -123,7 +124,9 @@ for (const family of STORES) {
   catalog.store.push({ family, store: family === 'chrome' ? 'Chrome Web Store (Chrome and Brave)' : family === 'edge' ? 'Microsoft Edge Add-ons' : 'Firefox Add-ons (AMO)',
     file: `store/josi-browser-control-${family}-${VERSION}.zip`, byteSize: written.byteSize, sha256: written.sha256 });
 }
-await writeFile(join(output, 'BrowserDistribution.json'), JSON.stringify({ chrome: identity.chromiumId, brave: identity.chromiumId, edge: identity.chromiumId, firefox: identity.firefoxId, safari: identity.safariId }) + '\n', { flag: 'wx' });
+// The development ID per family, and the Chrome Web Store IDs every Chromium
+// native host also accepts (the store build has its own ID).
+await writeFile(join(output, 'BrowserDistribution.json'), JSON.stringify({ chrome: identity.chromiumId, brave: identity.chromiumId, edge: identity.chromiumId, firefox: identity.firefoxId, safari: identity.safariId, chromiumStoreIds: storeIds }) + '\n', { flag: 'wx' });
 await writeFile(join(output, 'BrowserExtensionCatalog.json'), JSON.stringify(catalog, null, 2) + '\n', { flag: 'wx' });
 await writeFile(join(output, 'store', 'README.txt'), [
   `Josi Browser Control ${VERSION}: store packages.`, '',

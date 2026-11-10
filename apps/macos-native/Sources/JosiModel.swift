@@ -71,6 +71,9 @@ import SwiftUI
     private var pending: (id: String, thread: String, message: String, attachments: [Wire])?
     var signedInName: String { user["displayName"].text.isEmpty ? user["username"].text : user["displayName"].text }
     var isAdministrator: Bool { user["role"].text == "super_admin" }
+    /// A signed-in person controls their own computers when the server allows it
+    /// (the owner always; members unless turned off).
+    var canControlPc: Bool { isAdministrator || user["pcControlAllowed"].flag }
     var chatGoals: [Wire] { goals.filter { $0["threadId"].text == selectedThread }.prefix(6).map { $0 } }
 
     func run(_ action: @escaping @MainActor () async throws -> Void) {
