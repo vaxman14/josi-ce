@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Wire values stay in memory. No server response, login or Vault material is
@@ -46,6 +47,77 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                     completionHandler: @escaping @Sendable (URLRequest?) -> Void) { completionHandler(nil) }
+    /// A server whose certificate macOS trusts goes through as usual. One on the
+    /// local network whose own authority the person confirmed once is trusted by
+    /// that pinned authority; anything else is refused and noted, so the app can
+    /// show its fingerprint and ask.
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else { completionHandler(.performDefaultHandling, nil); return }
+        let host = challenge.protectionSpace.host
+        if SecTrustEvaluateWithError(trust, nil) { completionHandler(.performDefaultHandling, nil); return }
+        if JosiTrust.trustedByPin(trust, host: host) { completionHandler(.useCredential, URLCredential(trust: trust)); return }
+        JosiTrust.noteUntrusted(host: host, trust: trust)
+        completionHandler(.cancelAuthenticationChallenge, nil)
+    }
+}
+
+/// Trusting a Josi server's own certificate authority (docs/WINDOWS_CLIENT_NODE_SPEC.md,
+/// "Reach"): a server on the local network answers with a certificate its own proxy
+/// issued. After the person confirms the fingerprint once, that authority is pinned
+/// for that host in ~/Library/Application Support/Josi/trusted.
+enum JosiTrust {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var untrusted: (host: String, fingerprint: String)?
+    private static func file(_ host: String) -> URL {
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Josi/trusted", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let safe = String(host.lowercased().map { $0.isLetter || $0.isNumber || $0 == "." || $0 == "-" ? $0 : "_" })
+        return folder.appendingPathComponent(safe + ".cer")
+    }
+    static func fingerprint(_ trust: SecTrust) -> String {
+        guard let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first else { return "" }
+        return SHA256.hash(data: SecCertificateCopyData(leaf) as Data).map { String(format: "%02X", $0) }.joined(separator: ":")
+    }
+    static func trustedByPin(_ trust: SecTrust, host: String) -> Bool {
+        guard let data = try? Data(contentsOf: file(host)), let root = SecCertificateCreateWithData(nil, data as CFData) else { return false }
+        SecTrustSetAnchorCertificates(trust, [root] as CFArray)
+        SecTrustSetAnchorCertificatesOnly(trust, true)
+        return SecTrustEvaluateWithError(trust, nil)
+    }
+    static func noteUntrusted(host: String, trust: SecTrust) {
+        let print = fingerprint(trust)
+        lock.withLock { untrusted = (host, print) }
+    }
+    /// The server whose certificate was refused on the last attempt, if any.
+    static func takeUntrusted() -> (host: String, fingerprint: String)? { lock.withLock { let value = untrusted; untrusted = nil; return value } }
+    /// Fetches the server's authority over a connection whose certificate is exactly
+    /// the one the person approved, and pins it for that host.
+    static func trust(origin: URL, fingerprint approved: String) async throws {
+        guard let host = origin.host, let url = URL(string: origin.absoluteString + "/api/network/ca") else { throw JosiError(message: "Enter the server's address first.") }
+        let session = URLSession(configuration: .ephemeral, delegate: OneCertificate(approved), delegateQueue: nil)
+        defer { session.invalidateAndCancel() }
+        let (data, response) = try await session.data(from: url)
+        guard (response as? HTTPURLResponse)?.statusCode == 200, let value = try? JSONDecoder().decode(Wire.self, from: data) else {
+            throw JosiError(message: "This server issues no certificate of its own, so it can't be trusted this way.")
+        }
+        let pem = value["pem"].text
+        guard pem.contains("BEGIN CERTIFICATE") else { throw JosiError(message: "This server issues no certificate of its own, so it can't be trusted this way.") }
+        let body = pem.components(separatedBy: "-----").filter { !$0.contains("CERTIFICATE") && !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.first ?? ""
+        guard let der = Data(base64Encoded: body.replacingOccurrences(of: "\n", with: "").replacingOccurrences(of: "\r", with: "")),
+              SecCertificateCreateWithData(nil, der as CFData) != nil else { throw JosiError(message: "The server's certificate could not be read.") }
+        try der.write(to: file(host), options: .atomic)
+    }
+    private final class OneCertificate: NSObject, URLSessionDelegate, Sendable {
+        let approved: String
+        init(_ approved: String) { self.approved = approved }
+        func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+            guard let trust = challenge.protectionSpace.serverTrust, JosiTrust.fingerprint(trust) == approved else { completionHandler(.cancelAuthenticationChallenge, nil); return }
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        }
+    }
 }
 
 @MainActor final class JosiAPI {
@@ -294,6 +366,47 @@ private final class NoRedirect: NSObject, URLSessionTaskDelegate, Sendable {
         request.setValue(csrf, forHTTPHeaderField: "x-josi-csrf")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         return try JSONDecoder().decode(Wire.self, from: await mediaResponse(request))["attachment"]
+    }
+    /// Send to my devices: one file to one of my devices (`toDevice`) or to another
+    /// person (`toUser`), from this device. The server relays it; nothing else sees it.
+    func sendTransfer(_ file: URL, toDevice: String?, toUser: String?, from device: String) async throws -> Wire {
+        var query = URLComponents(); var items = [URLQueryItem(name: "fromDevice", value: device)]
+        if let toDevice { items.append(URLQueryItem(name: "toDevice", value: toDevice)) }
+        if let toUser { items.append(URLQueryItem(name: "toUser", value: toUser)) }
+        query.queryItems = items
+        guard !closed, file.isFileURL, let url = URL(string: origin.absoluteString + "/api/device-transfers/" + "?" + (query.percentEncodedQuery ?? "")) else { throw CancellationError() }
+        let properties = try file.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard properties.isRegularFile == true, let size = properties.fileSize, size > 0, size <= 25 * 1024 * 1024 else { throw JosiError(message: "Choose a file of up to 25 MB.") }
+        let content = try Data(contentsOf: file)
+        let filename = file.lastPathComponent.replacingOccurrences(of: "\"", with: "_").replacingOccurrences(of: "\r", with: "_").replacingOccurrences(of: "\n", with: "_")
+        let boundary = "Josi-" + UUID().uuidString
+        var body = Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8)
+        body.append(content); body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        if csrf == nil, bearer == nil { try await primeCSRF() }
+        var request = URLRequest(url: url); request.httpMethod = "POST"; request.httpBody = body
+        identify(&request)
+        if bearer == nil { request.setValue(csrf, forHTTPHeaderField: "x-josi-csrf") }
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await session.data(for: request)
+        let value = (try? JSONDecoder().decode(Wire.self, from: data)) ?? .null
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw JosiError(message: value["error"].text.isEmpty ? "The file could not be sent." : value["error"].text, status: (response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+        return value
+    }
+    /// A file waiting for this device, at most 25 MB.
+    func transferContent(_ id: String, device: String) async throws -> Data {
+        guard !closed, let url = URL(string: origin.absoluteString + "/api/device-transfers/\(try uuid(id))/content?deviceId=\(device)") else { throw CancellationError() }
+        var request = URLRequest(url: url); identify(&request)
+        let (bytes, response) = try await session.bytes(for: request)
+        defer { bytes.task.cancel() }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw JosiError(message: "That file is not waiting any more.") }
+        var data = Data()
+        for try await byte in bytes {
+            guard !closed, data.count <= 25 * 1024 * 1024 else { throw JosiError(message: "The file was interrupted or too large.") }
+            data.append(byte)
+        }
+        return data
     }
     func localSetupHandoff() async throws {
         guard origin.host == "localhost" else { throw JosiError(message: "Initial setup must be opened on the server Mac.") }

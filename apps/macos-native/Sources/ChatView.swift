@@ -7,6 +7,7 @@ struct ChatView: View {
     @EnvironmentObject var model: JosiModel
     @StateObject private var voice = NativeVoice()
     @State private var voiceSettings = false
+    @State private var sendingFile = false
     /// True from a send until its outcome. Loading an old conversation brings in
     /// replies and failures too, and those must not play as if they just happened.
     @State private var waiting = false
@@ -43,6 +44,7 @@ struct ChatView: View {
         ZStack {
             VStack(spacing: 0) {
                 stage
+                TransferCards()
                 PcRequestCards()
                 composer.padding(.horizontal, 26).padding(.top, 8).padding(.bottom, 8).frame(maxWidth: 830)
                 Text(footer).font(JosiFont.caption).foregroundStyle(JosiTheme.muted).padding(.bottom, 14)
@@ -50,6 +52,7 @@ struct ChatView: View {
             if model.historyOpen { history.transition(.move(edge: .bottom)) }
         }
         .sheet(isPresented: $voiceSettings) { NativeVoiceSettings(voice: voice).environmentObject(model).preferredColorScheme(.dark) }
+        .sheet(isPresented: $sendingFile) { SendToDevicesSheet().environmentObject(model).preferredColorScheme(.dark) }
         .task {
             guard let api = model.api else { return }
             await voice.refresh(api, administrator: model.isAdministrator)
@@ -75,7 +78,11 @@ struct ChatView: View {
             if thinking { waiting = true }
             if replyId != followedReply {
                 followedReply = replyId
-                if let reply, waiting { waiting = false; freshReply = replyId; ghost.replied(reply["body"].text) }
+                if let reply, waiting {
+                    waiting = false; freshReply = replyId; ghost.replied(reply["body"].text)
+                    // The next message can be typed at once, without clicking the bar.
+                    NotificationCenter.default.post(name: JosiMessageEditor.focus, object: nil)
+                }
             }
             if failureId != followedFailure {
                 followedFailure = failureId
@@ -223,8 +230,12 @@ struct ChatView: View {
             if !voice.partial.isEmpty { Text(voice.partial).font(JosiFont.callout).foregroundStyle(JosiTheme.muted).lineLimit(3) }
             if !voice.error.isEmpty { Text(voice.error).font(JosiFont.caption).foregroundStyle(JosiTheme.error).textSelection(.enabled) }
             HStack(alignment: .bottom, spacing: 10) {
-                Button(action: attach) { Image(systemName: "plus").font(.system(size: 15, weight: .semibold)).frame(width: 38, height: 38) }
-                    .buttonStyle(.plain).foregroundStyle(JosiTheme.lilac).help("Attach a file or photo").accessibilityLabel("Attach a file or photo")
+                Menu {
+                    Button("Attach a File or Photo…", action: attach)
+                    Button("Send to a Device or Person…") { sendingFile = true }
+                } label: { Image(systemName: "plus").font(.system(size: 15, weight: .semibold)).frame(width: 38, height: 38) }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .foregroundStyle(JosiTheme.lilac).help("Attach, or send a file to a device").accessibilityLabel("Attach or send a file")
                     .disabled(model.busy || model.pendingMessage || model.draftAttachments.count >= 10 || voice.mode != nil)
                 Button { model.section = "my-world" } label: { Image(systemName: "globe.americas").font(.system(size: 15)).frame(width: 38, height: 38) }
                     .buttonStyle(.plain).foregroundStyle(JosiTheme.lilac).help("My World").accessibilityLabel("My World")

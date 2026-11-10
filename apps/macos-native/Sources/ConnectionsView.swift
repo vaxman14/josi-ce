@@ -141,7 +141,7 @@ struct NativeConnectionsView: View {
                 JosiPill(text: view["available"].flag ? "Not connected" : "Not set up", color: JosiTheme.muted)
             }
             if view["available"].flag {
-                NativeLeanNote(text: "\(label) asks once for the permissions Josi supports. Each one stays off here until you turn it on.")
+                NativeLeanNote(text: "\(label) asks once for the permissions Josi supports. Everything it grants starts on in Josi. You can turn any of it off here afterwards.")
                 Button(connecting ? "Waiting for your browser…" : "Connect \(label)") { connect(provider) }
                     .buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(model.busy || connecting)
             } else {

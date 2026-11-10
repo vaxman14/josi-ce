@@ -16,6 +16,8 @@ final class JosiMessageTextView: NSTextView {
 }
 
 struct JosiMessageEditor: NSViewRepresentable {
+    /// Posted when a reply lands: keyboard focus goes back to the message bar.
+    static let focus = Notification.Name("josi.focusComposer")
     @Binding var text: String
     var enabled: Bool
     var onSend: () -> Void
@@ -39,6 +41,9 @@ struct JosiMessageEditor: NSViewRepresentable {
         view.setAccessibilityHelp("Enter sends the message. Shift-Enter starts a new line.")
         view.delegate = context.coordinator
         scroll.documentView = view
+        context.coordinator.focus = NotificationCenter.default.addObserver(forName: Self.focus, object: nil, queue: .main) { [weak view] _ in
+            MainActor.assumeIsolated { if let view, view.isEditable { view.window?.makeFirstResponder(view) } }
+        }
         return scroll
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
@@ -50,7 +55,9 @@ struct JosiMessageEditor: NSViewRepresentable {
     }
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: JosiMessageEditor
+        nonisolated(unsafe) var focus: NSObjectProtocol?
         init(_ parent: JosiMessageEditor) { self.parent = parent }
+        deinit { if let focus { NotificationCenter.default.removeObserver(focus) } }
         func textDidChange(_ notification: Notification) {
             guard let view = notification.object as? NSTextView else { return }
             parent.text = view.string

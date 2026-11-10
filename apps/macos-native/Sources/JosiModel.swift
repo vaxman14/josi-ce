@@ -123,7 +123,19 @@ import SwiftUI
         recovery = .null; setup = .null; setupReview = .null; mfaChallenge = ""; appleLink = ""; appleMfa = false; signInMethods = .null
         automation = .null; automationSettings = .null; automationCatalog = .null; resetAutomationDevices()
         self.address = next.origin.absoluteString
-        try await next.primeCSRF()
+        do { try await next.primeCSRF() }
+        catch {
+            // A server on the local network with its own certificate: show its
+            // fingerprint, and trust it only when the person confirms it.
+            guard let untrusted = JosiTrust.takeUntrusted(), untrusted.host == next.origin.host else { throw error }
+            let alert = NSAlert()
+            alert.messageText = "Trust this Josi server?"
+            alert.informativeText = "\(untrusted.host) uses a certificate your Mac doesn't know, which is normal for a Josi server on your own network.\n\nCertificate fingerprint:\n\(untrusted.fingerprint)\n\nTrust it only if this matches the fingerprint shown in Josi on the server, under Network & address."
+            alert.addButton(withTitle: "Trust This Server"); alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { throw JosiError(message: "Not connected: the server's certificate was not trusted.") }
+            try await JosiTrust.trust(origin: next.origin, fingerprint: untrusted.fingerprint)
+            try await next.primeCSRF()
+        }
         if !JosiFlags.serverApp { UserDefaults.standard.set(self.address, forKey: Self.lastServerKey) }
         var incomplete = false
         do { incomplete = !(try await next.request("/onboarding/state"))["completed"].flag }
@@ -464,6 +476,41 @@ import SwiftUI
     /// Performs a credential card: claims the proposal, then the route with the typed
     /// values folded into the fixed body, then reports the outcome. Throws with the
     /// route's own words so the card can show them and stay open.
+    /// The account connection card Josi opened in chat (start_account_connection):
+    /// claims it, opens the provider's sign-in in the browser, and asks the server
+    /// every two seconds whether the browser has come back (no josi:// link needed).
+    /// The outcome is reported to the conversation through the card.
+    func startAccountCard(_ proposal: Wire) async throws {
+        guard let api else { throw JosiError(message: "Not signed in.") }
+        let provider = proposal["card"]["provider"].text
+        guard ["google", "microsoft", "dropbox", "box"].contains(provider) else { throw JosiError(message: "Josi doesn't know that provider. Ask her to open the card again.") }
+        let id = try api.uuid(proposal.identifier)
+        if proposal["state"].text != "approved" {
+            do { _ = try await api.request("/settings-changes/\(id)/decide", method: "POST", body: ["approve": .bool(true)]) }
+            catch let error as JosiError where error.status == 409 { /* Already claimed. */ }
+        }
+        let started = try await api.request("/connections/\(provider)/start", method: "POST", body: ["native": .bool(true), "poll": .bool(true)])
+        guard let url = URL(string: started["url"].text), url.scheme == "https", url.host != nil, url.user == nil,
+              let state = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "state" })?.value,
+              started["poll"].flag else { throw JosiError(message: "The server didn't return a usable sign-in address. Update the server, or connect from Connections.") }
+        NSWorkspace.shared.open(url)
+        Task { @MainActor in
+            var problem: String? = "The sign-in wasn't finished in the browser. Start again."
+            let until = Date().addingTimeInterval(600)
+            while Date() < until, self.api === api {
+                try? await Task.sleep(for: .seconds(2))
+                do {
+                    let answer = try await api.request("/connections/\(provider)/native/complete", method: "POST", body: ["state": .string(state)])
+                    if answer["waiting"].flag { continue }
+                    problem = nil; break
+                } catch let error as JosiError where error.status == 409 { problem = error.message; break }
+                catch { continue }
+            }
+            var report: [String: Wire] = ["ok": .bool(problem == nil)]
+            if let problem { report["error"] = .string(problem) }
+            _ = try? await api.request("/settings-changes/\(id)/applied", method: "POST", body: .object(report))
+        }
+    }
     func saveCredentialCard(_ proposal: Wire, values: [String: Wire]) async throws {
         guard let api else { throw JosiError(message: "Not signed in.") }
         let id = try api.uuid(proposal.identifier)

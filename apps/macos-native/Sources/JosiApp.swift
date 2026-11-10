@@ -78,6 +78,7 @@ import SwiftUI
                 .task {
                     delegate.model = model; model.refreshLocal(); await model.resume()
                     PcExecutor.shared.start(model)
+                    DeviceTransfers.shared.start(model)
                     if JosiAppDelegate.launchedAtLogin {
                         // Opened at login: menu bar only. The executor keeps running; the Dock or menu bar reopens the window.
                         JosiAppDelegate.launchedAtLogin = false

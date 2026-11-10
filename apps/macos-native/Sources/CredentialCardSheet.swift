@@ -26,7 +26,11 @@ struct CredentialCardSheet: View {
             if !card["intro"].text.isEmpty {
                 Text(card["intro"].text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
-            if fields.isEmpty {
+            if card["kind"].text == "account_connection" {
+                let name = ["google": "Google", "microsoft": "Microsoft", "dropbox": "Dropbox", "box": "Box"][card["provider"].text] ?? card["provider"].text
+                Button("Sign in with \(name)") { signIn() }.buttonStyle(JosiGoldButtonStyle(fullWidth: false)).disabled(working)
+                NativeLeanNote(text: "Your browser opens \(name)'s own sign-in page. Josi never sees your password. Come back here when it says you're done.")
+            } else if fields.isEmpty {
                 Text("This card has nothing to fill in. Ask Josi to open it again.").foregroundStyle(JosiTheme.error)
             }
             ForEach(fields, id: \.self["key"].text) { field in fieldView(field) }
@@ -47,8 +51,10 @@ struct CredentialCardSheet: View {
                 Button("Decline") { decline() }.buttonStyle(JosiOutlineButtonStyle())
                 Spacer()
                 Button("Not Now") { clear(); dismiss() }.buttonStyle(JosiOutlineButtonStyle()).keyboardShortcut(.cancelAction)
-                Button("Save", action: save).buttonStyle(JosiGoldButtonStyle(fullWidth: false)).keyboardShortcut(.defaultAction)
-                    .disabled(fields.isEmpty)
+                if card["kind"].text != "account_connection" {
+                    Button("Save", action: save).buttonStyle(JosiGoldButtonStyle(fullWidth: false)).keyboardShortcut(.defaultAction)
+                        .disabled(fields.isEmpty)
+                }
             }.disabled(working)
         }
         .padding(24).frame(width: 560).background(JosiTheme.deep)
@@ -126,6 +132,13 @@ struct CredentialCardSheet: View {
                 // The secret boxes empty after a failure, as on Windows; the route's own words stay.
                 secrets = [:]; problem = error.localizedDescription
             }
+        }
+    }
+    private func signIn() {
+        problem = ""; working = true
+        Task {
+            defer { working = false }
+            do { try await model.startAccountCard(proposal); dismiss() } catch { problem = error.localizedDescription }
         }
     }
     private func decline() {
