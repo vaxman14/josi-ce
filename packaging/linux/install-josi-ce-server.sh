@@ -562,7 +562,7 @@ has_desktop() {
 # stdin is the script. sudo-rs can run the script outside the terminal's
 # foreground group, where reading would stop it; then nothing is asked.
 # OUTER: the /dev/pts device of the nearest ancestor whose terminal is not $1,
-# and OUTER_EXE: that ancestor's program (the sudo that made our terminal).
+# and OUTER_EXE: that ancestor's program (it made our terminal).
 outer_tty() {
   local mine=$1 p=$PPID major minor
   local -a f
@@ -586,9 +586,9 @@ outer_tty() {
 
 # sudo-rs (Ubuntu 25.10 and later) relays the keyboard into the terminal it
 # made for us, whatever stdin is. Reading the outer terminal as well would
-# split the keystrokes between sudo and this script: letters and Enter went
+# split the keystrokes between the two readers: letters and Enter went
 # missing (https://ce.heyjosi.com arrived as https://e.hejs.cm). There the
-# answers are read where sudo-rs sends them, our own terminal, after becoming
+# answers are read where it sends them, our own terminal, after becoming
 # its foreground group: SIGTTOU is ignored, so that is allowed.
 relays_keyboard() {
   case $OUTER_EXE in /*) ;; *) return 1 ;; esac
@@ -614,12 +614,12 @@ open_tty() {
   { exec 5<>/dev/tty; } 2>/dev/null || return 0
   trap '' TTOU TTIN
   # Fields after the "(comm)" one: state ppid pgrp session tty tpgid.
-  # With the script piped in (curl | sudo bash), sudo with use_pty runs it in
-  # the background of a terminal of its own. Classic sudo sends that terminal
+  # With the script piped in (curl | sudo bash), use_pty runs it in the
+  # background of a terminal of its own. Classic sudo, unlike sudo-rs, sends that terminal
   # no keyboard, so the questions go to the terminal the person is typing in:
   # the first ancestor process on a different terminal. That is not our
-  # controlling terminal, so reading it is allowed from here. sudo-rs does
-  # send the keyboard in; see relays_keyboard.
+  # controlling terminal, so reading it is allowed from here. For sudo-rs
+  # see relays_keyboard.
   read -r -a st <<< "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null)"
   if [ "${#st[@]}" -ge 6 ] && [ "${st[2]}" != "${st[5]}" ]; then
     outer_tty "${st[4]}"
