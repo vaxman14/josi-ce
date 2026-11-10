@@ -381,7 +381,15 @@ async function openTab(command, epoch) {
   if (!destination || destination.protocol !== 'https:' || destination.origin !== command.origin || !workspace.origins.includes(destination.origin)) throw new Error('invalid_page');
   if (!await browserApi.permissions.contains({ origins: [destination.origin + '/*'] })) throw new Error('site_permission_required');
   await authorize(command, null, epoch);
-  const created = await browserApi.tabs.create({ url: destination.href, active: true });
+  // A browser running in the background with no window (Edge's startup boost,
+  // a closed last window) has nowhere to put a tab: open a window instead.
+  let created;
+  try { created = await browserApi.tabs.create({ url: destination.href, active: true }); }
+  catch {
+    const window = await browserApi.windows.create({ url: destination.href, focused: true, type: 'normal' });
+    created = window?.tabs?.[0];
+    if (!created) throw new Error('window_unavailable');
+  }
   if (created.incognito) throw new Error('unsupported_tab');
   attachedTabId = created.id; persist();
   setPhase(hostPaused ? 'paused' : 'attached');
