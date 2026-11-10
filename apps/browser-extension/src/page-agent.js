@@ -153,7 +153,9 @@
     if (stopped || session !== request.sessionId || Date.now() >= request.expiresAt || location.href !== request.expectedUrl) throw new Error('photo_changed');
     if (mutations.takeRecords().length) revision++;
     const center = bounds.y + bounds.height / 2;
-    if (crossSite) return { center, photo: { screenshot: true, alt: String(image.alt || '').slice(0, 300), untrustedContent: true,
+    // The worker downloads a picture from another site itself (it has site
+    // access), so the tab need not be showing; the screenshot is the fallback.
+    if (crossSite) return { center, photo: { screenshot: true, source: /^https:/.test(expectedSource) ? expectedSource.slice(0, 2048) : null, alt: String(image.alt || '').slice(0, 300), untrustedContent: true,
       area: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height, viewportWidth: innerWidth, viewportHeight: innerHeight } } };
     // Read already loaded pixels only. Drawing a cross-origin image fails
     // closed; this is not a fetch proxy or a path to arbitrary local files.

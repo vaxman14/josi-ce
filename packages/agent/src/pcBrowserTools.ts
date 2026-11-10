@@ -16,7 +16,7 @@ export const PC_BROWSER_TOOLS: ToolSpec[] = [
     description: `Read the browser tab the owner attached to Josi on this PC: its title, address, visible text and the elements you can click or fill, each with an id. Needs the owner's "Browser viewing" permission for that site, or their approval in Josi. ${UNTRUSTED}`,
     parameters: shape({}) }, actionClass: null },
   { def: { name: 'browser_open_page',
-    description: `Open an exact HTTPS address and read the page that loads: in the attached tab, or in a new tab (which becomes the attached one) when none is attached. If the site needs a sign-in, tell the owner to sign in in that tab, then read it again. Needs "Browser viewing" permission for the destination site, or the owner's approval. Does not submit anything. ${UNTRUSTED}`,
+    description: `Open an exact HTTPS address and read the page that loads: in the tab in use, or in a new tab when none is in use; if the browser is closed, Josi starts it with this page. If the site needs a sign-in, tell the owner to sign in in that tab, then read it again. Needs "Browser viewing" permission for the destination site, or the owner's approval. Does not submit anything. ${UNTRUSTED}`,
     parameters: shape({ url: { type: 'string', maxLength: 2048 } }) }, actionClass: null },
   { def: { name: 'browser_click',
     description: 'Click one element from the latest read of the attached tab. A click can submit, send, delete or buy, so the owner approves each click in Josi unless they turned on Full control. Read the page again afterwards; the receipt alone does not prove what happened.',
@@ -69,7 +69,7 @@ export const PC_BROWSER_ABSENT_PROMPT = 'No browser tab is attached to Josi righ
 /** Told to the model when the browser is linked but no tab is attached yet. */
 export const PC_BROWSER_LINKED_PROMPT = 'The owner\'s browser is linked to Josi on this PC, but no tab is attached yet. '
   + 'When they say "use this tab", "look at my browser" or mention a page they have open, call browser_attach_tab (no tab_id means the tab they are looking at), then browser_read_page. '
-  + 'Use browser_list_tabs to name or pick another tab. To go to a site that is not open ("open mercari.com"), call browser_open_page with its https address: it opens a new tab and attaches it; if the site asks for a sign-in, tell the owner to sign in in that tab. Never tell them to attach a tab by hand unless a tool says the site needs one click on the Josi icon.';
+  + 'Use browser_list_tabs to name or pick another tab. To go to a site that is not open ("open mercari.com"), call browser_open_page with its https address: it opens a new tab and uses it, and starts the browser first if it is closed. If the site asks for a sign-in, tell the owner to sign in in that tab. Never tell the owner to attach a tab, open the browser or click anything in the browser: use these tools yourself.';
 const ALL_BROWSER_TOOLS = [...PC_BROWSER_LINK_TOOLS, ...PC_BROWSER_TOOLS];
 export const PC_BROWSER_TOOL_NAMES = new Set(ALL_BROWSER_TOOLS.map(tool => tool.def.name));
 /** The prompt piece that matches the offered browser tools ('' for none). */
