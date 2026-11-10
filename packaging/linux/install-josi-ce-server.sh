@@ -42,7 +42,7 @@ log=/var/log/josi-install.log
 work=''
 bgpid=''
 interrupted=0
-processor='' family='' package='' expected='' url=''
+processor='' family='' package='' expected='' url='' FROM_DIR=''
 # Every apt-get waits up to ten minutes for another apt (unattended-upgrades).
 APT_LOCK='DPkg::Lock::Timeout=600'
 
@@ -419,6 +419,7 @@ usage() {
 Josi installer. Without options it asks its questions on the terminal.
 
   --yes, -y                        ask nothing (also JOSI_YES=1, or when there is no terminal)
+  --from FOLDER                    install the package from this folder instead of downloading it
   --address-mode lan|domain|proxy  this network only / a public domain with HTTPS / my own proxy
   --lan-address HOST               lan: this server's address (default: detected)
   --domain NAME                    domain: the name whose DNS points here (Caddy uses 80 and 443)
@@ -444,6 +445,12 @@ parse_args() {
       --browser) A_BROWSER=1 GIVEN+='browser '; CLI_ARGS+=(--browser); shift; continue ;;
       --no-browser) A_BROWSER=0 GIVEN+='browser '; CLI_ARGS+=(--no-browser); shift; continue ;;
       --help | -h) usage; exit 0 ;;
+      # A folder that already holds the package (install.sh in an offline
+      # folder passes its own); it is checked against the same SHA-256.
+      --from)
+        if [ -z "$value" ]; then [ $# -ge 2 ] || { printf 'Josi installer: --from needs a folder
+' >&2; exit 2; }; value=$2; shift; fi
+        FROM_DIR=$value; shift; continue ;;
       --address-mode | --lan-address | --domain | --email | --public-url | --port | --pc-control-user) ;;
       *) printf 'Josi installer: unknown option %s (try --help)\n' "${name:0:40}" >&2; exit 2 ;;
     esac
@@ -929,6 +936,7 @@ questions() {
 
 apt_get() { apt-get -o "$APT_LOCK" -o APT::Status-Fd=4 "$@" 4>"$work/status"; }
 download() {
+  if [ -n "$FROM_DIR" ]; then cp -- "$FROM_DIR/$package" "$work/$package"; return; fi
   curl --fail --location --silent --show-error --proto "$proto" --retry 3 \
     --output "$work/$package" "$BASE_URL/$package"
 }
@@ -1023,8 +1031,13 @@ main() {
   begin 2
   proto='=https'
   case "$BASE_URL" in http://*) proto='=http,https' ;; esac
-  size=$(curl -fsIL --proto "$proto" --max-time 20 "$BASE_URL/$package" 2>/dev/null | tr -d '\r' \
-    | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }') || size=0
+  if [ -n "$FROM_DIR" ]; then
+    [ -f "$FROM_DIR/$package" ] || fail "$package is not in $FROM_DIR"
+    size=0
+  else
+    size=$(curl -fsIL --proto "$proto" --max-time 20 "$BASE_URL/$package" 2>/dev/null | tr -d '\r' \
+      | awk 'tolower($1) == "content-length:" { n = $2 } END { print n + 0 }') || size=0
+  fi
   case $size in '' | *[!0-9]*) size=0 ;; esac
   [ "$size" -gt 1048576 ] || size=0
   rate_at=$SECONDS rate_got=0

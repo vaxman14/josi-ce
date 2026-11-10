@@ -81,6 +81,8 @@ rm -rf "$release"; mkdir -p "$release"
 names=$(python3 -B -c "import sys; sys.path.insert(0,'scripts/linux'); from package_common import package_names; print(' '.join(package_names().values()))")
 for name in $names; do [ -f "$out/$name" ] && cp "$out/$name" "$release/"; done
 cp "$out/linux" "$out/linux-latest.json" "$out/PKGBUILD" "$out/josi.install" "$out"/josi-root-*.tar.zst "$release/"
+# install.sh: run from a copy of this folder to install with no download (--from).
+install -m 755 packaging/linux/offline-install.sh "$release/install.sh"
 if [ "$portable" = 1 ]; then
   cp "$out/Josi-CE-Server-Installer-$version-x86_64.AppImage" "$out/Josi-CE-Server-Installer-$version-x86_64.run" "$release/"
 fi
