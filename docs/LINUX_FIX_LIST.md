@@ -1,5 +1,11 @@
 # Josi fix list
 
+> **Status, 2026-11-09:** all six items are fixed on `linux/josi-server`
+> (1.2.8-beta.5): ghost on setup and sign-in, clipboard fallback, five-part test
+> progress, the installer asks for the address, a Linux-aware Network page, and
+> web flags matching the Windows lean beta. Verified by install on Debian 13 and
+> Ubuntu 24.04 VMs; see `docs/LINUX_PC_CONTROL.md` for PC control.
+
 Started 2026-11-08. Branch `linux/josi-server` in `C:\Dev\josi-ce-linux`.
 
 ## 1. No ghost on the setup or sign-in pages
