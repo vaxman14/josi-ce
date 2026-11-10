@@ -715,7 +715,7 @@ function EmailStep({
             </ul>
             {current.configured && !editKeys ? (
               <p className="text-sm">
-                Keys saved{current.clientId ? ` (client ID ending in ${current.clientId.slice(-6)})` : ''}.{' '}
+                Keys saved{current.clientId ? ` (client ID starting ${current.clientId.slice(0, 10)}…)` : ''}.{' '}
                 <button type="button" className="underline" onClick={() => setEditKeys(true)}>Change</button>
               </p>
             ) : (
