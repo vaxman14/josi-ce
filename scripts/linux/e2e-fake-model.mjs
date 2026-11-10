@@ -33,7 +33,8 @@ function normalise(api, body) {
     for (const m of body.messages ?? []) {
       if (m.role === 'tool') out.toolResults.push({ id: m.tool_call_id, content: text(m.content) });
       if (Array.isArray(m.content) && m.content.some((p) => p.type === 'image_url')) out.hasImage = true;
-      if (m.role === 'user') out.prompt = text(m.content);
+      // A new user turn starts over: earlier turns' tool results are history.
+      if (m.role === 'user') { out.prompt = text(m.content); out.toolResults = []; }
     }
   } else if (api === 'messages') {
     out.tools = (body.tools ?? []).map((t) => t.name).filter(Boolean);
@@ -78,6 +79,13 @@ function decide(n) {
     return { text: `${RESULT_MARKER}: ${last.content.slice(0, 300)}` };
   }
   const find = (name) => n.tools.find((t) => t === name || t.endsWith(`__${name}`) || t.endsWith(`_${name}`));
+  // "E2E_TOOL:<name>:<json input>" asks for one exact tool call (scripts/linux/e2e-pc.mjs).
+  const exact = /E2E_TOOL:([a-z_]+):(\{.*\})\s*$/s.exec(n.prompt);
+  if (exact) {
+    const hit = find(exact[1]);
+    if (!hit) return { text: `E2E_TOOL_NOT_OFFERED ${exact[1]}; offered: ${n.tools.join(',')}` };
+    return { tool: { name: hit, input: JSON.parse(exact[2]) } };
+  }
   if (/record_number/.test(n.prompt) && find('record_number')) {
     return { tool: { name: find('record_number'), input: { value: 7 } } };
   }

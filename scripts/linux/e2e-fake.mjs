@@ -163,6 +163,8 @@ try {
         } else if (step === 'smtp') body = { skip: true };
         else if (step === 'security') body = { folderMappingEnabled: false };
         else if (step === 'telemetry') body = { enabled: false };
+        // PC control is paired from chat by e2e-pc.mjs.
+        else if (step === 'pc_control') body = { skip: true };
         const out = await browser.req('POST', `/setup/steps/${step}`, body, { setupToken, expect: 200 });
         if (out.json.vaultRecovery) {
           creds = { ...creds, vaultRecoveryKey: out.json.vaultRecovery.key, vaultRecoveryFingerprint: out.json.vaultRecovery.fingerprint };

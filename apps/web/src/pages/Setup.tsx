@@ -90,7 +90,11 @@ interface SetupState {
   providerCatalog: ProviderCatalogEntry[];
   /** The address chosen in the Linux installer, to prefill the Address step. */
   installerAddress?: InstallerAddress | null;
+  /** The Linux server's own PC service, when it is installed. */
+  localPc?: LocalPc | null;
 }
+
+interface LocalPc { pcId: string; user: string; host: string }
 
 interface InstallerAddress { mode: 'lan' | 'domain' | 'proxy'; origin: string; domain: string; tlsMode: string; acmeEmail: string | null }
 
@@ -210,7 +214,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-4 text-sm text-muted-foreground">
             {revisingStep.summary} Saving this replaces what is stored and tests it again.
           </p>
-          <StepForm step={revisingStep.id} busy={busy} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress}
+          <StepForm step={revisingStep.id} busy={busy} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress} localPc={state.localPc}
                     smtpInitial={review?.summary?.smtp?.find((profile) => profile.kind === 'system')}
                     onSubmit={submit} />
           <div className="mt-3">
@@ -224,7 +228,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-1 text-xs text-muted-foreground">Step {position} of {state.steps.length}</p>
           <CardTitle>{current.title}</CardTitle>
           <p className="mb-4 text-sm text-muted-foreground">{current.summary}</p>
-          <StepForm step={current.id} busy={busy} ownerExists={state.ownerExists} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress} onSubmit={submit} />
+          <StepForm step={current.id} busy={busy} ownerExists={state.ownerExists} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress} localPc={state.localPc} onSubmit={submit} />
         </Card>
       ) : (
         <Card>
@@ -275,10 +279,11 @@ export function Setup({ onDone }: { onDone: () => void }) {
 }
 
 function StepForm({
-  step, busy, catalog, smtpInitial, onSubmit, ownerExists = false, installerAddress,
+  step, busy, catalog, smtpInitial, onSubmit, ownerExists = false, installerAddress, localPc,
 }: {
   step: string; busy: boolean; catalog: ProviderCatalogEntry[];
   installerAddress?: InstallerAddress | null;
+  localPc?: LocalPc | null;
   ownerExists?: boolean;
   smtpInitial?: {
     host: string | null; port: number | null; security: string | null; username: string | null;
@@ -468,6 +473,23 @@ function StepForm({
       );
 
     case 'pc_control':
+      // A Linux server pairs its own PC service here: the account password is
+      // the approval, and control comes on with the everyday allowances.
+      if (localPc) return (
+        <form onSubmit={(e) => handle(e, (f) => ({ localPcId: localPc.pcId, password: f.get('password'), enable: true }))} className="space-y-3">
+          <p className="text-sm">
+            Let Josi work on this server as <strong>{localPc.user}</strong> on {localPc.host}: run commands, read and
+            write files, open programs{' '}and use her own browser, each within the permissions you give her. Commands,
+            deleting, installs and anything high-risk still ask you in chat first.
+          </p>
+          <Field id="password" name="password" label="Your Josi password" type="password" required autoComplete="current-password" />
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" disabled={busy}>Turn it on</Button>
+            <Button type="button" variant="secondary" disabled={busy} onClick={() => void onSubmit('pc_control', { skip: true })}>Skip for now</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">You can turn it off any time by asking Josi, or under PC control permissions.</p>
+        </form>
+      );
       // Pairing needs the PC's own key, which only the Josi app on that PC
       // holds; the browser can only skip. The app offers Approve This PC here
       // and later under PC Control.

@@ -31,7 +31,8 @@ import { reconcileWorkspaceMount } from '@josi-ce/storage';
 import { CAPABILITIES, saveClient, scopesFor } from '@josi-ce/connectors';
 import { claudeSubscriptionRouter, claudeSubscriptionStatus } from '../http/claudeSubscriptionRoutes.js';
 import { codexSubscriptionRouter, codexSubscriptionStatus } from '../http/codexSubscriptionRoutes.js';
-import { hasCapability } from '@josi-ce/core';
+import { hasCapability, readLocalExecutors } from '@josi-ce/core';
+import { pairLocalExecutor } from '../http/pcLocalPairing.js';
 import {
   providerCatalog, readCredentials, revealForDiscovery, savableProviders, subscriptionOptions,
 } from '../http/llmRoutes.js';
@@ -300,6 +301,8 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         providerCatalog: providerCatalog(),
         // Linux: the address chosen in the installer, to prefill the Address step.
         installerAddress: await linuxInstallerAddress(db),
+        // The Linux server's own PC service, so the step can pair it here.
+        localPc: readLocalExecutors().map(({ pcId, user, host }) => ({ pcId, user, host }))[0] ?? null,
       });
     }),
   );
@@ -1021,6 +1024,22 @@ async function applyStep(
       // Skipping writes nothing; PC Control stays off and unpaired, and the
       // owner can pair later from the app or from chat.
       if (body.skip === true) return;
+      // A Linux server pairs its own PC service (josi-pc.service) right here:
+      // the account password is the approval, as on the PC Control page.
+      if (typeof body.localPcId === 'string') {
+        const local = readLocalExecutors().find(h => h.pcId === body.localPcId);
+        if (!local) throw new SetupError(400, 'The PC service on this server is not running. Skip this step; run the installer again later and choose PC control.');
+        const [owner] = await db.query<{ id: string; password_hash: string | null }>("select id, password_hash from users where role='super_admin' limit 1");
+        if (!owner) throw new SetupError(409, 'Create your account first.');
+        if (!await verifyPassword(owner.password_hash, typeof body.password === 'string' ? body.password : ''))
+          throw new SetupError(401, 'That password did not match your account.');
+        await pairLocalExecutor(db, owner.id, local.pcId);
+        if (body.enable === true) {
+          await db.query('update pc_control_settings set enabled=true, full_control=true where owner_user_id=$1 and pc_id=$2', [owner.id, local.pcId]);
+          await db.query('insert into pc_control_activity(owner_user_id,pc_id,kind) values($1,$2,$3)', [owner.id, local.pcId, 'Control and everyday allowances enabled during setup; commands and high-risk actions still ask']);
+        }
+        return;
+      }
       const pcId = typeof body.pcId === 'string' && /^[a-z0-9-]{1,80}$/.test(body.pcId) ? body.pcId : null;
       const key = typeof body.publicKey === 'string' && body.publicKey.length <= 100 ? body.publicKey : null;
       if (!pcId || !key) throw new SetupError(400, 'Approve this PC from the Josi app on that computer, or skip this step for now.');
