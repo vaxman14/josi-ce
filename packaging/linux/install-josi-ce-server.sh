@@ -858,7 +858,7 @@ questions() {
   [ -n "$A_EMAIL" ] || A_EMAIL=$S_EMAIL
   [ -n "$A_URL" ] || A_URL=$S_URL
   [ -n "$A_PORT" ] || A_PORT=${S_PORT:-${CUR_PORT:-8080}}
-  # PC control is on by default on a first install, as the person who ran sudo
+  # PC control is on by default on a first install, as the person installing
   # (as on Windows); a saved "no" stays no, and a root shell has no such user.
   case $GIVEN in *' pc '*) ;; *)
     if [ -n "$S_PC" ]; then A_PC=$S_PC
@@ -869,7 +869,7 @@ questions() {
   [ -n "$A_BROWSER" ] || { [ "$S_BROWSER" = 0 ] && [ -n "$S_PC" ] && A_BROWSER=0; } || A_BROWSER=1
   if [ "$TTY" != 1 ]; then
     # Nothing asked: the flags go to the install command, plus PC control by
-    # default for the sudo user on a first install.
+    # default for the person installing, on a first install.
     case $GIVEN in *' pc '*) ;; *) if [ "$A_NOPC" != 1 ] && [ -n "$A_PC" ] && [ -z "$S_PC" ]; then CLI_ARGS+=(--pc-control-user "$A_PC" --browser); fi ;; esac
     return 0
   fi
