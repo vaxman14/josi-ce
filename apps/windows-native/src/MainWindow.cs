@@ -37,7 +37,9 @@ namespace Josi.Native {
       // After an update the installer opens the new Josi while the old one may
       // still sit in the tray. The old copy is asked to quit and the new one
       // takes over, instead of the old copy answering for another few days.
-      if (!Automation.Demo && !AppLinks.Testing && Activation.OlderCopyRunning()) {
+      // A copy the browser starts with a link never takes over: the running
+      // Josi holds the sign-in it belongs to, and replacing it loses it.
+      if (link == null && !Automation.Demo && !AppLinks.Testing && Activation.OlderCopyRunning()) {
         AppLinks.Forward(AppLinks.QuitLink);
         for (var waited = 0; waited < 50 && Activation.OlderCopyRunning(); waited++) Thread.Sleep(100);
       }
