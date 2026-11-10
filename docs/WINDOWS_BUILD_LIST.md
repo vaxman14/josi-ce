@@ -178,3 +178,9 @@ Everything still to do for the Windows app, in build order. It combines the miss
 - Docker, Linux and macOS installers, Caddy, Portainer, Unraid, TrueNAS, OCR and ClamAV services. The Windows installer, uninstaller and recovery installer are the packaging phase.
 
 ### Family module — **Missing** (item 33)
+
+## Added November 9, 2026 (owner requests, not built yet)
+
+1. **Message bar caret.** In the chat message bar the blinking caret sits lower than the "Message Josi…" hint and overlaps its first letter. Line the caret up with the text baseline and left edge.
+2. **Message bar design pass.** The hint text hugs the top of the bar while the plus, microphone and send buttons are centred, so the bar looks misaligned. Rework the bar layout as one pass together with item 1: one shared centre line when the bar is a single line, text and buttons anchored sensibly when it grows.
+3. **Send to my devices.** Transfer a file from one Josi client to another on the same server, relayed by the server. Between a person's own devices the file arrives with no accept prompt. Between different people the receiver gets an accept prompt first.
