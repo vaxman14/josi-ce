@@ -239,6 +239,11 @@
   @supports (height: 1cqh) {
     .ghost-figure { width: min(46cqh, 480px, 86cqw); height: min(46cqh, 480px, 86cqw); }
   }
+  /* A card with buttons is on the stage: the ghost steps back so the card fits. */
+  .stage-with-card .ghost-figure { width: min(26vh, 220px, 60vw); height: min(26vh, 220px, 60vw); }
+  @supports (height: 1cqh) {
+    .stage-with-card .ghost-figure { width: min(26cqh, 220px, 60cqw); height: min(26cqh, 220px, 60cqw); }
+  }
   .ghost-layer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .26s ease; pointer-events: none; }
   .ghost-layer-on { opacity: 1; }
   .ghost-glow { position: absolute; left: 18%; right: 18%; bottom: 2%; height: 16%; border-radius: 50%; filter: blur(6px); transition: background .5s;

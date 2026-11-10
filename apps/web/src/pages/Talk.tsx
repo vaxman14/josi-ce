@@ -90,14 +90,14 @@ function ApprovalCard({ approval, onApprove, onLater, onStage = false }: { appro
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   return (
-    <div className="approval-card w-full max-w-md rounded-lg p-4">
+    <div className={`approval-card w-full max-w-md rounded-lg p-4 ${onStage ? 'flex max-h-full min-h-0 flex-col' : ''}`}>
       <p className="font-display text-sm font-semibold">{sentence(approval.action)}</p>
       {/* The exact action, in words, before anyone agrees to it. */}
       {/* On the stage a long email scrolls inside the card, so Approve is never pushed out of sight. */}
-      <p className={`mt-1 whitespace-pre-wrap break-words text-sm text-lilac ${onStage ? 'max-h-[22dvh] overflow-y-auto' : ''}`}>{approval.summary}</p>
-      {approval.action_class === 'email_send' ? <Link to="/app/approvals" className="link mt-1 inline-flex min-h-11 items-center text-sm">See the email first</Link> : null}
+      <p className={`mt-1 whitespace-pre-wrap break-words text-sm text-lilac ${onStage ? 'min-h-[2.75rem] flex-1 overflow-y-auto' : ''}`}>{approval.summary}</p>
+      {approval.action_class === 'email_send' ? <Link to="/app/approvals" className="link mt-1 inline-flex min-h-11 shrink-0 items-center text-sm">See the email first</Link> : null}
       {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-3 flex shrink-0 flex-wrap gap-2">
         <Button disabled={busy} onClick={() => { setBusy(true); setError(''); void onApprove().catch(err => { setBusy(false); setError(err instanceof Error ? err.message : 'Could not record that'); }); }}>Approve</Button>
         <Button variant="secondary" disabled={busy} onClick={onLater}>Not now</Button>
       </div>
@@ -466,18 +466,18 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div className="ghost-stage absolute inset-0 overflow-hidden">
           {/* Taller than the stage (a small window, a long card): it scrolls, top first, instead of being cut off at both ends. */}
-          <div className="mx-auto flex h-full w-full max-w-2xl flex-col items-center justify-center gap-3 overflow-y-auto px-4 pb-2 pt-3 [justify-content:safe_center]">
+          <div className={`mx-auto flex h-full w-full max-w-2xl flex-col items-center justify-center gap-3 overflow-y-auto px-4 pb-2 pt-3 [justify-content:safe_center] ${stageApproval ? 'stage-with-card' : ''}`}>
             <GhostFigure clip={ghostView.clip} beat={ghostView.beat} reduced={reduced} />
-            <div className="flex min-h-[10rem] w-full flex-col items-center gap-2 text-center" aria-live="polite">
+            <div className={`flex w-full flex-col items-center gap-2 text-center ${stageApproval ? 'min-h-0 flex-1' : 'min-h-[10rem]'}`} aria-live="polite">
               {backgroundOffline ? <p className="text-xs text-text-muted" role="status">Chat updates are offline. Showing the last saved conversation.</p> : null}
               {loading ? <Working text="Opening…" /> : sending ? <>
                 <span className="stage-label">Josi</span>
                 <p className="stage-text stage-clamp">{activity || ack}</p>
               </> : lastReply ? <>
                 <span className="stage-label">Josi</span>
-                <div
-                  // With a card under it the reply is kept short: the card says the same thing and has the buttons.
-                  className={`w-full cursor-pointer ${stageApproval || stageCard ? 'max-h-[3.3rem] overflow-hidden' : ''}`}
+                {/* The reply that asked for this approval says what the card says: the card is enough. */}
+                {stageApproval && lastReply.body.startsWith(stageApproval.summary.slice(0, 48)) ? null : <div
+                  className="w-full cursor-pointer"
                   title="Open chat history"
                   onClick={event => { if (!(event.target as Element).closest('a')) openHistory(); }}
                 >
@@ -487,7 +487,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
                     animate={!reduced && revealing === lastReply.body}
                     onDone={() => setRevealing(current => current === lastReply.body ? null : current)}
                   />
-                </div>
+                </div>}
               </> : <>
                 <h2 className="text-[1.375rem] font-bold">{greeting ? `Hi ${greeting}, I'm Josi.` : "Hi, I'm Josi."}</h2>
                 <p className="text-sm text-lilac">Go on, give me something good to do.</p>
@@ -501,7 +501,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
                 <i /><i /><i />Josi is thinking
               </span>
               {stageApproval ? (
-                <div className="flex w-full flex-col items-center gap-1 text-left">
+                <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 text-left">
                   <ApprovalCard onStage approval={stageApproval} onLater={() => setSettled(ids => [...ids, stageApproval.id])} onApprove={approve(stageApproval)} />
                   {waitingCount > 1 ? <button type="button" onClick={openHistory} className="link min-h-11 text-xs">{waitingCount - 1} more waiting in History</button> : null}
                 </div>
