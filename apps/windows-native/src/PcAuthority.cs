@@ -34,6 +34,9 @@ namespace Josi.Native {
     public bool NeedsApproval { get; private set; }
     /// Set when the server holds a different key: the old identity must be revoked first.
     public bool KeyChanged { get; private set; }
+    /// The server no longer knows this PC: the next approval starts from
+    /// nothing (Windows asks again unless this key was already approved here).
+    public void Forgotten() { approved = false; NeedsApproval = true; KeyChanged = false; }
     public Dictionary<string,string> Proof(string method, Uri url, string body) {
       var time = ProtectedWire.Now(); var nonce = Guid.NewGuid().ToString();
       var message = "pc-executor.1\n" + Canon.Array(owner, JosiApi.DeviceId, method, url.PathAndQuery, time, nonce, ProtectedWire.Digest(body ?? ""));
