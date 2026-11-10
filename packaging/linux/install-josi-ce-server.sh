@@ -561,11 +561,12 @@ has_desktop() {
 # The terminal, when there is one this process may read: under curl | bash
 # stdin is the script. sudo-rs can run the script outside the terminal's
 # foreground group, where reading would stop it; then nothing is asked.
-# OUTER: the /dev/pts device of the nearest ancestor whose terminal is not $1.
+# OUTER: the /dev/pts device of the nearest ancestor whose terminal is not $1,
+# and OUTER_EXE: that ancestor's program (the sudo that made our terminal).
 outer_tty() {
   local mine=$1 p=$PPID major minor
   local -a f
-  OUTER=''
+  OUTER='' OUTER_EXE=''
   while [ "${p:-0}" -gt 1 ]; do
     # Fields after "(comm)": state ppid pgrp session tty_nr ...
     read -r -a f <<< "$(sed 's/^.*) //' "/proc/$p/stat" 2>/dev/null)"
@@ -575,11 +576,36 @@ outer_tty() {
       if [ "$major" -ge 136 ] && [ "$major" -le 143 ] && [ -c "/dev/pts/$(( (major - 136) * 256 + minor ))" ]; then
         OUTER=/dev/pts/$(( (major - 136) * 256 + minor ))
       fi
+      OUTER_EXE=$(readlink "/proc/$p/exe" 2>/dev/null || true)
       return 0
     fi
     p=${f[1]}
   done
   return 0
+}
+
+# sudo-rs (Ubuntu 25.10 and later) relays the keyboard into the terminal it
+# made for us, whatever stdin is. Reading the outer terminal as well would
+# split the keystrokes between sudo and this script: letters and Enter went
+# missing (https://ce.heyjosi.com arrived as https://e.hejs.cm). There the
+# answers are read where sudo-rs sends them, our own terminal, after becoming
+# its foreground group: SIGTTOU is ignored, so that is allowed.
+relays_keyboard() {
+  case $OUTER_EXE in /*) ;; *) return 1 ;; esac
+  timeout -s KILL 2 "$OUTER_EXE" --version </dev/null 2>&1 | grep -qi 'sudo-rs'
+}
+
+take_foreground() {
+  local -a now
+  if command -v perl >/dev/null 2>&1; then
+    perl -MPOSIX -e 'exit(POSIX::tcsetpgrp(5, getpgrp()) ? 0 : 1)' 2>/dev/null || return 1
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import os; os.tcsetpgrp(5, os.getpgrp())' 2>/dev/null || return 1
+  else
+    return 1
+  fi
+  read -r -a now <<< "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null)"
+  [ "${#now[@]}" -ge 6 ] && [ "${now[2]}" = "${now[5]}" ]
 }
 
 open_tty() {
@@ -588,15 +614,17 @@ open_tty() {
   { exec 5<>/dev/tty; } 2>/dev/null || return 0
   trap '' TTOU TTIN
   # Fields after the "(comm)" one: state ppid pgrp session tty tpgid.
-  # With the script piped in (curl | sudo bash), Debian's classic sudo, with use_pty, and
-  # sudo-rs run it in the background of a terminal of their own, which never
-  # receives the keyboard. Then the questions go to the terminal the person is
-  # typing in: the first ancestor process on a different terminal. That is not
-  # our controlling terminal, so reading it is allowed from here.
+  # With the script piped in (curl | sudo bash), sudo with use_pty runs it in
+  # the background of a terminal of its own. Classic sudo sends that terminal
+  # no keyboard, so the questions go to the terminal the person is typing in:
+  # the first ancestor process on a different terminal. That is not our
+  # controlling terminal, so reading it is allowed from here. sudo-rs does
+  # send the keyboard in; see relays_keyboard.
   read -r -a st <<< "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null)"
   if [ "${#st[@]}" -ge 6 ] && [ "${st[2]}" != "${st[5]}" ]; then
     outer_tty "${st[4]}"
-    if [ -n "$OUTER" ] && { exec 5<>"$OUTER"; } 2>/dev/null; then st[5]=${st[2]}; fi
+    if relays_keyboard && take_foreground; then st[5]=${st[2]}
+    elif [ -n "$OUTER" ] && { exec 5<>"$OUTER"; } 2>/dev/null; then st[5]=${st[2]}; fi
   fi
   if [ "${#st[@]}" -lt 6 ] || [ "${st[2]}" != "${st[5]}" ]; then
     exec 5>&-
