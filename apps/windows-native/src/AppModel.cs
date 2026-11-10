@@ -309,7 +309,7 @@ namespace Josi.Native {
     public async Task StartConnection(string provider, string connectionId) {
       var api = Api; if (api == null) return;
       AppLinks.Register();
-      var body = Wires.O("native", true);
+      var body = Wires.O("native", true, "poll", true);
       if (!string.IsNullOrEmpty(connectionId)) body["connectionId"] = connectionId;
       var result = await api.Request("/connections/" + Uri.EscapeDataString(provider) + "/start", "POST", body);
       Uri url;
@@ -317,9 +317,39 @@ namespace Josi.Native {
         throw new JosiException("The server did not return a usable sign-in address for " + provider + ".");
       var state = Query(url, "state");
       if (!Regex.IsMatch(state, "^[A-Za-z0-9_-]{20,512}$")) throw new JosiException("The server could not start the connection.");
-      connectionStates.Add(state);
+      // A server that keeps the provider's answer is asked for it; an older one
+      // sends the browser back through a josi:// link instead.
+      var asked = result["poll"].Flag;
+      if (!asked) connectionStates.Add(state);
       ModelText.Open(url);
       Activity = ""; Error = "";
+      if (asked) Run(() => AwaitConnection(api, provider, state));
+    }
+
+    /// Asks the server every two seconds whether the browser has come back,
+    /// and finishes the connection with this session when it has.
+    async Task AwaitConnection(JosiApi api, string provider, string state) {
+      var until = DateTime.UtcNow.AddMinutes(10);
+      while (DateTime.UtcNow < until) {
+        await Task.Delay(2000);
+        if (Api != api) return;
+        Wire answer;
+        try { answer = await api.Request("/connections/" + provider + "/native/complete", "POST", Wires.O("state", state)); }
+        catch (JosiException e) {
+          if (e.Status != 409) continue;
+          await ConnectionOutcome(api, provider, ConnectionProblem(e.Message));
+          throw new JosiException(ConnectionProblem(e.Message));
+        }
+        if (answer["waiting"].Flag) continue;
+        await ConnectionOutcome(api, provider, null);
+        return;
+      }
+      await ConnectionOutcome(api, provider, "The sign-in was not finished in the browser. Start again.");
+    }
+    async Task ConnectionOutcome(JosiApi api, string provider, string error) {
+      string cardId; accountCards.TryGetValue(provider, out cardId); accountCards.Remove(provider);
+      if (cardId != null) await ReportAccountCard(api, cardId, error);
+      var handler = ConnectionFinished; if (handler != null) handler();
     }
 
     /// The sign-in card Josi opened in conversation: claims it, opens the
