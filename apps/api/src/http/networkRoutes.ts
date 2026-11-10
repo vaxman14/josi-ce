@@ -114,13 +114,25 @@ export function networkRoutes(ctx: { db: Db }): Router {
     const settings = JSON.parse(await readFile(RUNTIME_FILE(), 'utf8')) as Record<string, unknown>;
     settings.publicUrl = url.origin.replace(/\/$/, '');
     const temp = `${RUNTIME_FILE()}.${Date.now()}.tmp`;
-    await writeFile(temp, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
-    await rename(temp, RUNTIME_FILE());
     let proxy: 'written' | 'kept' | 'none' = 'none';
-    if (existsSync(CADDYFILE())) {
-      const caddy = caddyfileFor(url, Number(settings.apiPort ?? process.env.PORT ?? 8080));
-      if (caddy) { await writeFile(`${CADDYFILE()}.tmp`, caddy, { mode: 0o600 }); await rename(`${CADDYFILE()}.tmp`, CADDYFILE()); proxy = 'written'; }
-      else proxy = 'kept';
+    try {
+      await writeFile(temp, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
+      await rename(temp, RUNTIME_FILE());
+      if (existsSync(CADDYFILE())) {
+        const caddy = caddyfileFor(url, Number(settings.apiPort ?? process.env.PORT ?? 8080));
+        if (caddy) { await writeFile(`${CADDYFILE()}.tmp`, caddy, { mode: 0o600 }); await rename(`${CADDYFILE()}.tmp`, CADDYFILE()); proxy = 'written'; }
+        else proxy = 'kept';
+      }
+    } catch (e) {
+      // The Windows installer lets the services only read their settings; an
+      // administrator changes them. 409 tells the Josi app on this PC to make
+      // the change itself with Windows administrator approval.
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== 'EACCES' && code !== 'EPERM') throw e;
+      return res.status(409).json({
+        error: 'Changing the address needs Windows administrator approval. Save it from the Josi app on the server PC; Windows asks for approval.',
+        needsAdministrator: true, publicUrl: settings.publicUrl, mode,
+      });
     }
     return res.json({
       publicUrl: settings.publicUrl, mode, proxy,

@@ -59,6 +59,9 @@ export function workspaceStorageContains(record: VaultRecordValue | null, identi
   return decode(record).some(e => e.workspaceId === identity.workspaceId && e.identity.userId === identity.userId
     && e.identity.serverId === identity.serverId && e.identity.deviceId === identity.deviceId);
 }
+export function computerDesktopWorkspaces(record: VaultRecordValue | null, owner: string): WorkspaceStorageSummary[] {
+  return decode(record).filter(e => e.identity.userId === owner && e.mode === 'current_desktop').map(summary);
+}
 export class WorkspaceStorageStore {
   constructor(private readonly backend: Backend, private readonly authority: WorkspaceStorageAuthority) {}
   inventory(actor: string) {

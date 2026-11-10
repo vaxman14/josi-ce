@@ -12,7 +12,7 @@ namespace Josi.Native {
     public static readonly TunnelStore Current = new TunnelStore();
     const int KeySize = X25519.KeySize;
     readonly object gate = new object();
-    static string File { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Josi", AppLinks.Testing ? "pairings-test" + AppLinks.Instance + ".json" : "pairings.json"); } }
+    static string File { get { return Path.Combine(AppLinks.StateDirectory, AppLinks.Testing ? "pairings-test" + AppLinks.Instance + ".json" : "pairings.json"); } }
 
     static Dictionary<string, object> Read() {
       try { var value = Wires.Parse(System.IO.File.ReadAllText(File)).Raw as Dictionary<string, object>; if (value != null) return value; } catch (IOException) { } catch (UnauthorizedAccessException) { }

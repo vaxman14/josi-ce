@@ -88,8 +88,9 @@ export class SyncError extends Error {
 /** Permission belongs to the exact origin connection, never another account. */
 async function originAllowed(db: Db, connection: ConnectionRow, capability: string): Promise<boolean> {
   const [grant] = await db.query<{ allowed: boolean }>(
-    `select (cc.enabled and cc.scopes_granted_at is not null and coalesce(p.allowed, true)) as allowed
-     from connection_capabilities cc left join admin_capability_policy p on p.capability = cc.capability
+    `select (cc.enabled and cc.scopes_granted_at is not null and (coalesce(p.allowed, true) or exists(select 1 from users u where u.id = c.owner_user_id and u.role = 'super_admin'))) as allowed
+     from connection_capabilities cc join connections c on c.id = cc.connection_id
+     left join admin_capability_policy p on p.capability = cc.capability
      where cc.connection_id = $1 and cc.capability = $2`, [connection.id, capability]);
   return connection.status === 'active' && !!grant?.allowed;
 }
@@ -896,7 +897,7 @@ export async function dueOrigins(db: Db, limit = 20): Promise<Array<{ id: string
     left join admin_capability_policy p on p.capability = cc.capability
     where c.status = 'active' and c.provider in ('google', 'microsoft')
       and cc.capability = c.provider || '.contacts.read' and cc.enabled
-      and cc.scopes_granted_at is not null and coalesce(p.allowed, true)
+      and cc.scopes_granted_at is not null and (coalesce(p.allowed, true) or exists(select 1 from users u where u.id = c.owner_user_id and u.role = 'super_admin'))
     on conflict (connection_id) do nothing`);
   return db.query<{ id: string; owner_user_id: string }>(
     `select id, owner_user_id from contact_sync_origins

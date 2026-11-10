@@ -101,6 +101,12 @@ async function boxKey(db:Db,masterKey:MasterKey,ownerUserId:string,create=false)
   return new MasterKey(Buffer.from(openSealed<{key:string}>(vaultKey,box.wrapped_key_enc).key,'base64'));
 }
 
+/** Seals a payload with this person's own Vault box key (made on first use),
+ * for stores that keep a person's secrets outside vault_items, such as My
+ * World. Opened only by `openForOwner` with the same key. */
+export async function sealForOwner(db:Db,masterKey:MasterKey,ownerUserId:string,payload:Record<string,unknown>):Promise<string>{const key=await boxKey(db,masterKey,ownerUserId,true);return seal(key,{...payload,ownerUserId});}
+export async function openForOwner<T extends object>(db:Db,masterKey:MasterKey,ownerUserId:string,sealed:string):Promise<T>{const key=await boxKey(db,masterKey,ownerUserId);const opened=openSealed<T&{ownerUserId:string}>(key,sealed);if(opened.ownerUserId!==ownerUserId)throw new VaultError('sealed context did not match');return opened;}
+
 export async function putVaultItem(db:Db,masterKey:MasterKey,args:{ownerUserId:string;kind:VaultKind;service:string;slot:string;label:string;value:Secret;metadata?:Record<string,unknown>;actorUserId?:string}):Promise<VaultItemView>{
   if(args.value.isEmpty)throw new VaultError('a credential value is required');
   if(!args.service.trim()||!args.slot.trim()||!args.label.trim())throw new VaultError('service, slot, and label are required');

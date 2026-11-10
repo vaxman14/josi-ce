@@ -21,15 +21,16 @@ namespace Josi.Native {
 
     public static readonly bool Talk = false;
     public static readonly bool Workflows = false;
-    /// Desktop and browser control. Off also means the executor and the browser
-    /// bridge never start, not just that their pages are hidden.
-    public static readonly bool LocalWorkspace = false;
+    /// Desktop and browser control: Josi working on this PC (commands, files,
+    /// programs, windows) through PC Control. Off also means the executor and
+    /// the browser bridge never start, not just that their pages are hidden.
+    public static readonly bool LocalWorkspace = true;
     /// WhatsApp, Telegram and every other messaging channel. The Josi apps are the channel.
     public static readonly bool Channels = false;
     public static readonly bool Apps = false;
     public static readonly bool VoiceBox = false;
     public static readonly bool Policy = false;
-    public static readonly bool Integrations = false;
+    public static readonly bool Integrations = true;
     public static readonly bool Storage = false;
     public static readonly bool WorkspaceAdmin = false;
     public static readonly bool Family = false;

@@ -39,6 +39,8 @@ describe('developer connection Vault authority', () => {
   });
 
   it('rechecks policy after a credential test and refuses late evidence after revocation', async () => {
+    // Policy revocation is for members (rule 2 of JOSI_IS_THE_INTERFACE: the owner is never gated).
+    await db.query("update users set role='member' where id=$1", [owner]);
     await save(); const prepared = await load();
     await checkDeveloperCredentialAccess(db, owner, 'github');
     await db.query("update developer_service_policy set mode='not_allowed' where service='github'");

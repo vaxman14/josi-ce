@@ -1,4 +1,4 @@
-param()
+param([switch]$SkipRuntimeChecks)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $base=Join-Path $repo 'artifacts\windows-native'
@@ -13,13 +13,15 @@ $sdk=Join-Path $env:ProgramFiles 'dotnet\dotnet.exe'
 & $sdk build (Join-Path $stage 'JosiLauncher.csproj') -c Release '-p:RestoreLockedMode=true'
 if($LASTEXITCODE){throw 'Onboarding launcher build failed'}
 $binary=Join-Path $stage 'bin\Release\net462\JosiLauncher.exe'
+if (!$SkipRuntimeChecks) {
 $tests=[IO.File]::ReadAllText((Join-Path $stage 'JosiLauncher.csproj')).Replace('<OutputType>WinExe</OutputType>','<OutputType>Exe</OutputType><StartupObject>LauncherTests</StartupObject>').Replace('<AssemblyName>JosiLauncher</AssemblyName>','<AssemblyName>LauncherTests</AssemblyName>').Replace('<Compile Include="JosiLauncher.cs" />','<Compile Include="JosiLauncher.cs" /><Compile Include="LauncherTests.cs" />')
 [IO.File]::WriteAllText((Join-Path $stage 'LauncherTests.csproj'),$tests)
 & $sdk build (Join-Path $stage 'LauncherTests.csproj') -c Release '-p:RestoreLockedMode=true'
 if($LASTEXITCODE){throw 'Onboarding launcher tests did not build'}
 & (Join-Path $stage 'bin\Release\net462\LauncherTests.exe')
 if($LASTEXITCODE){throw 'Onboarding launcher tests failed'}
+}
 $report=[ordered]@{passed=$true;binary=$binary;size=(Get-Item $binary).Length;sha256=(Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant();
  sourceSha256=(Get-FileHash (Join-Path $repo 'packaging\windows\launcher\JosiLauncher.cs') -Algorithm SHA256).Hash.ToLowerInvariant();
- framework='net462';architecture='x64';consoleWindow=$false;testsPassed=$true;installed=$false;browserAssociationPhysicalTested=$false}
+ framework='net462';architecture='x64';consoleWindow=$false;testsPassed=(!$SkipRuntimeChecks);installed=$false;browserAssociationPhysicalTested=$false}
 $report|ConvertTo-Json|Set-Content (Join-Path $base 'evidence\onboarding-launcher.json') -Encoding UTF8

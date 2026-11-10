@@ -43,6 +43,8 @@ import { VoiceChat } from '@/components/VoiceChat';
 import { ChatWorkProgressList } from '@/components/WorkProgress';
 import { GhostFigure, StageReply, useReducedMotion } from '@/components/ghost/Ghost';
 import { useWorkGoals } from '@/lib/workGoals';
+import { PcPermissionCards } from '@/components/PcPermissionCards';
+import { CredentialCards } from '@/components/CredentialCards';
 import {
   firstName, GhostController, isListReply, loopFor, nextAcknowledgement, stageMood, type GhostSnapshot,
 } from '@/lib/ghost';
@@ -533,6 +535,8 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
                 ))}
               </ul>
             ) : null}
+            {thread ? <PcPermissionCards key={'permissions-'+thread.id} threadId={thread.id} /> : null}
+            {thread ? <CredentialCards key={'credentials-'+thread.id} threadId={thread.id} /> : null}
             <ChatWorkProgressList {...work} />
             {sending ? <Working text="Josi is thinking" elapsed size={28} className="py-2 pl-1" /> : null}
             <div ref={end} />

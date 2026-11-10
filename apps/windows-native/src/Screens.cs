@@ -205,7 +205,7 @@ namespace Josi.Native {
     string renderedKey;
     string provider = "";
     List<Wire> discovered = new List<Wire>();
-    CheckBox enabled, recoverySaved;
+    CheckBox enabled, recoverySaved, pcEnable;
     NewPassword ownerPassword;
     PasswordInput resumePassword;
     Button createOwner;
@@ -224,15 +224,39 @@ namespace Josi.Native {
       {"llm", new[] {"Pick Josi's brain", "The AI model she thinks with. Your subscription or your own key both work."}},
       {"smtp", new[] {"Email, if you want it", "Lets Josi send invitations and password resets. You can skip this for now."}},
       {"security", new[] {"Your folders", "Choose whether people here may give Josi access to folders."}},
+      {"pc_control", new[] {"Let Josi use this PC", "Commands, programs, files and windows on this computer, with your permission for each. You can skip this."}},
       {"telemetry", new[] {"Help improve Josi", "Completely optional, and it never includes your conversations."}},
       {"review", new[] {"Almost there", "One last look at what you chose."}},
       {"", new[] {"All set", "Josi is ready when you are."}},
     };
-    string Step { get { return model.SetupState["nextStep"].Text; } }
+    /// The step the server expects next.
+    string ServerStep { get { return model.SetupState["nextStep"].Text; } }
+    /// An earlier step the person went Back to, or null for the server's step.
+    string viewing;
+    string Step { get { return viewing ?? ServerStep; } }
+    /// The server lets only these finished steps be submitted again (REVISABLE_STEPS
+    /// in apps/api/src/setup/steps.ts); the rest are shown as already saved.
+    static readonly string[] Revisable = { "llm", "smtp" };
+    bool Done(string step) { return model.SetupState["steps"].List.Any(s => s["id"].Text == step && s["done"].Flag); }
+    /// Back and Next between steps. Next only walks back towards the server's step.
+    UIElement StepNavigation(List<Wire> all, int position) {
+      var index = position < 0 ? all.Count : position;
+      var back = Automation.Id(Ui.Pill("Back", () => { viewing = all[index - 1]["id"].Text; Refresh(); }), "josi.setup.back");
+      back.IsEnabled = index > 0;
+      if (viewing == null) return back;
+      var forward = Automation.Id(Ui.Pill("Next Step", () => {
+        var next = index + 1 < all.Count ? all[index + 1]["id"].Text : null;
+        viewing = next == null || next == ServerStep || !Done(next) ? null : next;
+        Refresh();
+      }), "josi.setup.next");
+      return Ui.Row(10, back, forward);
+    }
     Wire ProviderEntry { get { return model.SetupState["providerCatalog"].List.FirstOrDefault(p => p["kind"].Text == provider) ?? Wire.Null; } }
 
     public void Refresh() {
-      var key = model.SetupState.Json + "|" + model.Recovery.Json + "|" + model.SetupReview.Json + "|" + provider + "|" + discovered.Count + "|" + where;
+      // A step the server no longer lists, or one it now expects anyway, ends the look back.
+      if (viewing != null && (viewing == ServerStep || !Done(viewing))) viewing = null;
+      var key = model.SetupState.Json + "|" + model.Recovery.Json + "|" + model.SetupReview.Json + "|" + provider + "|" + discovered.Count + "|" + where + "|" + viewing;
       if (key == renderedKey && Content != null) { ((FrameworkElement)((ScrollViewer)Content).Content).IsEnabled = !model.Busy; return; }
       if (renderedKey != null && !renderedKey.StartsWith(model.SetupState.Json)) { fields.Clear(); }
       renderedKey = key;
@@ -249,6 +273,7 @@ namespace Josi.Native {
         Ui.Icon(item["done"].Flag ? Glyph.Check : Glyph.Circle, 12, item["id"].Text == Step ? Ui.Accent : Ui.Muted),
         Ui.T(item["title"].Text, 12, null, item["id"].Text == Step ? Ui.Accent : Ui.Muted))).ToArray());
       Ui.Add(page, steps, 24);
+      if (model.Recovery.IsNull) Ui.Add(page, StepNavigation(all, position), 16);
       if (!model.Recovery.IsNull) Ui.Add(page, RecoveryCard(), 24);
       else {
         var form = new StackPanel();
@@ -276,6 +301,23 @@ namespace Josi.Native {
         Ui.Pill("Disconnect", () => { fields.Clear(); model.Disconnect(); })), 24);
       page.IsEnabled = !model.Busy;
       Content = Ui.Scroll(page, 760, 32);
+      Fill(page);
+    }
+
+    /// The setup column grows with the window and stays centered in it, instead
+    /// of a fixed 760-pixel strip on the left of a wide window.
+    bool filling;
+    FrameworkElement filled;
+    void Fill(FrameworkElement page) {
+      filled = page;
+      page.HorizontalAlignment = HorizontalAlignment.Center;
+      if (!filling) { filling = true; owner.SizeChanged += delegate { Fit(); }; }
+      Fit();
+    }
+    void Fit() {
+      if (filled == null) return;
+      var width = owner.ActualWidth > 0 ? owner.ActualWidth : owner.Width;
+      filled.MaxWidth = Math.Max(640, Math.Min(1180, width - 140));
     }
 
     Control Get(string key, bool secret = false, string fallback = "") {
@@ -312,6 +354,17 @@ namespace Josi.Native {
 
     IEnumerable<UIElement> StepForm() {
       var list = new List<UIElement>();
+      if (viewing != null && !Revisable.Contains(viewing)) {
+        // The server keeps these once saved: the owner account and the consent
+        // choices must not be replayable. They change in Settings after setup.
+        list.Add(Ui.T("You've already done this step, and it's saved."));
+        list.Add(Ui.Secondary(viewing == "owner"
+          ? "Your account is set. You can change your name, email and password in Settings once setup is finished."
+          : viewing == "host_checks" ? "Everything Josi needs was here."
+          : "You can change this in Settings once setup is finished."));
+        list.Add(Automation.Id(Ui.Pill("Continue Where I Left Off", () => { viewing = null; Refresh(); }, true), "josi.setup.resume"));
+        return list;
+      }
       switch (Step) {
         case "host_checks":
           foreach (var check in model.HostChecks)
@@ -395,6 +448,23 @@ namespace Josi.Native {
           enabled = enabled ?? Automation.Id(Ui.Toggle("Allow people to choose folders for Josi to read"), "josi.setup.enabled");
           list.Add(Detach(enabled)); list.Add(Ui.Secondary("Each person still needs to approve their own folders."));
           list.Add(Next(() => Wires.O("folderMappingEnabled", enabled.IsChecked == true)));
+          break;
+        case "pc_control":
+          list.Add(Ui.T("Josi can work on this PC the way an assistant at the keyboard would: run commands and scripts, open programs, read and write files and use windows. Every action goes through PC Control: you choose which shells, folders and programs are allowed, once or until revoked, and a control bar with Stop is always visible while it works."));
+          pcEnable = pcEnable ?? Automation.Id(Ui.Toggle("Let Josi use this PC now: programs, files and windows. Commands ask once per folder.", true), "josi.setup.pc-enable");
+          list.Add(Detach(pcEnable));
+          list.Add(Ui.Secondary("Approving pairs this PC to your account with the key it just made; your new password confirms it. Deleting, purchases, credentials, installs, security changes and administrator prompts always ask. Change any of this later in PC Control or by asking Josi."));
+          list.Add(Ui.Row(10,
+            Automation.Id(Ui.Pill("Approve This PC and Continue", () => {
+              var ownerId = model.SetupState["ownerId"].Text; var api = model.Api;
+              if (api == null || !Wires.IsUuid(ownerId)) { model.Error = "Create your account first."; model.Notify(); return; }
+              bool hardware; var point = PcAuthority.PublicPointFor(api.OriginText, ownerId, out hardware);
+              var password = Dialogs.AskPassword(owner, "Approve computer control on " + Environment.MachineName,
+                "PC: " + JosiApi.DeviceId + "\nKey: " + ProtectedWire.Digest(point).Substring(0, 24) + "\n" + (hardware ? "Windows hardware key" : "Windows protected software key") + "\n\nEnter the password of the account you just created.", "Approve this PC");
+              if (password == null) return;
+              Submit(Wires.O("pcId", JosiApi.DeviceId, "publicKey", point, "password", password, "enable", pcEnable.IsChecked == true));
+            }, true), "josi.setup.pc-approve"),
+            Automation.Id(Ui.Pill("Skip for Now", () => Submit(Wires.O("skip", true))), "josi.setup.pc-skip")));
           break;
         case "telemetry":
           enabled = enabled ?? Automation.Id(Ui.Toggle("Send anonymous usage counts"), "josi.setup.enabled");
@@ -482,6 +552,7 @@ namespace Josi.Native {
         setupModel = new ModelSetupPanel(model, owner, new ModelEndpoints(true), "primary", Wire.Null,
           model.SetupState["providerCatalog"].List, null, async body => {
             var check = await model.SetupStep("llm", body);
+            if (!check.IsNull && check["status"].Text == "passed") { viewing = null; Refresh(); }
             // Passing moves setup to its next step. Otherwise show why, with
             // Change Settings, instead of returning silently to the same step.
             if (!check.IsNull && check["status"].Text != "passed") {
@@ -523,7 +594,8 @@ namespace Josi.Native {
       var secrets = new List<string> { "password", "apiKey" };
       secrets.AddRange(ProviderEntry["fields"].List.Where(f => f["secret"].Flag).Select(f => f["key"].Text));
       foreach (var key in secrets) { Control c; if (fields.TryGetValue(key, out c)) { var p = c as PasswordBox; if (p != null) p.Clear(); } }
-      model.Run(() => model.SetupStep(step, body));
+      // A changed earlier step returns to where setup left off once it's saved.
+      model.Run(async () => { await model.SetupStep(step, body); viewing = null; Refresh(); });
     }
   }
 }

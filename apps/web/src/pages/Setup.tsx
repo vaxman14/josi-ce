@@ -460,6 +460,26 @@ function StepForm({
         </form>
       );
 
+    case 'pc_control':
+      // Pairing needs the PC's own key, which only the Josi app on that PC
+      // holds; the browser can only skip. The app offers Approve This PC here
+      // and later under PC Control.
+      return (
+        <form onSubmit={(e) => handle(e, () => ({ skip: true }))} className="space-y-3">
+          <p className="text-sm">
+            Josi can work on the computer where its app is open: run commands, open programs, read and write
+            files and use windows, each within the permissions you give it, with a visible control bar and a Stop
+            button. Pairing a PC is done from the Josi app on that PC (it holds the PC's key), so from this
+            browser the step can only be skipped.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Nothing is granted by pairing alone. Later, in the Josi app, PC Control shows whether this PC is paired
+            and ready, and you can turn control on and allow shells, folders and programs there or by asking Josi.
+          </p>
+          <Button type="submit" disabled={busy}>Skip for now</Button>
+        </form>
+      );
+
     case 'telemetry':
       return (
         <form onSubmit={(e) => handle(e, (f) => ({ enabled: f.get('telemetry') === 'on' }))} className="space-y-3">

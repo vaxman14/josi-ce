@@ -37,9 +37,12 @@ Prepare these once; the same material serves all three listings.
   tab you attach in this browser, with the permissions you gave it in Josi.
 - **Long description**: what it does (controls only the tab you attach, only
   through the Josi app installed on this computer, only within the permissions
-  set in Josi), what it never does (no browsing history, no other tabs, no
-  servers of its own: it talks to the Josi app on this computer over the
-  browser's native messaging), and that a running Josi app is required.
+  set in Josi), what it never does (no browsing history, no content from other
+  tabs, never reads or fills passwords or payment details, no servers of its
+  own: it talks to the Josi app on this computer over the browser's native
+  messaging), and that a running Josi app is required. While linked, it tells
+  the Josi app the site and title of your open tabs so you can say "use this
+  tab" in chat.
 - **Icon**: `apps/browser-extension/src/icons/icon-128.png` (derived from the
   Josi mark); the stores also want 300×300 (Edge) and 1400×560 or 440×280
   promotional tiles (Chrome, optional).
@@ -51,10 +54,15 @@ Prepare these once; the same material serves all three listings.
   stores only the attached tab's identifier locally. The stores require a URL;
   the repository's `docs/PRIVACY_NOTICE.md` is the text to publish.
 - **Permission justifications** (Chrome asks for each): `nativeMessaging`
-  (talks to the Josi app), `activeTab` and `tabs` (the one tab you attach),
-  `scripting` (reads and acts on that tab), `storage` (remembers the attached
-  tab), `alarms` (re-attaches after the Josi app restarts), optional host
-  permissions (only the site of the attached tab, asked when you attach it).
+  (talks to the Josi app), `activeTab` and `tabs` (the tab you attach, and
+  the site and title of open tabs so you can pick one from Josi's chat),
+  `scripting` (reads and acts on the attached tab), `storage` (remembers the
+  attached tab while the browser is open), `alarms` (links to the Josi app
+  again after it restarts), `downloads` (saves a file from the attached site
+  into your Downloads folder when you allowed it in Josi), host permissions
+  for all sites (asked once at install, so Josi can read or open the site you
+  name in chat; every site and action is still allowed or approved in Josi's
+  PC Control, and nothing is read without that).
 - **Support email** and a **homepage** (heyjosi.com).
 
 ## Chrome Web Store (Chrome and Brave)

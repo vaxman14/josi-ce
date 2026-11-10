@@ -1,3 +1,4 @@
+import { computerControlRoutes } from './http/computerControlRoutes.js';
 // The HTTP surface, assembled in one place so the guard order is visible.
 //
 // Order matters and is deliberate:
@@ -31,7 +32,7 @@ import {
 import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
 import { personaRoutes } from './http/personaRoutes.js';
 import { migrationRoutes } from './http/migrationRoutes.js';
-import { adminLlmRoutes, llmRoutes } from './http/llmRoutes.js';
+import { adminLlmRoutes, llmRoutes, startModelWarmup } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
 import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './http/telegramRoutes.js';
 import { adminExternalChannelRoutes, externalChannelRoutes, mountExternalChannelWebhooks } from './http/externalChannelRoutes.js';
@@ -41,6 +42,7 @@ import { setupRoutes } from './setup/setupRoutes.js';
 import { mountWebApp } from './http/staticApp.js';
 import { voiceBoxRoutes, voiceHelper, type VoiceHelper } from './http/voiceBoxRoutes.js';
 import { adminVaultRoutes, vaultRoutes } from './http/vaultRoutes.js';
+import { myWorldRoutes } from './http/myWorldRoutes.js';
 import { automationSettingsRoutes } from './http/automationSettingsRoutes.js';
 import { nasController } from './http/nasController.js';
 import { windowsNasController } from './http/nasWindows.js';
@@ -263,6 +265,9 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     db, masterKey: cfg.masterKeyCheck, connectorFetch: cfg.connectorFetch,
   }));
   api.use('/llm', llmRoutes({ db, masterKey: cfg.masterKeyCheck, codexRunner: cfg.codexRunner }));
+  // Every configured model is checked once in the background after start, so
+  // switching models in the app never waits (see startModelWarmup).
+  startModelWarmup({ db, masterKey: cfg.masterKeyCheck, codexRunner: cfg.codexRunner });
   // Mounted before /admin so the more specific prefix wins; both are behind
   // requireSuperAdmin either way.
   api.use('/assistant/turn-context', turnContextRoutes(db));
@@ -313,12 +318,13 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     releaseFetch: cfg.releaseFetch,
   }));
   api.use('/admin/improvements', improvementRoutes(db));
-  api.use('/settings-changes', settingsChangeRoutes({ db, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport }));
+  api.use('/settings-changes', settingsChangeRoutes({ db, masterKey: cfg.masterKeyCheck, mailTransport: cfg.mailTransport, appUrl:cfg.appUrl }));
   api.use('/admin/network', networkRoutes({ db }));
   if (cfg.relay) {
     api.use('/admin/hey-josi', adminRelayRoutes({ db, relay: cfg.relay, masterKey: cfg.masterKeyCheck }));
     api.use('/hey-josi', relayRoutes({ db, relay: cfg.relay, masterKey: cfg.masterKeyCheck }));
   }
+  api.use('/computer-control', computerControlRoutes({db,masterKey:cfg.masterKeyCheck}));
   api.use('/admin/pc-control', pcControlRoutes({db,masterKey:cfg.masterKeyCheck,
     windows:cfg.nativeWindowsPermissions ?? (process.platform==='win32' && process.env.JOSI_NATIVE_RUNTIME==='1')}));
   api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
@@ -356,6 +362,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     entitlementPublicKey: cfg.licencePublicKey ?? cfg.entitlementPublicKey,
   }));
   api.use('/vault', vaultRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  api.use('/my-world', myWorldRoutes({ db, masterKey: cfg.masterKeyCheck }));
   api.use('/custom-apis', customApiRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.customApiFetch,
     resolve: cfg.outboundResolve,

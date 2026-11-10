@@ -242,7 +242,7 @@ export async function connectionsWithCapability(
        join connection_capabilities cc on cc.connection_id=c.id and cc.capability=$3
        left join admin_capability_policy p on p.capability=$3
       where c.owner_user_id=$1 and c.provider=$2 and c.status='active'
-        and cc.enabled=true and cc.scopes_granted_at is not null and coalesce(p.allowed,true)=true
+        and cc.enabled=true and cc.scopes_granted_at is not null and (coalesce(p.allowed,true)=true or exists(select 1 from users u where u.id = c.owner_user_id and u.role = 'super_admin'))
       order by c.created_at`,
     [args.ownerUserId, spec.provider, args.capability],
   );
@@ -261,6 +261,15 @@ export interface CapabilityView {
   adminNote: string | null;
 }
 
+/** Rule 2 of docs/JOSI_IS_THE_INTERFACE.md: the member ceiling an administrator
+ * sets never gates the administrator. Every connector is available to the
+ * owner by default; only the credential it genuinely needs is asked for. */
+export async function isOwner(db: Db, userId: string | null | undefined): Promise<boolean> {
+  if (!userId) return false;
+  const [row] = await db.query<{ ok: boolean }>(`select true as ok from users where id = $1 and role = 'super_admin'`, [userId]);
+  return !!row;
+}
+
 async function adminPolicy(db: Db): Promise<Map<string, { allowed: boolean; note: string | null }>> {
   const rows = await db.query<{ capability: string; allowed: boolean; note: string | null }>(
     `select capability, allowed, note from admin_capability_policy`,
@@ -274,6 +283,7 @@ export async function capabilityViews(
   args: { connection: ConnectionRow | null; provider: Provider },
 ): Promise<CapabilityView[]> {
   const policy = await adminPolicy(db);
+  const owner = await isOwner(db, args.connection?.owner_user_id);
   const grants = new Map<string, { enabled: boolean; scopes_granted_at: string | null }>();
   if (args.connection) {
     const rows = await db.query<{ capability: string; enabled: boolean; scopes_granted_at: string | null }>(
@@ -287,7 +297,7 @@ export async function capabilityViews(
     const grant = grants.get(spec.key);
     const providerGranted = !!grant?.scopes_granted_at;
     const admin = policy.get(spec.key);
-    const adminAllows = admin?.allowed ?? true;
+    const adminAllows = (admin?.allowed ?? true) || owner;
     const state = capabilityState({
       providerGranted,
       adminAllows,
@@ -334,7 +344,7 @@ export async function can(
 
   const inputs = {
     providerGranted: grants.some((grant) => !!grant.scopes_granted_at),
-    adminAllows: policy?.allowed ?? true,
+    adminAllows: (policy?.allowed ?? true) || await isOwner(db, args.ownerUserId),
     userEnabled: grants.some((grant) => grant.enabled),
   };
   return { allowed: effectiveCapability(inputs), state: capabilityState(inputs) };
@@ -376,7 +386,7 @@ export async function setCapability(
       `select allowed from admin_capability_policy where capability = $1`,
       [args.capability],
     );
-    if (policy && !policy.allowed) {
+    if (policy && !policy.allowed && !(await isOwner(db, args.connection.owner_user_id))) {
       throw new CapabilityError(
         'blocked_by_admin',
         'an administrator has switched this off for the whole installation',

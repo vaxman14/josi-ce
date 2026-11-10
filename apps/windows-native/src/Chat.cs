@@ -13,6 +13,10 @@ namespace Josi.Native {
     readonly AppModel model; readonly Window owner;
     readonly TextBlock title = Ui.Caption("Conversation");
     readonly TextBlock modelName = Ui.Caption("");
+    // The model, switchable from the chat for the Claude plan: Haiku, Sonnet, Opus.
+    // A pick saves the model and runs the capability check before it is used.
+    readonly ComboBox modelPick = Ui.Choice(Ui.Options("haiku", "Haiku · fastest", "sonnet", "Sonnet · balanced", "opus", "Opus · most capable"), "haiku");
+    string primaryProvider = "", currentModel = ""; bool settingPick;
     readonly StackPanel messages = new StackPanel { MaxWidth = 900, Margin = new Thickness(28) };
     readonly ScrollViewer scroller;
     // Work in progress sits beside the conversation, never under the composer.
@@ -103,8 +107,10 @@ namespace Josi.Native {
       hint.HorizontalAlignment = HorizontalAlignment.Center; hint.Margin = new Thickness(0, 0, 0, 14);
 
       var dock = new DockPanel();
-      DockPanel.SetDock(hint, Dock.Bottom); DockPanel.SetDock(composer, Dock.Bottom);
-      dock.Children.Add(hint); dock.Children.Add(composer); dock.Children.Add(stage);
+      DockPanel.SetDock(hint, Dock.Bottom); DockPanel.SetDock(composer, Dock.Bottom); DockPanel.SetDock(cards, Dock.Bottom);
+      dock.Children.Add(hint); dock.Children.Add(composer); dock.Children.Add(cards); dock.Children.Add(stage);
+      PcInbox.Changed += () => Dispatcher.BeginInvoke(new Action(RenderCards));
+      RenderCards();
 
       // The whole conversation, in a panel that rises over the stage.
       closeHistory = Automation.Id(Ui.RoundButton(Glyph.Close, "Close chat history", () => ShowHistory(false), 40), "josi.chat.history.close");
@@ -125,9 +131,13 @@ namespace Josi.Native {
       historyBadge.Child = historyCount; historyBadge.Visibility = Visibility.Collapsed;
       var holder = new Grid(); holder.Children.Add(open); holder.Children.Add(historyBadge);
       modelName.VerticalAlignment = VerticalAlignment.Center;
+      modelPick.VerticalAlignment = VerticalAlignment.Center; modelPick.Visibility = Visibility.Collapsed; modelPick.MinWidth = 150;
+      Automation.Id(modelPick, "josi.chat.model.pick", "Model");
+      modelPick.SelectionChanged += delegate { if (settingPick) return; var id = Ui.Selected(modelPick); if (id.Length > 0 && id != currentModel) SwitchModel(id); };
       goalChip = Automation.Id(Ui.Pill("", () => ShowHistory(true)), "josi.chat.goals");
       goalChip.Visibility = Visibility.Collapsed;
-      BarActions = Ui.Row(12, goalChip, modelName, holder);
+      var world = Automation.Id(Ui.RoundButton(Glyph.Person, "My World", () => model.Section = "my-world"), "josi.chat.my-world");
+      BarActions = Ui.Row(12, goalChip, modelName, modelPick, world, holder);
 
       var root = new Grid();
       root.Children.Add(dock); root.Children.Add(history);
@@ -283,10 +293,48 @@ namespace Josi.Native {
       if (model.IsAdministrator) {
         try {
           var primary = (await api.Request("/admin/llm"))["primary"];
-          if (model.Api == api) modelName.Text = primary["provider"].Text == "openai_subscription" ? "ChatGPT plan" : primary["model"].Text;
+          if (model.Api == api) {
+            primaryProvider = primary["provider"].Text; currentModel = primary["model"].Text;
+            modelName.Text = primaryProvider == "openai_subscription" ? "ChatGPT plan" : currentModel;
+            var pickable = primaryProvider == "anthropic_subscription" && new[] { "haiku", "sonnet", "opus" }.Contains(currentModel);
+            settingPick = true;
+            try { foreach (ComboBoxItem item in modelPick.Items) if ((string)item.Tag == currentModel) modelPick.SelectedItem = item; } finally { settingPick = false; }
+            modelPick.Visibility = pickable ? Visibility.Visible : Visibility.Collapsed; modelPick.IsEnabled = true;
+            modelName.Visibility = pickable ? Visibility.Collapsed : Visibility.Visible;
+          }
         } catch (Exception) { }
       }
       RenderComposer();
+    }
+    /// Saves the picked model for the primary slot and runs its capability
+    /// check, the same two calls the Models screen makes; the chat uses it once
+    /// the check passes. The conversation sees "Checking…" meanwhile.
+    void SwitchModel(string id) {
+      var api = model.Api; if (api == null) return;
+      var provider = primaryProvider; modelPick.IsEnabled = false;
+      model.Run(async () => {
+        try {
+          var saved = await api.Request("/admin/llm/providers/primary", "PUT", Wires.O("provider", provider, "baseUrl", "", "model", id, "externalAcknowledged", true));
+          if (!saved["needsProbe"].Flag) {
+            // Active at once. A sibling's result was carried over: confirm this
+            // model quietly in the background; only a failure is reported.
+            if (saved["verify"].Flag) _ = System.Threading.Tasks.Task.Run(async () => {
+              try {
+                var result = await api.Request("/admin/llm/providers/primary/probe", "POST", Wires.O());
+                if (!result["provider"]["active"].Flag) Notifications.Show("Model check failed", id + " did not pass its check on this server: " + result["result"]["fatal"].Text);
+              } catch (JosiException) { }
+            });
+            return;
+          }
+          // Never checked on this server: one real check, visible, before it answers.
+          modelName.Text = "Checking " + id + "…"; modelName.Visibility = Visibility.Visible;
+          model.Activity = "Checking " + id + " with the provider…"; model.Notify();
+          var result = await api.Request("/admin/llm/providers/primary/probe", "POST", Wires.O());
+          var fatal = result["result"]["fatal"].Text;
+          if (!result["provider"]["active"].Flag) { model.Error = fatal.Length > 0 ? fatal : id + " did not pass its capability check."; model.Notify(); }
+        } catch (JosiException e) { model.Error = e.Message; model.Notify(); }
+        finally { model.Activity = ""; LoadModelName(); }
+      });
     }
 
     bool Thinking { get { return model.Turns.Any(t => t["status"].Text == "queued" || t["status"].Text == "running"); } }
@@ -505,6 +553,85 @@ namespace Josi.Native {
       ghostError = model.Error;
       ghost.Set(voice.Mode != VoiceMode.None ? GhostState.Voice : Thinking ? GhostState.Waiting : editor.Text.Trim().Length > 0 ? GhostState.Typing : GhostState.Idle);
       RenderStage();
+    }
+
+    // ------------------------------------------------- PC work to decide
+    readonly StackPanel cards = new StackPanel { MaxWidth = 820, Margin = new Thickness(24, 0, 24, 4) };
+    static readonly string[] Everyday = { "desktop.view", "explorer.view", "folder.read", "folder.write", "file.rename", "file.move", "app.launch", "app.control", "app.close", "browser.view", "browser.fill" };
+    /// Josi asked for permission for something on this PC, or this PC itself
+    /// needs its one-time approval: decided here, under Josi's reply, with
+    /// the password only for the risky ones. Nothing to decide, nothing shown.
+    void RenderCards() {
+      cards.Children.Clear();
+      var api = model.Api; if (api == null || model.Screen != Screen.Workspace) return;
+      Automation.BeginScope("chat");
+      if (PcInbox.NeedsPcApproval) {
+        cards.Children.Add(Ui.CardBox("Approve this PC for Josi",
+          Ui.Secondary("PC control is on, but this PC has not told the server which key it signs with. One approval with your password; it grants no permissions by itself."),
+          Ui.Wrap(Automation.Id(Ui.Pill("Approve This PC", () => model.Run(async () => { if (await api.PcAuthority.Approve(api, Window.GetWindow(this))) PcInbox.Set(PcInbox.Requests, false); }), true), "josi.chat.pc.approve-pc"))));
+      }
+      var number = 0;
+      foreach (var q in PcInbox.Requests) {
+        number++; var id = q.Id; var high = q["highRisk"].Flag;
+        var requirements = q["requirements"].List;
+        var command = requirements.FirstOrDefault(r => r["action"].Text == "command.run" && r["scope"]["kind"].Text == "command");
+        var everyday = requirements.Count > 0 && requirements.All(r => Everyday.Contains(r["action"].Text));
+        var lines = new List<UIElement> { Ui.T(q["description"].Text, 14, FontWeights.Medium) };
+        foreach (var r in requirements) lines.Add(Ui.Caption(r["action"].Text + ": " + r["scope"]["target"].Text + (r["scope"]["application"].Text.Length > 0 ? " · " + System.IO.Path.GetFileName(r["scope"]["application"].Text) : "")));
+        if (high) lines.Add(Ui.Caption("High risk: your password confirms it."));
+        var buttons = Ui.Wrap();
+        Func<string, string, string> ask = (title, detail) => high ? Dialogs.AskPassword(Window.GetWindow(this), title, detail, "Allow") : "";
+        buttons.Children.Add(Automation.Id(Ui.Pill("Allow once", () => {
+          var password = ask("Allow this once?", q["description"].Text); if (password == null) return;
+          PcInbox.Decided(id); DesktopExecutor.Current.Resume();
+          model.Run(async () => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", high ? Wires.O("approve", true, "password", password) : Wires.O("approve", true)));
+        }, true), "josi.chat.pc.request." + number + ".once"));
+        // Step H: one ask per site. Saves "always" for exactly this action, site,
+        // browser and profile; risky ones (clicks, uploads) take the password.
+        var site = requirements.Count == 1 && requirements[0]["scope"]["kind"].Text == "browser" ? requirements[0] : null;
+        if (site != null) {
+          var siteScope = site["scope"]; var siteAction = site["action"].Text;
+          buttons.Children.Add(Automation.Id(Ui.Pill("Always allow on this site", () => {
+            var password = high ? Dialogs.AskPassword(Window.GetWindow(this), "Always allow this on " + siteScope["target"].Text + "?",
+              q["description"].Text + ". Josi will do this on " + siteScope["target"].Text + " in this browser profile without asking. PC Control lists it; you can turn it off there.", "Allow") : "";
+            if (password == null) return;
+            PcInbox.Decided(id); DesktopExecutor.Current.Resume();
+            model.Run(async () => {
+              var policy = Wires.O("action", siteAction, "scope", Wires.O("kind", "browser", "target", siteScope["target"].Text, "application", siteScope["application"].Text, "profile", siteScope["profile"].Text), "mode", "always");
+              if (high) policy["password"] = password;
+              await api.Request("/admin/pc-control/policies", "PUT", policy);
+              try { await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", high ? Wires.O("approve", true, "password", password) : Wires.O("approve", true)); } catch (JosiException) { }
+            });
+          }), "josi.chat.pc.request." + number + ".site"));
+        }
+        if (command != null) {
+          var scope = command["scope"];
+          buttons.Children.Add(Automation.Id(Ui.Pill("Always allow this shell here", () => {
+            var password = Dialogs.AskPassword(Window.GetWindow(this), "Let Josi run commands here without asking?",
+              "Commands in " + System.IO.Path.GetFileNameWithoutExtension(scope["application"].Text) + " under " + scope["target"].Text + " (and its subfolders), as you, whenever a conversation calls for it. Each command is logged under PC Control; Stop ends it.", "Allow");
+            if (password == null) return;
+            PcInbox.Decided(id); DesktopExecutor.Current.Resume();
+            model.Run(async () => {
+              await api.Request("/admin/pc-control/policies", "PUT", Wires.O("action", "command.run", "scope", Wires.O("kind", "command", "target", scope["target"].Text, "application", scope["application"].Text), "mode", "always", "password", password));
+              try { await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", true, "password", password)); } catch (JosiException) { }
+            });
+          }), "josi.chat.pc.request." + number + ".always"));
+        } else if (everyday) {
+          buttons.Children.Add(Automation.Id(Ui.Pill("Allow everyday things", () => {
+            var password = Dialogs.AskPassword(Window.GetWindow(this), "Let Josi do everyday things without asking?",
+              "Open and use programs, read and write files, and use windows on this PC without asking each time. Commands, deleting, purchases, credentials, installs, security changes and administrator prompts still ask.", "Allow");
+            if (password == null) return;
+            PcInbox.Decided(id); DesktopExecutor.Current.Resume();
+            model.Run(async () => {
+              await api.Request("/admin/pc-control/full-control", "PUT", Wires.O("enabled", true, "password", password));
+              try { await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", true)); } catch (JosiException) { }
+            });
+          }), "josi.chat.pc.request." + number + ".everyday"));
+        }
+        buttons.Children.Add(Automation.Id(Ui.Pill("Deny", () => { PcInbox.Decided(id); model.Run(async () => await api.Request("/admin/pc-control/requests/" + api.Uuid(id) + "/decision", "POST", Wires.O("approve", false))); }), "josi.chat.pc.request." + number + ".deny"));
+        lines.Add(buttons);
+        cards.Children.Add(Automation.Group("josi.chat.pc.request." + number, q["description"].Text, Ui.CardBox("Josi is asking", lines.ToArray())));
+      }
     }
 
     void RenderComposer() {

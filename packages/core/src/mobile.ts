@@ -3,6 +3,7 @@ import { json, type Db } from './db.js';
 import { asSecret } from './sealing.js';
 import { deleteVaultSlot, openCredentialEnvelope, isVaultCredentialReference, openCredentialPayload, storeVaultCredentialPayload, VaultLockedError } from './vault.js';
 import type { MasterKey } from './masterKey.js';
+import { defaultFcmSender, isFcmStoredToken, type FcmSender } from './fcm.js';
 
 export type TurnStatus='queued'|'running'|'completed'|'failed';
 export interface DurableTurn { id:string;owner_user_id:string;accepted_session_id:string;thread_id:string;client_message_id:string;attempt_of:string|null;inbound_message_id:string;reply_to_message_id:string|null;attachment_ids:string[];status:TurnStatus;assistant_message_id:string|null;tool_receipts:unknown[];error_code:string|null;error_retryable:boolean|null;created_at:string;updated_at:string;work_goal_id?:string|null;work_goal_revision?:number|null;work_control_generation?:number|null; }
@@ -187,7 +188,8 @@ export async function upsertMobileDevice(db:Db,key:MasterKey,ownerUserId:string,
   if(!uuid.test(input.deviceIdentity))throw new MobileError('invalid_device','A stable, opaque installation UUID is required.');
   if(!['ios','android'].includes(input.platform))throw new MobileError('invalid_platform','Platform must be ios or android.');
   if(!['foreground','background','inactive'].includes(input.appState))throw new MobileError('invalid_app_state','Choose a valid app state.');
-  if(!/^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]+\]$/.test(input.expoToken))throw new MobileError('invalid_expo_token','A valid Expo push token is required.');
+  const expo=/^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]+\]$/.test(input.expoToken);
+  if(!expo&&!(input.platform==='android'&&isFcmStoredToken(input.expoToken)))throw new MobileError('invalid_expo_token','A valid Expo or Firebase push token is required.');
   if((!!input.quietStart!==!!input.quietEnd)||(input.quietStart&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.quietStart))||(input.quietEnd&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.quietEnd)))throw new MobileError('invalid_quiet_hours','Quiet hours require both start and end in HH:MM.');
   try{new Intl.DateTimeFormat('en-US',{timeZone:input.timezone}).format();}catch{throw new MobileError('invalid_timezone','A valid IANA timezone is required.');}
   const supplied=input.categories??{};const categories=Object.fromEntries(['assistant','approval','reminder','calendar'].map(name=>[name,typeof supplied[name]==='boolean'?supplied[name]:true]));
@@ -256,7 +258,7 @@ async function revokePushToken(tx:Db,id:string,fingerprint:string):Promise<void>
   if(rows[0])await deleteVaultSlot(tx,{ownerUserId:rows[0].owner_user_id,service:'mobile.push',slot:rows[0].device_identity,actorUserId:rows[0].owner_user_id});
 }
 
-export interface PushFetchResult{sent:number;ticketed:number;retried:number;deferred:number;suppressed:number;}
+export interface PushFetchResult{sent:number;ticketed:number;retried:number;deferred:number;suppressed:number;accepted:number;}
 const FOREGROUND_GRACE_MS=10*60*1000;
 const FOREGROUND_RECHECK_SECONDS=30;
 function coalesceCategory(categories:unknown,category:string):boolean{return !categories||typeof categories!=='object'||(categories as Record<string,unknown>)[category]!==false;}
@@ -266,10 +268,10 @@ function expoErrorCode(value:unknown,fallback:string):string{return typeof value
 function retryableHttpStatus(status:number):boolean{return status===408||status===425||status===429||status>=500;}
 async function boundedFetch(fetchImpl:typeof fetch,url:string,init:RequestInit,timeoutMs=10_000):Promise<Response>{const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);timer.unref?.();try{return await fetchImpl(url,{...init,signal:controller.signal});}finally{clearTimeout(timer);}}
 function retryAfterSeconds(response:Response):number|undefined{const raw=response.headers.get('retry-after');if(!raw)return;const seconds=Number(raw);if(Number.isFinite(seconds))return Math.max(1,Math.min(3600,Math.ceil(seconds)));const at=Date.parse(raw);return Number.isNaN(at)?undefined:Math.max(1,Math.min(3600,Math.ceil((at-Date.now())/1000)));}
-export async function processPushBatch(db:Db,key:MasterKey,fetchImpl:typeof fetch,now=new Date(),limit=50):Promise<PushFetchResult>{
+export async function processPushBatch(db:Db,key:MasterKey,fetchImpl:typeof fetch,now=new Date(),limit=50,fcm?:FcmSender|null):Promise<PushFetchResult>{
   const lease=randomUUID();
   const rows=await db.query<any>(`update push_deliveries p set status='sending',lease_token=$3,attempts=attempts+1 from (select id from push_deliveries where ((status in ('queued','retry') and next_attempt_at<=$1) or (status='sending' and updated_at<$1-interval '10 minutes')) order by created_at for update skip locked limit $2) q where p.id=q.id returning p.*`,[now,Math.min(100,Math.max(1,limit)),lease]);
-  let sent=0,ticketed=0,retried=0,deferred=0,suppressed=0;
+  let sent=0,ticketed=0,retried=0,deferred=0,suppressed=0,accepted=0;
   if(!db.transaction)throw new Error('push dispatch requires transaction support');
   for(let i=0;i<rows.length;i+=100){const group=rows.slice(i,i+100);
     await db.transaction(async tx=>{
@@ -280,10 +282,24 @@ export async function processPushBatch(db:Db,key:MasterKey,fetchImpl:typeof fetc
       await tx.query(`select pg_advisory_xact_lock(hashtext('josi_mobile_device_registration'))`);
       const deliverable=[] as any[];
       for(const p of group){const [d]=await tx.query<any>(`select * from mobile_devices where id=$1 and owner_user_id=$2 and revoked_at is null`,[p.device_id,p.owner_user_id]);const enabled=d&&coalesceCategory(d.categories,p.category);if(!d||!enabled||(!p.explicit_reminder&&quietNow(now,d.timezone,d.quiet_start,d.quiet_end))){await tx.query(`update push_deliveries set status='suppressed',lease_token=null,last_error_code=$3 where id=$1 and lease_token=$2`,[p.id,lease,!d?'device_unavailable':!enabled?'category_disabled':'quiet_hours']);suppressed++;continue;}const createdAt=new Date(p.created_at),foregroundExpired=createdAt.getTime()+FOREGROUND_GRACE_MS<=now.getTime();if(!p.explicit_reminder&&foregroundExpired&&(d.app_state==='foreground'||p.last_error_code==='foreground')){await tx.query(`update push_deliveries set status='suppressed',lease_token=null,last_error_code='foreground_expired' where id=$1 and lease_token=$2`,[p.id,lease]);suppressed++;continue;}if(p.route_type==='reminder'&&!d.owner_binding){await tx.query(`update push_deliveries set status='suppressed',lease_token=null,last_error_code='owner_binding_unavailable' where id=$1 and lease_token=$2`,[p.id,lease]);suppressed++;continue;}if(!p.explicit_reminder&&d.app_state==='foreground'){await tx.query(`update push_deliveries set status='retry',lease_token=null,attempts=greatest(0,attempts-1),next_attempt_at=least($3::timestamptz+($4*interval '1 second'),$5::timestamptz),last_error_code='foreground' where id=$1 and lease_token=$2`,[p.id,lease,now,FOREGROUND_RECHECK_SECONDS,new Date(createdAt.getTime()+FOREGROUND_GRACE_MS)]);deferred++;continue;}try{const token=await mobilePushToken(tx,key,d);const fenced=await tx.query(`update push_deliveries set sent_token_fingerprint=$3 where id=$1 and lease_token=$2 and exists(select 1 from mobile_devices where id=$4 and owner_user_id=$5 and revoked_at is null and token_fingerprint=$3) returning id`,[p.id,lease,d.token_fingerprint,d.id,p.owner_user_id]);if(fenced.length)deliverable.push({p,d,fingerprint:d.token_fingerprint,msg:{to:token,sound:'default',title:'Josi',body:d.privacy_locked?GENERIC_PUSH_BODY:p.body,data:{route:p.route_type,id:p.route_id,...(p.route_thread_id?{threadId:p.route_thread_id}:{}),...(p.route_type==='reminder'?{owner:d.owner_binding,revision:Number(String(p.event_key).split(':').at(-1))}:{})}}});else suppressed++;}catch(error){if(error instanceof VaultLockedError){await tx.query(`update push_deliveries set status='retry',lease_token=null,attempts=greatest(0,attempts-1),next_attempt_at=$3::timestamptz+interval '1 minute',last_error_code='vault_locked' where id=$1 and lease_token=$2`,[p.id,lease,now]);deferred++;}else{await retryPush(tx,p.id,p.attempts,'token_unavailable',lease);retried++;}}}
+      const viaFcm=deliverable.filter(x=>isFcmStoredToken(x.msg.to));
+      if(viaFcm.length){const sender=fcm===undefined?defaultFcmSender(fetchImpl):fcm;for(const item of viaFcm){const outcome=await sendFcmDelivery(tx,item,lease,sender);sent+=outcome.sent;retried+=outcome.retried;accepted+=outcome.accepted;}
+        deliverable.splice(0,deliverable.length,...deliverable.filter(x=>!isFcmStoredToken(x.msg.to)));}
       if(!deliverable.length)return;let response:Response;try{response=await boundedFetch(fetchImpl,'https://exp.host/--/api/v2/push/send',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','Accept-Encoding':'gzip, deflate'},body:JSON.stringify(deliverable.map(x=>x.msg))});sent+=deliverable.length;}catch{for(const {p} of deliverable){await retryPush(tx,p.id,p.attempts,'network',lease);retried++;}return;}if(retryableHttpStatus(response.status)){const delay=retryAfterSeconds(response);for(const {p} of deliverable){await retryPush(tx,p.id,p.attempts,`http_${response.status}`,lease,delay);retried++;}return;}if(!response.ok){for(const {p} of deliverable)await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code=$3 where id=$1 and lease_token=$2`,[p.id,lease,`http_${response.status}`]);return;}let payload:{data?:Array<{status:string;id?:string;details?:{error?:string}}>};try{payload=await response.json() as typeof payload;}catch{for(const {p} of deliverable){await retryPush(tx,p.id,p.attempts,'invalid_response',lease);retried++;}return;}for(let j=0;j<deliverable.length;j++){const {p,d,fingerprint}=deliverable[j],t=payload.data?.[j];if(t?.status==='ok'&&t.id){await tx.query(`update push_deliveries set status='ticketed',lease_token=null,ticket_id=$3,next_attempt_at=now()+interval '15 minutes' where id=$1 and lease_token=$2`,[p.id,lease,t.id]);ticketed++;}else if(t?.details?.error==='DeviceNotRegistered'){await revokePushToken(tx,d.id,fingerprint);await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code='DeviceNotRegistered' where id=$1 and lease_token=$2`,[p.id,lease]);}else{const code=expoErrorCode(t?.details?.error,'ticket_error');if(PERMANENT_EXPO_ERRORS.has(code))await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code=$3 where id=$1 and lease_token=$2`,[p.id,lease,code]);else{await retryPush(tx,p.id,p.attempts,code,lease);retried++;}}}
     });
   }
-  return{sent,ticketed,retried,deferred,suppressed};
+  return{sent,ticketed,retried,deferred,suppressed,accepted};
+}
+/** Caller holds the registration fence. FCM has no tickets: an accepted send is final. The app
+ * reads the same data shape Expo delivers on Android: title, message, and the route as JSON. */
+async function sendFcmDelivery(tx:Db,item:{p:any;d:any;fingerprint:string;msg:{to:string;title:string;body:string;data:Record<string,unknown>}},lease:string,sender:FcmSender|null):Promise<{sent:number;retried:number;accepted:number}>{
+  const {p,d,fingerprint,msg}=item;
+  if(!sender){await retryPush(tx,p.id,p.attempts,'fcm_unconfigured',lease);return{sent:0,retried:1,accepted:0};}
+  const outcome=await sender.send(msg.to,{title:msg.title,message:msg.body,body:JSON.stringify(msg.data)});
+  if(outcome.kind==='accepted'){await tx.query(`update push_deliveries set status='provider_accepted',lease_token=null,receipt_checked_at=now() where id=$1 and lease_token=$2`,[p.id,lease]);return{sent:1,retried:0,accepted:1};}
+  if(outcome.kind==='unregistered'){await revokePushToken(tx,d.id,fingerprint);await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code='DeviceNotRegistered' where id=$1 and lease_token=$2`,[p.id,lease]);return{sent:1,retried:0,accepted:0};}
+  if(outcome.kind==='failed'){await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code=$3 where id=$1 and lease_token=$2`,[p.id,lease,outcome.code]);return{sent:1,retried:0,accepted:0};}
+  await retryPush(tx,p.id,p.attempts,outcome.code,lease,outcome.delaySeconds);return{sent:outcome.code==='fcm_auth'?0:1,retried:1,accepted:0};
 }
 async function retryPush(db:Db,id:string,attempts:number,code:string,lease:string,delaySeconds?:number){const terminal=attempts>=5;await db.query(`update push_deliveries set status=$3,lease_token=null,next_attempt_at=now()+(coalesce($6,least(3600,power(2,$4)*15))*interval '1 second'),last_error_code=$5 where id=$1 and lease_token=$2`,[id,lease,terminal?'failed':'retry',attempts,code,delaySeconds??null]);}
 async function retryReceipt(db:Db,row:any,code:string,lease:string){const terminal=row.receipt_attempts>=5;await db.query(`update push_deliveries set status=$3,lease_token=null,next_attempt_at=now()+(least(3600,power(2,$4)*30)*interval '1 second'),last_error_code=$5 where id=$1 and lease_token=$2`,[row.id,lease,terminal?'failed':'ticketed',row.receipt_attempts,code]);}

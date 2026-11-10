@@ -40,6 +40,9 @@ const BACKGROUND_DENIED = new Set(['own_goal', 'approve_task', 'cancel_task', 'u
 // These adapters have their own original-task reservation journal and current
 // selected-step check. They cannot use the one-intent-per-step legacy fence.
 const AUTOMATION_TOOLS = new Set(['start_automation_task', 'connect_automation_workspace', 'open_automation_browser', 'observe_automation_workspace', 'browser_control', 'computer_control']);
+// The Mac v2 adapter independently binds each request to the active owned
+// goal, journals the exact operation and rechecks native authority per lease.
+const MAC_COMPUTER_TOOLS = new Set(['computer_operation']);
 // The Windows app's own PC Control tools. Every one of them is an exact-scope
 // PC Control request that only runs under the owner's standing policy (or an
 // approval only the owner can give in the app, which no background segment
@@ -49,6 +52,7 @@ const AUTOMATION_TOOLS = new Set(['start_automation_task', 'connect_automation_w
 // click or type; every later, server-scheduled segment was refused with "no
 // automatic-work adapter" even though the owner had granted the control.
 const PC_CONTROL_TOOLS = new Set(['browser_open_page', 'browser_click', 'browser_fill', 'browser_view_photo', 'browser_check_request',
+  'browser_attach_tab', 'browser_select_option', 'browser_drag', 'browser_scroll', 'browser_download', 'browser_upload_file',
   'desktop_launch', 'desktop_click', 'desktop_click_point', 'desktop_type', 'desktop_keys', 'desktop_close_window', 'desktop_check_request']);
 
 /** Rechecked before each model hop and every tool, including subscription MCP.
@@ -110,7 +114,7 @@ export async function runWorkIntent<T>(db: Db, context: WorkExecutionContext, na
   if (automatic && ['checkpoint_goal', 'verify_goal', 'revise_goal_plan'].includes(name) && input.goal_id !== automatic) {
     throw new WorkContinuationError('Continue only the goal assigned to this work segment.');
   }
-  if (automatic && context.mutating && !INTENT_TOOLS.has(name) && !AUTOMATION_TOOLS.has(name) && !PC_CONTROL_TOOLS.has(name)
+  if (automatic && context.mutating && !INTENT_TOOLS.has(name) && !AUTOMATION_TOOLS.has(name) && !PC_CONTROL_TOOLS.has(name) && !MAC_COMPUTER_TOOLS.has(name)
     && !['checkpoint_goal', 'verify_goal', 'revise_goal_plan'].includes(name)) {
     throw new WorkContinuationError('This effect has no automatic-work adapter.');
   }

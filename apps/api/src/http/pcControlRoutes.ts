@@ -1,6 +1,9 @@
 import { Router, type Request, type Response } from 'express';
-import { verifyPassword } from '@josi-ce/auth';
-import { disablePcControl, loadMasterKey, PcControl, PcControlError, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcBrowserPresence } from '@josi-ce/core';
+import { verifyPassword, checkLoginRate, recordLoginAttempt } from '@josi-ce/auth';
+import { verifyPcExecutor } from './pcExecutorIdentity.js';
+import { clientIp } from './cookies.js';
+import { disablePcControl, loadMasterKey, PcControl, PcControlError, pcActionIsHighRisk, pcIdFrom, type Db, type LoadOptions, type PcPolicy, type PcPreset, type PcBrowserPresence } from '@josi-ce/core';
+import { pcControlReadiness } from '@josi-ce/agent';
 import { requireSuperAdmin } from './authz.js';
 import { asyncRoute, param } from './async.js';
 
@@ -9,13 +12,26 @@ interface Ctx { db:Db; windows?:boolean; masterKey?:LoadOptions|false }
 // app without one is the hosting PC of the single-PC form. Permissions,
 // requests and presence are kept per PC. No execution/proposal endpoint is
 // exposed to the browser.
-const EXECUTOR_WAIT=60_000;
+const EXECUTOR_WAIT=60_000, EXECUTOR_WAIT_MAX=660_000;
 export function pcControlRoutes(ctx:Ctx):Router {
   const r=Router();const services=new Map<string,PcControl>();
   r.use(requireSuperAdmin);
   r.use((_req,res,next)=>{res.set('Cache-Control','no-store');next();});
+  function targetPc(req:Request){
+    if(req.query.ownerId!==undefined&&req.query.ownerId!==req.user!.id)throw new PcControlError(403,'This PC permission change belongs to another account.');
+    if(req.query.pcId===undefined)return pcIdFrom(req.get('x-josi-pc'));
+    if(req.path.startsWith('/executor')||typeof req.query.pcId!=='string'||!/^[a-z0-9-]{1,80}$/.test(req.query.pcId))
+      throw new PcControlError(400,'Choose a valid target PC.');
+    return req.query.pcId;
+  }
+  function revision(req:Request){
+    const value=req.query.revision;
+    if(value===undefined)return undefined;
+    if(typeof value!=='string'||!/^\d+$/.test(value)||!Number.isSafeInteger(Number(value)))throw new PcControlError(400,'Invalid PC permission revision.');
+    return Number(value);
+  }
   function control(req:Request){
-    const pcId=pcIdFrom(req.get('x-josi-pc'));
+    const pcId=targetPc(req);
     const known=services.get(pcId);if(known)return known;
     if(ctx.masterKey===false)throw new PcControlError(503,'Encrypted permission storage is unavailable.');
     try{const service=new PcControl(ctx.db,loadMasterKey(ctx.masterKey??{}),pcId);services.set(pcId,service);return service;}
@@ -31,14 +47,53 @@ export function pcControlRoutes(ctx:Ctx):Router {
   r.get('/',handle(async(req,res)=>{
     const browser=await control(req).presence(req.user!.id);
     return res.json({...await control(req).snapshot(req.user!.id),pcId:control(req).pcId,executorAvailable:!!browser,browser,
-      availability:browser?'The Josi app on this PC is connected'+(browser.origin?' with a '+browser.family+' tab attached ('+browser.origin+').':'. No browser tab is attached.')
+      availability:browser?'The Josi app on this PC is connected'+(browser.origin?' with a '+browser.family+' tab attached ('+browser.origin+').':browser.family==='desktop'?'. No browser is linked.':', and its '+browser.family+' browser is linked with no tab attached.')
         :'Permissions can be saved here. Browser control starts when the Josi app is open and a tab is attached with the Josi browser extension.',
       uac:'Windows UAC always requires its own approval. Josi cannot approve future prompts.'});
   }));
-  r.put('/enabled',handle(async(req,res)=>{await control(req).setEnabled(req.user!.id,req.body?.enabled);return res.json({ok:true});}));
+  // The app makes its PC known as soon as the owner signs in, before pairing
+  // and before control is on, so chat can list it and offer to turn it on.
+  r.put('/register',handle(async(req,res)=>{await control(req).register(req.user!.id);return res.json({ok:true,pcId:control(req).pcId});}));
+  r.get('/readiness',handle(async(req,res)=>res.json(await pcControlReadiness(ctx.db,req.user!.id,req.query.pcId===undefined?control(req).pcId:targetPc(req)))));
+  r.get('/identity',handle(async(req,res)=>{
+    const [identity]=await ctx.db.query<{public_key:string}>('select public_key from pc_executor_identity where owner_user_id=$1 and pc_id=$2',[req.user!.id,targetPc(req)]);
+    return res.json({publicKey:identity?.public_key??null,enabled:(await control(req).snapshot(req.user!.id)).enabled});
+  }));
+  r.post('/identity',handle(async(req,res)=>{
+    const identifier='pc-identity:'+req.user!.id,ip=clientIp(req);
+    if((await checkLoginRate(ctx.db,identifier,ip)).blocked)throw new PcControlError(429,'Wait before another password attempt.');
+    const [user]=await ctx.db.query<{password_hash:string|null}>('select password_hash from users where id=$1',[req.user!.id]);
+    const matched=await verifyPassword(user?.password_hash??null,typeof req.body?.password==='string'?req.body.password:'');
+    await recordLoginAttempt(ctx.db,{identifier,ip,success:matched});
+    if(!matched)throw new PcControlError(401,'Confirm your account password in the protected native form.');
+    const key=req.body?.publicKey;
+    if(typeof key!=='string'||key.length>100)throw new PcControlError(400,'Invalid PC identity.');
+    const pc=targetPc(req);await verifyPcExecutor(ctx.db,req,pc,key);
+    await ctx.db.query('insert into pc_executor_identity(owner_user_id,pc_id,public_key) values($1,$2,$3) on conflict do nothing',[req.user!.id,pc,key]);
+    return res.json({ok:true});
+  }));
+  r.delete('/identity',handle(async(req,res)=>{
+    const pc=targetPc(req);await control(req).stop(req.user!.id);
+    await ctx.db.query('delete from pc_executor_identity where owner_user_id=$1 and pc_id=$2',[req.user!.id,pc]);
+    return res.json({ok:true});
+  }));
+  r.put('/enabled',handle(async(req,res)=>{
+    // `everyday` (from a chat card the owner approved with their password)
+    // also turns on the everyday allowances; it takes the password here too,
+    // like PUT /full-control, so a plain toggle cannot widen access silently.
+    const everyday=req.body?.enabled===true&&req.body?.everyday===true;
+    if(everyday){
+      const [u]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
+      if(!await verifyPassword(u?.password_hash??null,typeof req.body?.password==='string'?req.body.password:''))throw new PcControlError(401,'Confirm your account password to let Josi work on this PC without asking each time.');
+    }
+    await control(req).setEnabled(req.user!.id,req.body?.enabled,revision(req));
+    if(everyday)await control(req).setFullControl(req.user!.id,true);
+    return res.json({ok:true,fullControl:everyday||undefined});
+  }));
   r.post('/stop',handle(async(req,res)=>{
     // Stop works even when the sealed store cannot be opened: the plain rows are enough to revoke.
-    try{await control(req).stop(req.user!.id);}catch{await disablePcControl(ctx.db,req.user!.id,pcIdFrom(req.get('x-josi-pc')));}
+    const pcId=targetPc(req);
+    try{await control(req).stop(req.user!.id);}catch{await disablePcControl(ctx.db,req.user!.id,pcId);}
     return res.json({ok:true,enabled:false,note:'Control disabled and temporary/task access revoked. Already completed changes cannot be undone.'});
   }));
   // Turning full control ON is a standing grant for everyday actions, so it
@@ -49,11 +104,30 @@ export function pcControlRoutes(ctx:Ctx):Router {
       const [u]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
       if(!await verifyPassword(u?.password_hash??null,typeof req.body?.password==='string'?req.body.password:''))throw new PcControlError(401,'Confirm your account password to turn on full control.');
     }
-    await control(req).setFullControl(req.user!.id,req.body.enabled);
+    await control(req).setFullControl(req.user!.id,req.body.enabled,revision(req));
     return res.json({ok:true,fullControl:req.body.enabled});
   }));
-  r.put('/policies',handle(async(req,res)=>res.json(await control(req).savePolicy(req.user!.id,req.body as PcPolicy))));
-  r.delete('/policies/:id',handle(async(req,res)=>{await control(req).revoke(req.user!.id,param(req,'id'));return res.json({ok:true});}));
+  r.put('/preset',handle(async(req,res)=>{
+    const identifier='pc-preset:'+req.user!.id,ip=clientIp(req);
+    if((await checkLoginRate(ctx.db,identifier,ip)).blocked)throw new PcControlError(429,'Wait before another password attempt.');
+    const [user]=await ctx.db.query<{password_hash:string|null}>('select password_hash from users where id=$1',[req.user!.id]);
+    const matched=await verifyPassword(user?.password_hash??null,typeof req.body?.password==='string'?req.body.password:'');
+    await recordLoginAttempt(ctx.db,{identifier,ip,success:matched});
+    if(!matched)throw new PcControlError(401,'Confirm your account password in the protected form.');
+    const {password,...preset}=req.body??{};
+    return res.json(await control(req).applyPreset(req.user!.id,preset as PcPreset,revision(req)));
+  }));
+  // A standing grant for a high-risk action (commands in a shell and folder)
+  // takes the account password once, like full control. Never and Ask do not.
+  r.put('/policies',handle(async(req,res)=>{
+    const {password,approveRequestId,...policy}=(req.body??{}) as PcPolicy&{password?:unknown;approveRequestId?:string};
+    if(approveRequestId!==undefined||(pcActionIsHighRisk(policy.action)&&['always','temporary','task'].includes(policy.mode))){
+      const [u]=await ctx.db.query<{password_hash:string|null}>(`select password_hash from users where id=$1`,[req.user!.id]);
+      if(!await verifyPassword(u?.password_hash??null,typeof password==='string'?password:''))throw new PcControlError(401,'Confirm your account password to let Josi do this without asking each time.');
+    }
+    return res.json(await control(req).savePolicy(req.user!.id,policy as PcPolicy,{expectedRevision:revision(req),approveRequestId}));
+  }));
+  r.delete('/policies/:id',handle(async(req,res)=>{await control(req).revoke(req.user!.id,param(req,'id'),revision(req));return res.json({ok:true});}));
   r.post('/requests/:id/decision',handle(async(req,res)=>{
     if(typeof req.body?.approve!=='boolean')throw new PcControlError(400,'Choose approve or deny.');
     if(req.body.approve){
@@ -64,12 +138,16 @@ export function pcControlRoutes(ctx:Ctx):Router {
         if(!await verifyPassword(u?.password_hash??null,typeof req.body?.password==='string'?req.body.password:''))throw new PcControlError(401,'Confirm your account password to approve this high-risk action.');
       }
     }
-    await control(req).decide(req.user!.id,param(req,'id'),req.body.approve);return res.json({ok:true});
+    await control(req).decide(req.user!.id,param(req,'id'),req.body.approve,revision(req));return res.json({ok:true});
   }));
   // The Windows app is the executor. It reports its attached browser, claims
   // approved work one request at a time and reports what happened. A claim
   // goes through execute(), so every policy check runs again at that moment.
-  const running=new Map<string,(ok:boolean,result:unknown)=>Promise<void>>();
+  const running=new Map<string,{owner:string;pcId:string;finish:(ok:boolean,result:unknown)=>Promise<void>}>();
+  r.use('/executor',(req,res,next)=>{void (async()=>{
+    try {await verifyPcExecutor(ctx.db,req,targetPc(req));next();}
+    catch(error){res.status(error instanceof PcControlError?error.status:503).json({error:error instanceof PcControlError?error.message:'PC identity verification is unavailable.'});}
+  })();});
   r.put('/executor/presence',handle(async(req,res)=>{
     await control(req).setPresence(req.user!.id,req.body?.connected===true?req.body.browser as PcBrowserPresence:null);
     return res.json({ok:true});
@@ -79,14 +157,17 @@ export function pcControlRoutes(ctx:Ctx):Router {
     for(const {id,plan} of await service.approved(owner)){
       if(running.has(id))continue;
       let claimed!:()=>void;const started=new Promise<boolean>(resolve=>{claimed=()=>resolve(true);});
+      // A command may run for as long as its own timeout; everything else gets the minute.
+      const declared=Number((plan.payload as {timeoutSeconds?:unknown}|null)?.timeoutSeconds);
+      const wait=Number.isFinite(declared)&&declared>0?Math.min(EXECUTOR_WAIT_MAX,Math.max(EXECUTOR_WAIT,declared*1000+30_000)):EXECUTOR_WAIT;
       const done=service.execute(owner,id,plan,(_plan,signal)=>new Promise<void>((resolve,reject)=>{
-        const timer=setTimeout(()=>{running.delete(id);void service.saveResult(owner,id,{ok:false,code:'executor_timeout'}).finally(()=>reject(new Error('timeout')));},EXECUTOR_WAIT);
+        const timer=setTimeout(()=>{running.delete(id);void service.saveResult(owner,id,{ok:false,code:'executor_timeout'}).finally(()=>reject(new Error('timeout')));},wait);
         signal.addEventListener('abort',()=>{clearTimeout(timer);running.delete(id);reject(new Error('stopped'));},{once:true});
-        running.set(id,async(ok,result)=>{
+        running.set(id,{owner,pcId:service.pcId,finish:async(ok,result)=>{
           clearTimeout(timer);running.delete(id);
           await service.saveResult(owner,id,{ok,result});
           if(ok)resolve();else reject(new Error('failed'));
-        });
+        }});
         claimed();
       }));
       done.catch(()=>undefined);
@@ -95,11 +176,20 @@ export function pcControlRoutes(ctx:Ctx):Router {
     }
     return res.json({request:null});
   }));
+  r.get('/executor/:id/lease',handle(async(req,res)=>{
+    const active=running.get(param(req,'id')),service=control(req);
+    if(!active||active.owner!==req.user!.id||active.pcId!==service.pcId)throw new PcControlError(404,'This request is not running on this PC.');
+    const authorized=await service.executionAuthorized(req.user!.id,param(req,'id'));
+    return res.json({authorized,leaseMilliseconds:5000});
+  }));
+  r.get('/executor/terminals/:id/lease',handle(async(req,res)=>{
+    return res.json(await control(req).terminalAuthorization(req.user!.id,param(req,'id')));
+  }));
   r.post('/executor/:id/result',handle(async(req,res)=>{
-    const finish=running.get(param(req,'id'));
-    if(!finish)throw new PcControlError(404,'This request is not running.');
+    const active=running.get(param(req,'id'));
+    if(!active||active.owner!==req.user!.id||active.pcId!==control(req).pcId)throw new PcControlError(404,'This request is not running on this PC.');
     if(typeof req.body?.ok!=='boolean')throw new PcControlError(400,'Report success or failure.');
-    await finish(req.body.ok,req.body.result??null);
+    await active.finish(req.body.ok,req.body.result??null);
     return res.json({ok:true});
   }));
   return r;

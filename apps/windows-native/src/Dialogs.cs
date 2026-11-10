@@ -34,6 +34,8 @@ namespace Josi.Native {
         KeyDown += (s, e) => { if (e.Key == Key.Escape && !Locked) Close(); };
         SourceInitialized += delegate {
           var handle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+          // Protected approvals/recovery stay out of public capture APIs.
+          SetWindowDisplayAffinity(handle, 0x11);
           var on = 1; NativeDark(handle, 20, ref on);
           var caption = 0x00301E14; NativeDark(handle, 35, ref caption);
         };
@@ -44,6 +46,7 @@ namespace Josi.Native {
       }
     }
     [System.Runtime.InteropServices.DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr window, uint affinity);
     static void NativeDark(IntPtr handle, int attribute, ref int value) { try { DwmSetWindowAttribute(handle, attribute, ref value, sizeof(int)); } catch (Exception) { } }
 
     public static bool Confirm(Window owner, string title, string detail, string action) {
@@ -115,12 +118,100 @@ namespace Josi.Native {
       sheet.Loaded += delegate { if (sensitive) password.Focus(); else approve.Focus(); };
       sheet.ShowDialog();
     }
+    /// A credential card Josi asked for in conversation: the fields the
+    /// catalogue names, secure where the value is a secret. Save performs the
+    /// route with this person's own session; the typed values go nowhere else
+    /// and the conversation learns only that it was saved.
+    public static void CredentialCard(Window owner, AppModel model, Wire proposal) {
+      var card = proposal["card"];
+      var sheet = new Sheet(owner, "Josi", 560, "credential-card");
+      var outcome = "later";
+      var problem = Automation.Id(Ui.T("", 13, null, Ui.Error), "josi.credential-card.error");
+      problem.Visibility = Visibility.Collapsed;
+      var inputs = new List<Tuple<Wire, FrameworkElement>>();
+      var body = Ui.Stack(12);
+      foreach (var field in card["fields"].List) {
+        var type = field["type"].Text; var label = field["label"].Text + (field["required"].Flag ? "" : " (optional)");
+        FrameworkElement control;
+        if (type == "secret") { var entry = Ui.SecretField(label); Automation.Id(entry.Hidden, "josi.credential-card.field." + field["key"].Text); control = entry; }
+        else if (type == "confirm") control = Ui.Toggle(field["label"].Text);
+        else control = Ui.Visible(Ui.Input(field["placeholder"].Text.Length > 0 ? field["placeholder"].Text : null));
+        if (type != "secret") Automation.Id(control, "josi.credential-card.field." + field["key"].Text);
+        inputs.Add(Tuple.Create(field, control));
+        body.Children.Add(type == "confirm" ? control : type == "secret" ? Ui.Stack(5, Ui.T(label, 13.5), control) : Ui.Field(label, (Control)control));
+      }
+      if (inputs.Count == 0) body.Children.Add(Ui.T("This card has nothing to fill in. Ask Josi to open it again.", 13, null, Ui.Error));
+      Button save = null;
+      save = Automation.Id(Ui.Pill("Save", async () => {
+        var values = new Dictionary<string, object>();
+        foreach (var pair in inputs) {
+          var field = pair.Item1; var key = field["key"].Text;
+          var secret = pair.Item2 as Ui.SecretEntry; var toggle = pair.Item2 as CheckBox; var text = pair.Item2 as TextBox;
+          if (secret != null) { var value = secret.Value.Trim(); if (value.Length == 0 && field["required"].Flag) { problem.Text = field["label"].Text + " is required."; problem.Visibility = Visibility.Visible; secret.Focus(); return; } values[key] = value; }
+          else if (toggle != null) { if (toggle.IsChecked != true && field["required"].Flag) { problem.Text = "Please confirm: " + field["label"].Text; problem.Visibility = Visibility.Visible; return; } values[key] = toggle.IsChecked == true; }
+          else if (text != null) { var typed = text.Text.Trim(); if (typed.Length == 0 && field["required"].Flag) { problem.Text = field["label"].Text + " is required."; problem.Visibility = Visibility.Visible; text.Focus(); return; } values[key] = typed; }
+        }
+        save.IsEnabled = false; problem.Visibility = Visibility.Collapsed;
+        try {
+          var note = await model.SaveCredentialCard(proposal, values);
+          outcome = "saved";
+          foreach (var pair in inputs) { var secret = pair.Item2 as Ui.SecretEntry; if (secret != null) secret.Clear(); }
+          sheet.Close();
+          if (note.Length > 0) Notifications.Show("Saved", note);
+        } catch (JosiException e) {
+          problem.Text = e.Message; problem.Visibility = Visibility.Visible; save.IsEnabled = true;
+          foreach (var pair in inputs) { var secret = pair.Item2 as Ui.SecretEntry; if (secret != null) secret.Clear(); }
+        }
+      }, true), "josi.credential-card.save");
+      save.IsDefault = true;
+      var cancel = Automation.Id(Ui.Pill("Not now", () => { outcome = "later"; sheet.Close(); }), "josi.credential-card.later");
+      cancel.IsCancel = true;
+      var decline = Automation.Id(Ui.Pill("Decline", () => { outcome = "declined"; sheet.Close(); model.Run(async () => { await model.DecideSettingsChange(proposal, false); }); }), "josi.credential-card.decline");
+      var help = card["help"]; var helpUrl = help["url"].Text;
+      var helpRow = Ui.Stack(4, Ui.Caption(help["text"].Text),
+        helpUrl.Length > 0 ? Ui.Link("Open " + new Uri(helpUrl).Host, () => { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(helpUrl) { UseShellExecute = true }); } catch (Exception) { } }) : null);
+      sheet.Closed += delegate { Automation.PopupResult = "credential-card:" + outcome; };
+      sheet.Body(Ui.Stack(14,
+        Ui.Row(10, Ui.JosiMark(28), Automation.Id(Ui.T(card["title"].Text, 17, FontWeights.SemiBold), "josi.credential-card.title")),
+        Automation.Id(Ui.Copyable(card["intro"].Text, 14), "josi.credential-card.intro"),
+        body, helpRow, problem,
+        Ui.Caption("What you paste goes to this Josi's Vault only. Josi never sees it, and it never appears in the conversation."),
+        Ui.Spread(decline, Ui.Row(8, cancel, save))));
+      sheet.Loaded += delegate { sheet.Activate(); var first = inputs.Select(p => p.Item2).FirstOrDefault(); var entry = first as Ui.SecretEntry; if (entry != null) entry.Focus(); else if (first != null) first.Focus(); };
+      sheet.ShowDialog();
+    }
+    /// One secret value, typed by the person for their own World. Returns null
+    /// when cancelled; the box is cleared either way and the value is never logged.
+    public static string AskSecret(Window owner, string title, string detail, string label, string action) {
+      var sheet = new Sheet(owner, "Josi", 520, "secret");
+      string result = null;
+      var box = Ui.SecretField(label); Automation.Id(box.Hidden, "josi.secret.input");
+      var go = Automation.Id(Ui.Pill(action, () => { var value = box.Value.Trim(); if (value.Length == 0) return; result = value; box.Clear(); sheet.Close(); }, true), "josi.secret.ok");
+      go.IsDefault = true;
+      var cancel = Automation.Id(Ui.Pill("Cancel", () => { box.Clear(); sheet.Close(); }), "josi.secret.cancel");
+      cancel.IsCancel = true;
+      sheet.Closed += delegate { Automation.PopupResult = result == null ? "secret:cancelled" : "secret:ok"; };
+      sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), detail == null ? null : Ui.Secondary(detail), Ui.Stack(5, Ui.T(label, 13.5), box), Ui.Spread(null, Ui.Row(8, cancel, go))));
+      sheet.Loaded += delegate { sheet.Activate(); box.Focus(); };
+      sheet.ShowDialog();
+      return result;
+    }
+    /// A secret shown on screen, once, to the person it belongs to: never spoken,
+    /// never kept by the app after the sheet closes.
+    public static void Reveal(Window owner, string title, string value) {
+      var sheet = new Sheet(owner, "Josi", 520, "reveal");
+      var shown = Automation.Id(Ui.Copyable(value, 20, null, true), "josi.reveal.value");
+      var ok = Automation.Id(Ui.Pill("Done", () => sheet.Close(), true), "josi.reveal.ok"); ok.IsDefault = true; ok.IsCancel = true;
+      sheet.Closed += delegate { shown.Text = ""; Automation.PopupResult = "reveal:closed"; };
+      sheet.Body(Ui.Stack(14, Ui.T(title, 17, FontWeights.SemiBold), shown, Ui.Caption("Shown here only. Josi never sees it, and it is not read aloud."), Ui.Spread(null, ok)));
+      sheet.ShowDialog();
+    }
     /// Asks for the account password once, for a change the server protects
     /// with it. Returns null when cancelled; the box is cleared either way.
     public static string AskPassword(Window owner, string title, string detail, string action) {
       var sheet = new Sheet(owner, "Josi", 520, "password");
       string result = null;
-      var box = Automation.Id(Ui.Secret("Your account password"), "josi.password.input");
+      var box = Automation.Id(Ui.Visible(Ui.Secret("Your account password")), "josi.password.input");
       var go = Automation.Id(Ui.Pill(action, () => { if (box.Password.Length == 0) return; result = box.Password; box.Clear(); sheet.Close(); }, true), "josi.password.ok");
       go.IsDefault = true;
       var cancel = Automation.Id(Ui.Pill("Cancel", () => { box.Clear(); sheet.Close(); }), "josi.password.cancel");

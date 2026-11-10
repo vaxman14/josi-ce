@@ -50,3 +50,16 @@ it('a background segment may use the PC Control tools but not an arbitrary conse
   // Anything else consequential still has no adapter in a background segment.
   await expect(runWorkIntent(db, context, 'some_other_effect', {}, async () => 'ran')).rejects.toThrow(/no automatic-work adapter/);
 });
+
+it('allows the Mac adapter only while the authenticated background goal remains active', async () => {
+  const { db, user, thread, turn, goal } = await setup('mac-background@example.test');
+  await db.query(`update assistant_turns set work_goal_id=$2,work_goal_revision=$3,
+    work_control_generation=(select control_generation from work_goals where id=$2) where id=$1`, [turn.id, goal.goalId, goal.revision]);
+  const context = { ownerUserId: user.id, threadId: thread.id, sourceMessageId: turn.inbound_message_id,
+    durableTurnId: turn.id, durableLeaseToken: turn.lease_token, mutating: true };
+  await expect(runWorkIntent(db, context, 'computer_operation', {}, async () => 'native permission evaluation')).resolves.toBe('native permission evaluation');
+  await controlWorkGoal(db, { ownerUserId: user.id, goalId: goal.goalId, revision: goal.revision, action: 'pause' });
+  let executed = false;
+  await expect(runWorkIntent(db, context, 'computer_operation', {}, async () => { executed = true; })).rejects.toThrow(/stopped/);
+  expect(executed).toBe(false);
+});

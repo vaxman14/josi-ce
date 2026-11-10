@@ -70,7 +70,7 @@ enum GuestBrowserBoundary {
               let version = value["version"] as? NSNumber, CFGetTypeID(version) != CFBooleanGetTypeID(), version.doubleValue == 1,
               let id = value["requestId"] as? String, UUID(uuidString: id)?.uuidString.lowercased() == id,
               let operation = value["operation"] as? String,
-              ["browser.hello", "browser.poll", "browser.authorize", "browser.receipt", "browser.stop"].contains(operation),
+              ["browser.hello", "browser.poll", "browser.authorize", "browser.receipt", "browser.chunk", "browser.stop"].contains(operation),
               value["payload"] is [String: Any] else { throw GuestBrowserError.invalid }
         if !(value["sessionId"] is NSNull) {
             guard let session = value["sessionId"] as? String, UUID(uuidString: session)?.uuidString.lowercased() == session

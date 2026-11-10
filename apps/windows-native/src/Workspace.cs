@@ -143,6 +143,7 @@ namespace Josi.Native {
       navAdmin = model.IsAdministrator;
       nav.Children.Clear(); navButtons.Clear(); navLabels.Clear();
       Group("Workspace");
+      Item("My World", Glyph.Person, "my-world");
       Item("Chat", Glyph.Chat, "chat");
       Item("Tasks", Glyph.Checklist, "tasks");
       Item("Approvals", Glyph.Approve, "approvals");
@@ -304,6 +305,7 @@ namespace Josi.Native {
         case "memory": view = new MemoryView(model, owner); break;
         case "automation": view = new AutomationView(model, owner); break;
         case "vault": view = new VaultView(model, owner); break;
+        case "my-world": view = new MyWorldView(model, owner); break;
         case "account": view = new AccountView(model, owner); break;
         case "channels": view = new ChannelsView(model, owner); break;
         case "models": view = model.IsAdministrator ? new ModelsView(model, owner) : null; break;

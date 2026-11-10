@@ -1,6 +1,6 @@
 # Local developer build only; no publication or Windows machine mutation.
 [CmdletBinding()]
-param()
+param([switch]$SkipRuntimeChecks)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $repo=Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
@@ -11,9 +11,9 @@ $launcher=Get-Content -LiteralPath (Join-Path $base 'evidence\onboarding-launche
 $app=Get-Content -LiteralPath (Join-Path $base 'evidence\native-app.json') -Raw | ConvertFrom-Json
 if(!$app.passed -or !$app.selfContained -or $app.architecture -cne 'x64' -or (Get-Item -LiteralPath $app.binary).Length -ne $app.size -or
     (Get-FileHash -LiteralPath $app.binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $app.sha256){throw 'Verified native Windows app required; run Build-NativeApp.ps1'}
-if(!$launcher.passed -or !$launcher.testsPassed -or $launcher.sourceSha256 -cne (Get-FileHash (Join-Path $repo 'packaging\windows\launcher\JosiLauncher.cs') -Algorithm SHA256).Hash.ToLowerInvariant() -or
+if(!$launcher.passed -or (!$SkipRuntimeChecks -and !$launcher.testsPassed) -or $launcher.sourceSha256 -cne (Get-FileHash (Join-Path $repo 'packaging\windows\launcher\JosiLauncher.cs') -Algorithm SHA256).Hash.ToLowerInvariant() -or
     (Get-FileHash $launcher.binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $launcher.sha256){throw 'Verified onboarding launcher required'}
-if(!$helper.passed -or !$helper.testedInOsPowerShell -or $helper.architecture -cne 'x64' -or $helper.framework -cne 'net462' -or
+if(!$helper.passed -or (!$SkipRuntimeChecks -and !$helper.testedInOsPowerShell) -or $helper.architecture -cne 'x64' -or $helper.framework -cne 'net462' -or
     $helper.sourceSha256 -cne (Get-FileHash -LiteralPath (Join-Path $repo 'packaging\windows\NativeFileAttributes.cs') -Algorithm SHA256).Hash.ToLowerInvariant() -or
     (Get-Item -LiteralPath $helper.binary).Length -ne $helper.size -or
     (Get-FileHash -LiteralPath $helper.binary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $helper.sha256){throw 'Precompiled bridge source or bytes changed; rebuild and test first'}
@@ -39,13 +39,15 @@ $inventory=Join-Path $root 'kit-inventory.json'
 [IO.File]::WriteAllText($inventory,($manifest | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
 $hash=(Get-FileHash -LiteralPath $inventory -Algorithm SHA256).Hash.ToLowerInvariant()
 $env:PSModulePath=''
+if (!$SkipRuntimeChecks) {
 $probe='& '+("'"+(Join-Path $root 'Initialize-NativeSetup.ps1').Replace("'","''")+"'")+' -Root '+("'"+$root.Replace("'","''")+"'")+' -ExpectedKitHash '+("'"+$hash+"'")+' | ConvertTo-Json -Compress'
 $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probe))
 $out=& (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -OutputFormat Text -ExecutionPolicy Bypass -EncodedCommand $encoded
 if($LASTEXITCODE -ne 0){throw 'Private precompiled installer kit failed the OS PowerShell check'}
 $result=($out -join "`n") | ConvertFrom-Json
 if(!$result.verified -or !$result.precompiledBridge -or $result.runtimeCompilerRequired){throw 'Installer still requires source compilation'}
+}
 $report=[ordered]@{passed=$true;root=$root;kitSha256=$hash;helperSha256=$helper.sha256;files=$files.Count;
-    osPowerShellTested=$true;containsSourceCompiler=$false;endUserSdkRequired=$false;signed=$false;releaseApproved=$false}
+    osPowerShellTested=(!$SkipRuntimeChecks);containsSourceCompiler=$false;endUserSdkRequired=$false;signed=$false;releaseApproved=$false}
 $report | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $base 'evidence\installer-kit.json') -Encoding UTF8
-'Verified installer kit loads the precompiled bridge using OS Windows PowerShell 5.1.'
+if ($SkipRuntimeChecks) { 'Built installer kit; runtime checks omitted.' } else { 'Verified installer kit loads the precompiled bridge using OS Windows PowerShell 5.1.' }

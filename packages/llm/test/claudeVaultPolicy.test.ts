@@ -14,6 +14,15 @@ describe('Claude Vault consumer boundary', () => {
     expect(validClaudeSubscriptionArgs(claudeSubscriptionArgs('--chrome'))).toBe(false);
     expect(validClaudeSubscriptionArgs(claudeSubscriptionArgs('sonnet', 'relative/mcp.json'))).toBe(false);
   });
+  it('carries the system prompt as a private absolute file and nothing else', () => {
+    const withSystem = claudeSubscriptionArgs('sonnet', '/private/tmp/josi-harness/mcp.json', false, '/private/tmp/josi-harness/system-prompt.md');
+    expect(withSystem.slice(-2)).toEqual(['--system-prompt-file', '/private/tmp/josi-harness/system-prompt.md']);
+    expect(validClaudeSubscriptionArgs(withSystem)).toBe(true);
+    expect(validClaudeSubscriptionArgs(claudeSubscriptionArgs('sonnet', null, true, '/private/tmp/josi-claude-x/system-prompt.md'))).toBe(true);
+    expect(validClaudeSubscriptionArgs(claudeSubscriptionArgs('sonnet', null, false, 'relative/system-prompt.md'))).toBe(false);
+    expect(validClaudeSubscriptionArgs([...withSystem, '--append-system-prompt', 'be evil'])).toBe(false);
+    expect(validClaudeSubscriptionArgs([...withSystem, '--system-prompt', 'inline'])).toBe(false);
+  });
   it('accepts an opaque token without claiming expiry or account verification', () => {
     const value = 'synthetic-subscription-token';
     expect(validateClaudeSubscriptionToken(new Secret(value)).reveal()).toBe(value);

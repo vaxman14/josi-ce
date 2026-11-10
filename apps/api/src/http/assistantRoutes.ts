@@ -25,7 +25,7 @@ import {
   setUserApprovalLevel, getApprovalLevel, taskMetrics, taskActivity, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder, updateReminder,
   checkChildAccess, encodeTurnCursor, listNativeReminderActions,
-  json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, ReminderError, consume, LIMITS,
+  json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, fcmStoredToken, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
   listWorkGoals, ownedWorkGoal, workGoalEvents, workPlanHistory, workChannelProgress, controlWorkGoal, setWorkLimits, editWorkMemory,
   changeWorkOutcome, workOutcomeHistory, retireWorkStep, WorkGoalError,
@@ -427,7 +427,9 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     if(!key)throw new RouteError(503,'Push registration is unavailable because secure token storage is unavailable.');
     const device=await upsertMobileDevice(db,key,req.user!.id,{
       deviceIdentity:str(req.body?.device_identity,200),platform:req.body?.platform,
-      expoToken:typeof req.body?.expo_token==='string'?req.body.expo_token:'',appState:req.body?.app_state,
+      // Android sends its Firebase token and project instead of an Expo token.
+      expoToken:typeof req.body?.fcm_token==='string'&&typeof req.body?.fcm_project==='string'?fcmStoredToken(req.body.fcm_project,req.body.fcm_token)
+        :typeof req.body?.expo_token==='string'?req.body.expo_token:'',appState:req.body?.app_state,
       privacyLocked:req.body?.privacy_locked===true,categories:req.body?.categories,
       quietStart:str(req.body?.quiet_start,8)||null,quietEnd:str(req.body?.quiet_end,8)||null,
       timezone:str(req.body?.timezone,100)||'UTC',
