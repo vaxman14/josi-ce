@@ -17,7 +17,7 @@ enum JosiUpdates {
         for release in releases.list where !release["draft"].flag {
             let version = release["tag_name"].text.replacing(/^v/, with: "")
             guard isNewer(version, than: best?.version ?? current),
-                  let asset = release["assets"].list.first(where: { $0["name"].text == "Josi-\(version)-macOS-arm64.pkg" }),
+                  let asset = release["assets"].list.first(where: { $0["name"].text == (JosiFlags.serverApp ? "Josi-\(version)-macOS-arm64.pkg" : "Josi-Client-\(version)-macOS-arm64.pkg") }),
                   let url = URL(string: asset["browser_download_url"].text),
                   // Only ever send someone to GitHub for an installer.
                   url.scheme == "https", url.host()?.lowercased() == "github.com" else { continue }

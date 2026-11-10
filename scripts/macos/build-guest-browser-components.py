@@ -4,6 +4,7 @@ The unified app builder must embed and Socal-sign these components before they
 can pass their runtime identity checks. Browser store publication is separate.
 """
 import argparse
+import os
 import json
 from pathlib import Path
 import plistlib
@@ -14,8 +15,16 @@ import zipfile
 
 REPO = Path(__file__).resolve().parents[2]
 SOURCES = REPO / "apps/automation-macos/Sources"
-HELPERS = "/Applications/Josi.app/Contents/Helpers"
-SAFARI_ID = "com.heyjosi.ce.unified.workspace-safari"
+# Each edition has its own place, identity and browser service names
+# (JosiEdition in apps/automation-macos/Sources/GuestBrowserIPC.swift).
+EDITIONS = {
+    "server": {"app": "/Applications/Josi.app", "identifier": "com.heyjosi.ce.unified", "service": "com.heyjosi.ce.browser"},
+    "client": {"app": "/Applications/Josi Client.app", "identifier": "com.heyjosi.ce.client", "service": "com.heyjosi.ce.client.browser"},
+}
+HELPERS = EDITIONS["server"]["app"] + "/Contents/Helpers"
+SAFARI_ID = EDITIONS["server"]["identifier"] + ".workspace-safari"
+SERVICE = EDITIONS["server"]["service"]
+CONTAINER = EDITIONS["server"]["identifier"]
 
 
 def build(output, node):
@@ -35,7 +44,13 @@ def build(output, node):
             raise RuntimeError(f"Build stopped; inspect {evidence / (name + '.log')}")
 
     resources = output / "BrowserExtensions"
-    run("extension-resources", [node, REPO / "scripts/unified/build-browser-extensions.mjs", resources])
+    environment = dict(os.environ, JOSI_SAFARI_ID=SAFARI_ID)
+    print("extension-resources", flush=True)
+    with (evidence / "extension-resources.log").open("x") as log:
+        completed = subprocess.run([str(node), str(REPO / "scripts/unified/build-browser-extensions.mjs"), str(resources)], cwd=REPO,
+                                   stdout=log, stderr=subprocess.STDOUT, timeout=300, env=environment)
+    if completed.returncode:
+        raise RuntimeError(f"Build stopped; inspect {evidence / 'extension-resources.log'}")
     # Signing submission only. Never enable unsigned extensions, contact AMO,
     # use a signing credential or install anything as part of a build.
     submission = output / "Firefox-signing-submission.zip"
@@ -61,7 +76,7 @@ def build(output, node):
     name = "Josi Browser Control"
     generated = output / "SafariProject"
     run("safari-project", ["xcrun", "safari-web-extension-packager", resources / "safari",
-        "--project-location", generated, "--app-name", name, "--bundle-identifier", "com.heyjosi.ce.unified",
+        "--project-location", generated, "--app-name", name, "--bundle-identifier", CONTAINER,
         "--swift", "--macos-only", "--copy-resources", "--no-open", "--no-prompt"])
     project_root = generated / name
     extension = project_root / (name + " Extension")
@@ -90,13 +105,13 @@ def build(output, node):
     if info.get("CFBundleIdentifier") != SAFARI_ID or info.get("CFBundleExecutable") != "JosiWorkspaceSafari":
         raise ValueError("Safari output identity did not match")
     entitlements = {"com.apple.security.app-sandbox": True,
-                    "com.apple.security.temporary-exception.mach-lookup.global-name": ["com.heyjosi.ce.browser"]}
+                    "com.apple.security.temporary-exception.mach-lookup.global-name": [SERVICE]}
     (output / "Safari.entitlements").write_bytes(plistlib.dumps(entitlements))
-    (output / "com.heyjosi.ce.browser.plist").write_bytes(plistlib.dumps({
-        "Label": "com.heyjosi.ce.browser",
+    (output / (SERVICE + ".plist")).write_bytes(plistlib.dumps({
+        "Label": SERVICE,
         "BundleProgram": "Contents/Helpers/JosiBrowserBroker",
         "ProgramArguments": [HELPERS + "/JosiBrowserBroker"],
-        "MachServices": {"com.heyjosi.ce.browser": True, "com.heyjosi.ce.browser.control": True},
+        "MachServices": {SERVICE: True, SERVICE + ".control": True},
         "ProcessType": "Interactive", "LimitLoadToSessionType": "Aqua",
     }))
     identity = json.loads((resources / "BrowserDistribution.json").read_text())
@@ -121,5 +136,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--node", required=True, type=Path)
+    parser.add_argument("--edition", choices=sorted(EDITIONS), default="server")
     args = parser.parse_args()
+    edition = EDITIONS[args.edition]
+    HELPERS = edition["app"] + "/Contents/Helpers"
+    SAFARI_ID = edition["identifier"] + ".workspace-safari"
+    SERVICE = edition["service"]
+    CONTAINER = edition["identifier"]
     build(args.output, args.node.resolve(strict=True))

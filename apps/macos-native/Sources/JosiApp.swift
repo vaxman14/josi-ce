@@ -30,6 +30,12 @@ import SwiftUI
         #endif
     }
     func applicationWillTerminate(_ notification: Notification) { PcOwnBrowser.shared.stop() }
+    static let keepRunningKey = "josi.keepRunning"
+    /// Josi Client: keep running in the menu bar when the window closes (on unless turned off).
+    static var keepRunning: Bool {
+        get { UserDefaults.standard.object(forKey: keepRunningKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: keepRunningKey) }
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if let model, model.vaultRecovery != .null || model.recovery != .null || model.mfaRecovery != .null {
             let alert = NSAlert(); alert.messageText = "Save your recovery information before quitting."
@@ -54,8 +60,9 @@ import SwiftUI
         }
         return .terminateNow
     }
-    // Closing the window never stops the server: it runs as a system service.
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+    // Closing the window never stops the server: it runs as a system service. The
+    // client keeps running in the menu bar too, unless the person turned that off.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { JosiFlags.serverApp ? false : !Self.keepRunning }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { sender.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil) }; return true
     }
@@ -112,6 +119,12 @@ import SwiftUI
             ServerTrayMenu().environmentObject(model)
         } label: {
             Image(nsImage: JosiTray.icon).task { while !Task.isCancelled { model.refreshLocal(); try? await Task.sleep(for: .seconds(15)) } }
+        }
+#else
+        MenuBarExtra {
+            ClientTrayMenu().environmentObject(model)
+        } label: {
+            Image(nsImage: JosiTray.icon)
         }
 #endif
     }

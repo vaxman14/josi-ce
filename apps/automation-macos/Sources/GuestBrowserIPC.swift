@@ -17,9 +17,31 @@ enum GuestBrowserError: Error { case unavailable, invalid, expired }
     func handle(_ request: Data, peer: Data, reply: @escaping (Data?, NSError?) -> Void)
 }
 
+/// Which Josi a program belongs to: Josi (the server with the client built in) or
+/// Josi Client. Each edition has its own place, identity and browser service
+/// names, so a program of one never answers for the other.
+struct JosiEdition: Sendable, Equatable {
+    let app: String, identifier: String, service: String, ownerService: String, agent: String
+    static let server = JosiEdition(app: "/Applications/Josi.app", identifier: "com.heyjosi.ce.unified",
+                                    service: "com.heyjosi.ce.browser", ownerService: "com.heyjosi.ce.browser.control", agent: "com.heyjosi.ce.browser")
+    static let client = JosiEdition(app: "/Applications/Josi Client.app", identifier: "com.heyjosi.ce.client",
+                                    service: "com.heyjosi.ce.client.browser", ownerService: "com.heyjosi.ce.client.browser.control", agent: "com.heyjosi.ce.client.browser")
+    var safariExtension: String { identifier + ".workspace-safari" }
+    var helpers: String { app + "/Contents/Helpers" }
+    /// The edition of the program running now, from where its executable sits
+    /// (a helper or the Safari extension inside the app), else from the app's
+    /// own bundle identifier (a development build run from elsewhere).
+    static let current: JosiEdition = {
+        let path = Bundle.main.executableURL?.resolvingSymlinksInPath().path ?? CommandLine.arguments.first ?? ""
+        if path.hasPrefix(client.app + "/") { return client }
+        if path.hasPrefix(server.app + "/") { return server }
+        return Bundle.main.bundleIdentifier?.hasPrefix(client.identifier) == true ? client : server
+    }()
+}
+
 enum GuestBrowserBoundary {
-    static let service = "com.heyjosi.ce.browser"
-    static let ownerService = "com.heyjosi.ce.browser.control"
+    static var service: String { JosiEdition.current.service }
+    static var ownerService: String { JosiEdition.current.ownerService }
     static let brokerIdentifier = "com.heyjosi.ce.browser-broker"
     static let maximumBytes = 192 * 1024
     static func requirement(_ identifier: String) -> String {
@@ -53,8 +75,9 @@ enum GuestBrowserBoundary {
               let flags = value[kSecCodeInfoFlags as String] as? NSNumber, flags.uint32Value & 0x00010000 != 0
         else { throw GuestBrowserError.unavailable }
         var container: SecStaticCode?, containerRequirement: SecRequirement?
-        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: "/Applications/Josi.app") as CFURL, [], &container) == errSecSuccess,
-              let container, SecRequirementCreateWithString(Self.requirement("com.heyjosi.ce.unified") as CFString, [], &containerRequirement) == errSecSuccess,
+        let edition = JosiEdition.current
+        guard SecStaticCodeCreateWithPath(URL(fileURLWithPath: edition.app) as CFURL, [], &container) == errSecSuccess,
+              let container, SecRequirementCreateWithString(Self.requirement(edition.identifier) as CFString, [], &containerRequirement) == errSecSuccess,
               let containerRequirement, SecStaticCodeCheckValidity(container, SecCSFlags(rawValue: kSecCSStrictValidate), containerRequirement) == errSecSuccess
         else { throw GuestBrowserError.unavailable }
         let entitlements = value[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]

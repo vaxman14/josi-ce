@@ -4,6 +4,22 @@ private let personalLayers = [("soul", "Soul", "Who your assistant is to you."),
                               ("user", "About me", "What it should know about you."),
                               ("agents_user", "Working style", "How it should behave.")]
 
+/// Josi Client: stay in the menu bar when the window closes, and open at login
+/// (both on by default, docs/WINDOWS_CLIENT_NODE_SPEC.md).
+struct NativeClientRunningSection: View {
+    @State private var keepRunning = JosiAppDelegate.keepRunning
+    @State private var openAtLogin = JosiAppDelegate.openAtLogin
+    var body: some View {
+        JosiCard {
+            Toggle("Keep Josi running in the menu bar when I close the window", isOn: Binding(get: { keepRunning }, set: { keepRunning = $0; JosiAppDelegate.keepRunning = $0 }))
+                .toggleStyle(.checkbox)
+            Toggle("Start Josi when I log in to this Mac, in the menu bar", isOn: Binding(get: { openAtLogin }, set: { openAtLogin = $0; JosiAppDelegate.openAtLogin = $0 }))
+                .toggleStyle(.checkbox)
+            NativeLeanNote(text: "While Josi runs, she can work on this Mac for you with your permission, and your server can reach her.")
+        }
+    }
+}
+
 struct NativeSettingsView: View {
     @EnvironmentObject var model: JosiModel
     @AppStorage(JosiSkin.key) private var skin = JosiSkin.plumGold.rawValue
@@ -25,6 +41,7 @@ struct NativeSettingsView: View {
             NativeMemoryView()
             NativeLeanTitle(text: "Usage")
             NativeUsageSection()
+            if !JosiFlags.serverApp { NativeLeanTitle(text: "Josi on this Mac"); NativeClientRunningSection() }
             NativeLeanTitle(text: "Appearance")
             JosiCard {
                 Picker("Look", selection: $skin) {

@@ -179,6 +179,26 @@ struct ServerTrayMenu: View {
     private func open() { NSApp.activate(ignoringOtherApps: true); openWindow(id: "josi") }
 }
 
+/// Josi Client in the menu bar: where it is connected, and Josi's work on this Mac.
+struct ClientTrayMenu: View {
+    @EnvironmentObject var model: JosiModel
+    @ObservedObject private var pc = PcExecutor.shared
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Text(model.screen == .workspace ? "Connected to \(model.address.replacingOccurrences(of: "https://", with: ""))" : "Not connected")
+        if model.canControlPc, model.screen == .workspace {
+            Text(pc.pendingStop ? "Josi on this Mac: stopped" : pc.paused ? "Josi on this Mac: paused" : pc.busy ? "Josi is working on this Mac" : "Josi on this Mac: ready")
+        }
+        Divider()
+        Button("Open Josi Client") { NSApp.activate(ignoringOtherApps: true); openWindow(id: "josi") }
+        if model.canControlPc, model.screen == .workspace {
+            Button(pc.paused ? "Resume Josi on This Mac" : "Pause Josi on This Mac") { if pc.paused { pc.resume() } else { pc.pause() } }.disabled(pc.pendingStop)
+        }
+        Divider()
+        Button("Quit Josi Client") { NSApp.terminate(nil) }
+    }
+}
+
 enum JosiTray {
     /// The J as a template image, so the menu bar tints it for light and dark.
     @MainActor static var icon: NSImage {

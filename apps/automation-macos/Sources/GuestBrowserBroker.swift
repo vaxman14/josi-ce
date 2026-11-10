@@ -9,7 +9,7 @@ import Darwin
     static func main() {
         do {
             try GuestBrowserBoundary.requireSelf(identifier: GuestBrowserBoundary.brokerIdentifier,
-                executable: "/Applications/Josi.app/Contents/Helpers/JosiBrowserBroker")
+                executable: JosiEdition.current.helpers + "/JosiBrowserBroker")
             let broker = BrowserBroker()
             broker.start()
             withExtendedLifetime(broker) { RunLoop.current.run() }
@@ -29,10 +29,10 @@ private final class BrowserBroker: NSObject, NSXPCListenerDelegate, @unchecked S
     private var requests = Set<String>(), retiredConnections = Set<String>()
     private var outstanding = false
     func start() {
-        ownerListener.setConnectionCodeSigningRequirement(GuestBrowserBoundary.requirement("com.heyjosi.ce.unified"))
+        ownerListener.setConnectionCodeSigningRequirement(GuestBrowserBoundary.requirement(JosiEdition.current.identifier))
         peerListener.setConnectionCodeSigningRequirement(
             "(" + GuestBrowserBoundary.requirement("com.heyjosi.ce.browser-host") + ") or ("
-                + GuestBrowserBoundary.requirement("com.heyjosi.ce.unified.workspace-safari") + ")")
+                + GuestBrowserBoundary.requirement(JosiEdition.current.safariExtension) + ")")
         ownerListener.delegate = self; peerListener.delegate = self
         ownerListener.resume(); peerListener.resume()
     }

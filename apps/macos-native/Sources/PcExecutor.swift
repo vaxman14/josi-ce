@@ -26,6 +26,10 @@ import Foundation
     @Published private(set) var browserHelperNeedsApproval = false
     private var externalCount = 0
     private var current: PcCancel?
+    /// Set by an interactive sign-in: for ten minutes the server accepts the Mac
+    /// administrator's approval in place of the password (Windows does the same).
+    var freshSignIn: Date?
+    private var autoApprovedFor: String?
     private var approved = false
     private var nextIdentityCheck = Date.distantPast
     private var registeredFor: String?
@@ -97,7 +101,7 @@ import Foundation
     /// in (Windows does the same with its administrator prompt). Returns false when
     /// the administrator declined; throws when the sign-in is too old for it.
     func approveAsAdministrator(_ api: JosiAPI, owner: String) async throws -> Bool {
-        guard Self.administratorApproves() else { return false }
+        guard await Task.detached(operation: { Self.administratorApproves() }).value else { return false }
         let identity = try await api.request("/admin/pc-control/identity")
         let key = try key(api, owner: owner)
         if !identity["publicKey"].text.isEmpty, identity["publicKey"].text != key.publicPoint {
@@ -113,7 +117,7 @@ import Foundation
         return true
     }
     /// macOS's administrator prompt (Authorization Services). Nothing is kept afterwards.
-    private static func administratorApproves() -> Bool {
+    nonisolated private static func administratorApproves() -> Bool {
         var authorization: AuthorizationRef?
         guard AuthorizationCreate(nil, nil, [], &authorization) == errAuthorizationSuccess, let authorization else { return false }
         defer { AuthorizationFree(authorization, [.destroyRights]) }
@@ -153,6 +157,12 @@ import Foundation
         keyChanged = !identity["publicKey"].text.isEmpty
         // Approval is asked for only once control is on, from a card in the chat.
         needsApproval = identity["enabled"].flag
+        // Signing in makes this Mac a node of that account (docs/WINDOWS_CLIENT_NODE_SPEC.md):
+        // right after an interactive sign-in macOS asks for an administrator once.
+        if identity["publicKey"].text.isEmpty, let fresh = freshSignIn, Date().timeIntervalSince(fresh) < 540, autoApprovedFor != owner {
+            autoApprovedFor = owner
+            Task { @MainActor in _ = try? await self.approveAsAdministrator(api, owner: owner) }
+        }
         return false
     }
     func forgetSession() {

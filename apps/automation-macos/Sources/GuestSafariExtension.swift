@@ -7,8 +7,9 @@ final class JosiSafariExtensionHandler: NSObject, NSExtensionRequestHandling {
     private let client = GuestBrowserClient()
     func beginRequest(with context: NSExtensionContext) {
         do {
-            try GuestBrowserBoundary.requireSelf(identifier: "com.heyjosi.ce.unified.workspace-safari",
-                executable: "/Applications/Josi.app/Contents/PlugIns/Josi Workspace.appex/Contents/MacOS/JosiWorkspaceSafari")
+            let edition = JosiEdition.current
+            try GuestBrowserBoundary.requireSelf(identifier: edition.safariExtension,
+                executable: edition.app + "/Contents/PlugIns/Josi Workspace.appex/Contents/MacOS/JosiWorkspaceSafari")
             let boot = try GuestBrowserBoundary.isolatedBoot()
             guard context.inputItems.count == 1, let input = context.inputItems.first as? NSExtensionItem,
                   let profile = input.userInfo?[SFExtensionProfileKey] as? UUID,
@@ -18,7 +19,7 @@ final class JosiSafariExtensionHandler: NSObject, NSExtensionRequestHandling {
             let peer = try JSONSerialization.data(withJSONObject: [
                 "kind": "safari-profile", "family": "safari", "profileId": profile.uuidString.lowercased(),
                 "guestBootId": boot.guest, "hostBootId": boot.host,
-                "extensionId": "com.heyjosi.ce.unified.workspace-safari",
+                "extensionId": edition.safariExtension,
             ], options: [.sortedKeys])
             let reply = SafariReply(context)
             client.exchange(request, peer: peer) { reply.finish($0) }

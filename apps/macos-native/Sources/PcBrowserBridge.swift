@@ -14,7 +14,7 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
     static let shared = PcBrowserBridge()
     private static let sessionMs: Int64 = 55_000, commandSeconds = 20.0, observationBytes = 60_000
     private static let uploadBytes = 8 * 1024 * 1024, chunkBytes = 120 * 1024, presenceTabs = 30
-    private static let safariExtension = "com.heyjosi.ce.unified.workspace-safari"
+    private static let safariExtension = JosiEdition.current.safariExtension
     private static let allowedKey = "josi.pc.browserProfiles", workspaceKey = "josi.pc.browserWorkspace", lastKey = "josi.pc.browserLast"
 
     private final class Pending: @unchecked Sendable {
@@ -100,7 +100,7 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
     /// Starts the browser broker (a login item inside Josi.app) and becomes its owner.
     func start() {
         lock.lock(); guard !started else { lock.unlock(); return }; started = true; lock.unlock()
-        let service = SMAppService.agent(plistName: "com.heyjosi.ce.browser.plist")
+        let service = SMAppService.agent(plistName: JosiEdition.current.agent + ".plist")
         if service.status == .notRegistered || service.status == .notFound { try? service.register() }
         Self.installNativeHosts()
         Task.detached { [weak self] in
@@ -125,7 +125,7 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
             if let existing = FileManager.default.contents(atPath: target) {
                 guard existing != body, let value = try? JSONSerialization.jsonObject(with: existing) as? [String: Any],
                       value["name"] as? String == "com.heyjosi.browser",
-                      value["path"] as? String == "/Applications/Josi.app/Contents/Helpers/JosiBrowserHost" else { continue }
+                      value["path"] as? String == JosiEdition.current.helpers + "/JosiBrowserHost" else { continue }
                 try? body.write(to: URL(fileURLWithPath: target), options: .atomic); continue
             }
             try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
@@ -137,7 +137,7 @@ final class PcBrowserBridge: NSObject, GuestBrowserOwnerCallback, @unchecked Sen
     static func openSafariExtensionSettings() {
         SFSafariApplication.showPreferencesForExtension(withIdentifier: safariExtension) { _ in }
     }
-    static var brokerNeedsApproval: Bool { SMAppService.agent(plistName: "com.heyjosi.ce.browser.plist").status == .requiresApproval }
+    static var brokerNeedsApproval: Bool { SMAppService.agent(plistName: JosiEdition.current.agent + ".plist").status == .requiresApproval }
     private func ownerConnection() -> NSXPCConnection {
         lock.lock(); defer { lock.unlock() }
         if let connection { return connection }

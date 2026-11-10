@@ -6,9 +6,9 @@ import Darwin
 /// Browser-spawned stdio entry point. It cannot launch apps, select a profile,
 /// discover a server address, grant authority or interpret page instructions.
 @main enum JosiGuestBrowserHost {
-    private static let helper = "/Applications/Josi.app/Contents/Helpers/JosiBrowserHost"
+    private static let helper = JosiEdition.current.helpers + "/JosiBrowserHost"
     private static let identifier = "com.heyjosi.ce.browser-host"
-    private static let configuration = "/Applications/Josi.app/Contents/Resources/BrowserDistribution.json"
+    private static let configuration = JosiEdition.current.app + "/Contents/Resources/BrowserDistribution.json"
     static func main() {
         do {
             signal(SIGPIPE, SIG_IGN)

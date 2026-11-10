@@ -17,6 +17,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const output = resolve(process.argv[2] || join(repo, 'build/unified-browser-extensions'));
 const identity = JSON.parse(await readFile(join(repo, 'apps/browser-extension/development-identity.json'), 'utf8'));
+// Josi Client for Mac contains its own Safari extension, with its own identifier.
+if (process.env.JOSI_SAFARI_ID) {
+  if (!/^com\.heyjosi\.ce\.[a-z]+\.workspace-safari$/.test(process.env.JOSI_SAFARI_ID)) throw new Error('Unexpected Safari extension identifier');
+  identity.safariId = process.env.JOSI_SAFARI_ID;
+}
 const VERSION = '1.0.0';
 const FAMILIES = ['chrome', 'brave', 'edge', 'firefox', 'safari'];
 const CHROMIUM = ['chrome', 'brave', 'edge'];

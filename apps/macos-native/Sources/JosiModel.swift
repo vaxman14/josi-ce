@@ -218,6 +218,7 @@ import SwiftUI
         if remember, let token = api.bearer { JosiSession.keep(token, for: api.origin.absoluteString) }
         guard self.api === api else { return }
         self.user = result["user"]; mfaChallenge = ""; appleLink = ""; appleMfa = false; screen = .workspace
+        PcExecutor.shared.freshSignIn = Date()
         try await reloadWorkspace()
     }
     func disconnect() {
