@@ -196,7 +196,8 @@ export function startFakeModel({ port = 0, host = '127.0.0.1', log = () => {} } 
   const server = createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
-    req.on('end', () => {
+    // E2E_MODEL_DELAY_MS makes the model slow, so a test can watch the live status.
+    req.on('end', () => setTimeout(() => {
       const raw = Buffer.concat(chunks).toString('utf8');
       let body = {};
       try { body = raw ? JSON.parse(raw) : {}; } catch { body = { unparsed: raw.slice(0, 200) }; }
@@ -236,7 +237,7 @@ export function startFakeModel({ port = 0, host = '127.0.0.1', log = () => {} } 
         if (!res.headersSent) res.writeHead(500);
         res.end();
       }
-    });
+    }, Number(process.env.E2E_MODEL_DELAY_MS ?? 0)));
   });
   return new Promise((resolve, reject) => {
     server.once('error', reject);

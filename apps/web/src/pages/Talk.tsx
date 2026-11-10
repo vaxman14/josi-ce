@@ -43,6 +43,7 @@ import { VoiceChat } from '@/components/VoiceChat';
 import { ChatWorkProgressList } from '@/components/WorkProgress';
 import { GhostFigure, StageReply, useReducedMotion } from '@/components/ghost/Ghost';
 import { useWorkGoals } from '@/lib/workGoals';
+import { failureMessage, followTurn, submitTurn, turnReply } from '@/lib/turns';
 import { PcPermissionCards } from '@/components/PcPermissionCards';
 import { CredentialCards } from '@/components/CredentialCards';
 import { ProposalCard, SettingsChangeCards } from '@/components/SettingsChangeCards';
@@ -143,6 +144,8 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
   const [ghostView, setGhostView] = useState<GhostSnapshot>(() => ghost.snapshot());
   const [focused, setFocused] = useState(false);
   const [ack, setAck] = useState('');
+  // What Josi is doing right now, from the running turn's progress stream.
+  const [activity, setActivity] = useState('');
   // The reply still coming in word by word, by its text: the background poll
   // swaps a reply's client id for the server's, and that must not restart it.
   const [revealing, setRevealing] = useState<string | null>(null);
@@ -326,9 +329,11 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
     setSending(true);
     setError('');
     setAck(nextAcknowledgement());
+    setActivity('');
     setRevealing(null);
     ghost.set('Received');
 
+    let accepted = false;
     try {
       const attachmentIds: string[] = [];
       for (const file of attachments) {
@@ -341,8 +346,20 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       }));
       setMessages((current) => current.map((message) => message.id === optimistic.id
         ? { ...message, meta: { attachments: uploadedMeta } } : message));
-      const result = await api.post<TurnResult>(`/assistant/threads/${thread.id}/talk`, { message: body, attachmentIds });
+      // Durable turn, as on Windows: accepted at once, followed live, and the
+      // reply is shown the moment it is saved.
+      const turnId = await submitTurn(thread.id, body, attachmentIds);
+      accepted = true;
       if (spoken === undefined) setFiles([]);
+      const outcome = await followTurn(thread.id, turnId, setActivity);
+      if (outcome.status === 'failed') {
+        // The message was recorded; only the reply failed. Keep the bubble and say why.
+        setError(failureMessage(outcome.error));
+        ghost.set('Error');
+        return undefined;
+      }
+      const saved = await turnReply(thread.id, outcome);
+      const result: TurnResult = saved ? { reply: saved.body } : {};
       if (result.reply !== undefined) {
         // Only a reply somebody was waiting on gets the moment and the reveal;
         // opening a conversation that already has replies never does.
@@ -366,7 +383,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
       // Removing the bubble here made the client disagree with the database,
       // and the next load showed an unexplained duplicate. Keep what was truly
       // recorded; only a transport failure (nothing stored) takes the bubble back.
-      if (!refusal) {
+      if (!refusal && !accepted) {
         setMessages((current) => current.filter((m) => m.id !== optimistic.id));
         if (spoken === undefined || suggested) setInput(body);
       }
@@ -375,6 +392,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
     } finally {
       sendLock.current = false;
       setSending(false);
+      setActivity('');
     }
   }
 
@@ -446,7 +464,7 @@ function TalkConversation({ requestedThread }: { requestedThread: string | null 
               {backgroundOffline ? <p className="text-xs text-text-muted" role="status">Chat updates are offline. Showing the last saved conversation.</p> : null}
               {loading ? <Working text="Opening…" /> : sending ? <>
                 <span className="stage-label">Josi</span>
-                <p className="stage-text stage-clamp">{ack}</p>
+                <p className="stage-text stage-clamp">{activity || ack}</p>
               </> : lastReply ? <>
                 <span className="stage-label">Josi</span>
                 <div

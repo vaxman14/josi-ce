@@ -72,6 +72,15 @@ try {
     const mark = fake.requests.length;
     await page.fill('[aria-label="Message Josi"]', 'E2E_CALL_TOOL What is on my task list?');
     await page.click('[aria-label="Send message"]');
+    // While Josi works, the stage shows what she is doing (the turn's live status), not just a wait.
+    const lines = new Set();
+    for (let i = 0; i < 50 && !(await page.getByText(RESULT_MARKER, { exact: false }).count()); i++) {
+      const line = (await page.locator('.stage-text').first().innerText().catch(() => '')).trim();
+      if (line) lines.add(line);
+      if (lines.size === 1 && i === 8) await page.screenshot({ path: join(out, 'ghost-stage-working.png') });
+      await page.waitForTimeout(200);
+    }
+    console.log('stage lines while working:', JSON.stringify([...lines]));
     await page.getByText(RESULT_MARKER, { exact: false }).first().waitFor({ timeout: 90_000 });
     await page.waitForTimeout(4_000); // let the word-by-word reveal finish
     await page.screenshot({ path: join(out, 'ghost-stage-reply.png') });
