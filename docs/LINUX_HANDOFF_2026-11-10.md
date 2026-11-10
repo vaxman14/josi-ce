@@ -186,6 +186,21 @@ Windows and the Mac inherit it when they merge this branch's packages.
   providers so far). Tests: `setup.test.ts` ("email through a Google or Microsoft
   account"), `microsoftSignIn.test.ts`, `packages/connectors/test/systemMail.test.ts`.
 
+## State at the end of the Mac session (2026-11-10, about 15:20 PST)
+- Take-over plan done: Windows merged (`2531f4c`, one conflict in `pcPermissionSettings.ts`;
+  the server's own executor stays owner-only in `pairLocalExecutor`), unit tests equal to
+  the pre-merge baseline (22 old failures, none new), beta.11 built on claw from `76a10a0`.
+- VMs: Debian 13 fresh install and Ubuntu 24.04 upgrade from beta.10, both `e2e-fake`,
+  `e2e-pc`, `e2e-signin` all PASS. `e2e-screens` was NOT run (no Playwright on the VMs);
+  the setup email step was checked with Playwright against a preview server on claw.
+- GitHub: ONE draft pre-release `v1.2.8-beta.11` (target `76a10a0`); the beta.10 draft is deleted.
+- **Gate was wiped on Roman's order**, not upgraded: no Josi package, data, accounts or
+  folders. Only the Cloudflare tunnel stays (`ce.heyjosi.com` -> 127.0.0.1:8080). Roman
+  installs it himself, as a user would: `curl -fsSL http://10.10.1.3:18099/linux | sudo bash`
+  (claw serves `~/josi-linux/lan` with `python3 -m http.server 18099`; start it again after a
+  claw reboot). Answer "my own proxy", public address `https://ce.heyjosi.com`, port 8080.
+- `ec9fa84` (client ID wording in setup) is on the branch but not in the beta.11 build.
+
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
 (text files she writes); one new draft release when this lands; login terminal may run
