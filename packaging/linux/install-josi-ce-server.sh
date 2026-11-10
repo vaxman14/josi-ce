@@ -810,12 +810,39 @@ browser_packages() {
   return 0
 }
 
+# Ubuntu 23.10 and later (and its forks) refuse the unprivileged user
+# namespaces Chrome's sandbox needs, unless an AppArmor profile allows them
+# for that program. This one names only Josi's own Chrome, so its sandbox stays
+# on; elsewhere nothing is written.
+chrome_userns() {
+  [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ] || return 0
+  command -v apparmor_parser >/dev/null 2>&1 && [ -d /etc/apparmor.d ] || return 0
+  cat > /etc/apparmor.d/josi-chrome <<'PROFILE'
+# Written by the Josi installer: lets Josi's own Chrome use its sandbox.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile josi-chrome /var/lib/josi-pc/browser/chrome-*/chrome-linux64/chrome flags=(unconfined) {
+  userns,
+  include if exists <local/josi-chrome>
+}
+PROFILE
+  if apparmor_parser -r /etc/apparmor.d/josi-chrome >&3 2>&1; then
+    # A Chrome that started before the profile runs without its sandbox: restart it.
+    systemctl try-restart josi-browser.service >&3 2>&1 || true
+  else
+    printf 'The AppArmor profile for the Josi browser did not load; Chrome runs without its sandbox\n' >&3
+  fi
+  return 0
+}
+
 install_browser_packages() {
   local name names
   browser_packages
   names=$REPLY  # the screen's drawing reuses REPLY
   # shellcheck disable=SC2086
-  run apt_get install -y -q --no-install-recommends $names && return 0
+  run apt_get install -y -q --no-install-recommends $names && { chrome_userns; return 0; }
+  chrome_userns
   for name in $names; do
     run apt_get install -y -q --no-install-recommends "$name" || printf 'Browser package %s was not installed\n' "$name" >&3
   done
