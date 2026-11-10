@@ -3,7 +3,7 @@
 // after the owner confirmed their password: from the PC Control page's Pair
 // button, or from the chat card that turns control on for a linux- PC.
 import { createSession } from '@josi-ce/auth';
-import { localExecutorHello, writeLocalTicket, type Db } from '@josi-ce/core';
+import { localExecutorHello, PcControlError, writeLocalTicket, type Db } from '@josi-ce/core';
 
 /** The executor's session lasts a year; unpairing or a new key revokes it. */
 const EXECUTOR_SESSION_SECONDS = 365 * 24 * 60 * 60;
@@ -20,6 +20,10 @@ export async function localExecutorPaired(db: Db, owner: string, pcId: string): 
 export async function pairLocalExecutor(db: Db, owner: string, pcId: string): Promise<boolean> {
   const hello = localExecutorHello(pcId);
   if (!hello) return false;
+  // PC control is per person now, but this executor IS the server: only the
+  // owner of this Josi may take it, as syncLocalExecutors lists it only for them.
+  const [user] = await db.query<{ role: string }>('select role from users where id=$1', [owner]);
+  if (user?.role !== 'super_admin') throw new PcControlError(403, 'Only the owner of this Josi can pair the server itself.');
   await db.query('insert into pc_control_settings(owner_user_id,pc_id) values($1,$2) on conflict do nothing', [owner, pcId]);
   // A reinstalled executor has a new key: the owner's password replaces the
   // old identity, and the old executor sessions stop working.

@@ -159,6 +159,9 @@ describe('a fresh database migrates cleanly', () => {
     // 0030 is duplicated on this branch already, from two features that landed
     // separately. Recorded rather than asserted away, so it is visible; what
     // this guards is that nothing NEW duplicates a number.
-    expect(dupes.map(([n]) => n)).toEqual(['0030']);
+    // 0123 is two features too: Linux sign-in grants and Windows member PC
+    // control, merged 2026-11-10. Servers have already run each under its full
+    // file name, which is what the migrator records, so neither is renamed.
+    expect(dupes.map(([n]) => n).sort()).toEqual(['0030', '0123']);
   });
 });

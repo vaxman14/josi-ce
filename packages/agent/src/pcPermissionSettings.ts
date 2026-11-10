@@ -1,14 +1,13 @@
 // Chat reads the actual device policy, then prepares a human-approved change.
 // The target, owner and policy revision are fixed before any client applies it.
 import { existsSync } from 'node:fs';
-import { normalizePcPolicy, normalizePcPreset, PcControl, PcControlError, syncLocalExecutors, type Db, type MasterKey, type PcPolicy, type PcPreset } from '@josi-ce/core';
+import { normalizePcPolicy, normalizePcPreset, pcControlAllowed, PcControl, PcControlError, syncLocalExecutors, type Db, type MasterKey, type PcPolicy, type PcPreset } from '@josi-ce/core';
 
 export const PC_CHAT_PERMISSION_SEMANTICS = 'pc-control-chat.2';
 export const PC_SETTING_AREAS = new Set(['pc_control_enabled', 'pc_control_full_control', 'pc_control_preset', 'pc_control_scope', 'pc_control_revoke', 'pc_control_decide']);
 
 export async function pcPermissionState(db:Db,owner:string,key:MasterKey,requested?:unknown) {
-  const [user]=await db.query<{role:string}>(`select role from users where id=$1`,[owner]);
-  if(user?.role!=='super_admin')throw new PcControlError(403,'Only the owner can manage PC permissions.');
+  if(!await pcControlAllowed(db,owner))throw new PcControlError(403,'PC control is switched off for this account. The owner of this Josi can switch it on.');
   // A Linux server's own executor cannot sign in by itself: it is listed from its hello.
   await syncLocalExecutors(db,owner).catch(()=>[]);
   const devices=await db.query<{pcId:string;enabled:boolean;connected:boolean;paired:boolean}>(

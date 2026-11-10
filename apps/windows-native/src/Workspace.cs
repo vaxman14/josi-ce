@@ -33,7 +33,7 @@ namespace Josi.Native {
     readonly System.Collections.Generic.Dictionary<string, TextBlock> navLabels = new System.Collections.Generic.Dictionary<string, TextBlock>();
     readonly System.Collections.Generic.Dictionary<string, UIElement> views = new System.Collections.Generic.Dictionary<string, UIElement>();
     readonly System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Button>> threadButtons = new System.Collections.Generic.List<System.Collections.Generic.KeyValuePair<string, Button>>();
-    bool navAdmin; string threadsKey, footerKey;
+    string navFor; string threadsKey, footerKey;
 
     public WorkspaceView(AppModel model, Window owner) {
       this.model = model; this.owner = owner;
@@ -139,8 +139,9 @@ namespace Josi.Native {
     }
 
     void RenderNav() {
-      if (nav.Children.Count > 0 && navAdmin == model.IsAdministrator) { SyncNav(); return; }
-      navAdmin = model.IsAdministrator;
+      var who = model.IsAdministrator + "|" + model.CanControlPc;
+      if (nav.Children.Count > 0 && navFor == who) { SyncNav(); return; }
+      navFor = who;
       nav.Children.Clear(); navButtons.Clear(); navLabels.Clear();
       Group("Workspace");
       Item("My World", Glyph.Person, "my-world");
@@ -185,7 +186,7 @@ namespace Josi.Native {
         Item("Workspace", Glyph.Settings, "workspace");
         Item("Maintenance", Glyph.Repair, "maintenance");
         Item("Audit Log", Glyph.History, "audit");
-      }
+      } else if (model.CanControlPc) Item("PC Control", Glyph.Desktop, "pc-control");
       Item("Server", Glyph.Server, "server");
       SyncNav();
     }
@@ -338,7 +339,7 @@ namespace Josi.Native {
         case "policy": view = model.IsAdministrator ? new PolicyView(model, owner) : null; break;
         case "storage": view = model.IsAdministrator ? new StorageAdminView(model, owner) : null; break;
         case "voice-box": view = model.IsAdministrator ? new VoiceBoxView(model, owner) : null; break;
-        case "pc-control": view = model.IsAdministrator ? new PcControlView(model, owner) : null; break;
+        case "pc-control": view = model.CanControlPc ? new PcControlView(model, owner) : null; break;
         case "improvements": view = model.IsAdministrator ? new ImprovementsView(model, owner) : null; break;
         case "workspace": view = model.IsAdministrator ? new WorkspaceSettingsView(model, owner) : null; break;
         case "network": view = model.IsAdministrator ? new NetworkView(model, owner) : null; break;

@@ -8,7 +8,7 @@
 // included) or approved in Josi. Moving the mouse or typing on the PC stops
 // Josi's work on the screen until the owner explicitly chooses Resume.
 import { posix, win32 } from 'node:path';
-import { LOCAL_WINDOWS_PC, livePcId, PcControl, PcControlError, type Db, type MasterKey, type PcAction, type PcScope } from '@josi-ce/core';
+import { LOCAL_WINDOWS_PC, livePcId, pcControlAllowed, PcControl, PcControlError, type Db, type MasterKey, type PcAction, type PcScope } from '@josi-ce/core';
 import { settle } from './pcBrowserTools.js';
 import type { ToolSpec } from './tools.js';
 import { pcControlReadiness, pcPermissionState } from './pcPermissionSettings.js';
@@ -117,6 +117,7 @@ export const PC_DESKTOP_TOOL_NAMES = new Set(PC_DESKTOP_TOOLS.map((tool) => tool
 
 /** The PC whose Josi app is open right now (item 36). */
 async function service(db: Db, key: MasterKey, owner: string, selected:unknown) {
+  if(!await pcControlAllowed(db,owner))throw new PcControlError(403,'PC control is switched off for this account.');
   if(selected!==undefined){
     if(typeof selected!=='string'||!/^[a-z0-9-]{1,80}$/.test(selected))throw new PcControlError(400,'Choose a PC from pc_get_permissions.');
     const [known]=await db.query('select pc_id from pc_control_settings where owner_user_id=$1 and pc_id=$2',[owner,selected]);
@@ -132,8 +133,7 @@ async function service(db: Db, key: MasterKey, owner: string, selected:unknown) 
 export async function pcDesktopToolAvailability(db: Db, owner: string, key: MasterKey | null | undefined): Promise<ToolSpec[]> {
   if (!key) return [];
   try {
-    const [user] = await db.query<{role:string}>('select role from users where id=$1',[owner]);
-    const permissions = user?.role === 'super_admin' ? PC_DESKTOP_TOOLS.filter(t=>t.def.name==='pc_get_permissions') : [];
+    const permissions = await pcControlAllowed(db, owner) ? PC_DESKTOP_TOOLS.filter(t=>t.def.name==='pc_get_permissions') : [];
     const pcId = await livePcId(db, owner);
     if (!pcId) return permissions;
     const [settings] = await db.query<{ enabled: boolean }>('select enabled from pc_control_settings where owner_user_id=$1 and pc_id=$2', [owner, pcId]);

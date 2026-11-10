@@ -140,6 +140,12 @@ export function normalizePcPreset(input:PcPreset,now=Date.now()):PcPreset {
   return {access:input.access,administrator:input.administrator,mode:input.mode,...(duration.expiresAt?{expiresAt:duration.expiresAt}:{}),...(duration.taskId?{taskId:duration.taskId}:{})};
 }
 
+/** The owner always; a member unless the owner switched it off for them. A
+ * person only ever controls PCs enrolled under their own account. */
+export async function pcControlAllowed(db:Db,userId:string):Promise<boolean>{
+  const [user]=await db.query<{role:string;pc_control_allowed:boolean}>('select role,pc_control_allowed from users where id=$1',[userId]);
+  return !!user&&(user.role==='super_admin'||user.pc_control_allowed===true);
+}
 /** Fail-safe emergency state change works even if the encryption key cannot be
  * loaded. Permanent policies are preserved but the master switch is disabled. */
 export async function disablePcControl(db:Db,owner:string,pcId:string){

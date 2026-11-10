@@ -169,6 +169,10 @@ namespace Josi.Native {
         }), "josi.pc-control.revoke-identity"));
         items.Add(buttons);
       }
+      else if (authority != null) items.Add(Ui.Wrap(Automation.Id(Ui.Pill("Forget This PC", () => {
+        if (Dialogs.Confirm(owner, "Forget this PC?", "Stops control on this PC and removes it from your account on the server. Your saved permissions stay. To use it again, approve this PC again.", "Forget"))
+          Perform(async (api, stamp) => { await api.Request("/admin/pc-control/identity", "DELETE", null); api.PcAuthority.Forgotten(); });
+      }), "josi.pc-control.forget-pc")));
       return Ui.CardBox("Is Josi able to work on this PC?", items.ToArray());
     }
     /// One switch instead of a permission per site: everyday actions in allowed

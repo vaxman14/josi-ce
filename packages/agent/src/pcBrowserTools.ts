@@ -3,7 +3,7 @@
 // app's native messaging host. Every operation is an exact PC Control request
 // (action + browser + profile + origin), decided by the owner's saved
 // permissions or approved in Josi, and claimed by the app one at a time.
-import { LOCAL_WINDOWS_PC, livePcId, PcControl, PcControlError, PC_BROWSER_FAMILIES, type Db, type MasterKey, type PcAction, type PcBrowserPresence, type PcRequirement } from '@josi-ce/core';
+import { LOCAL_WINDOWS_PC, livePcId, pcControlAllowed, PcControl, PcControlError, PC_BROWSER_FAMILIES, type Db, type MasterKey, type PcAction, type PcBrowserPresence, type PcRequirement } from '@josi-ce/core';
 import { posix, win32 } from 'node:path';
 import type { ToolSpec } from './tools.js';
 import { cleanPath } from './pcDesktopTools.js';
@@ -86,13 +86,13 @@ export function browserToolsFor(presence: PcBrowserPresence | null): ToolSpec[] 
 
 /** The PC whose Josi app is open right now (item 36: the server may live on
  * another machine; the tools run wherever the owner's app reports in). */
-async function service(db: Db, key: MasterKey, owner: string) { return new PcControl(db, key, await livePcId(db, owner) ?? LOCAL_WINDOWS_PC); }
+async function service(db: Db, key: MasterKey, owner: string) { if(!await pcControlAllowed(db,owner))throw new PcControlError(403,'PC control is switched off for this account.'); return new PcControl(db, key, await livePcId(db, owner) ?? LOCAL_WINDOWS_PC); }
 /** Offered when the owner's app is open somewhere with control on and a tab attached. */
 export async function pcBrowserToolAvailability(db: Db, owner: string, key: MasterKey | null | undefined): Promise<ToolSpec[]> {
   if (!key) return [];
   try {
     const pcId = await livePcId(db, owner);
-    if (!pcId) return [];
+    if (!pcId || !await pcControlAllowed(db, owner)) return [];
     const [settings] = await db.query<{ enabled: boolean }>('select enabled from pc_control_settings where owner_user_id=$1 and pc_id=$2', [owner, pcId]);
     if (!settings?.enabled) return [];
     return browserToolsFor(await new PcControl(db, key, pcId).presence(owner));

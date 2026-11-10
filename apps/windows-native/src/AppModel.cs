@@ -61,6 +61,9 @@ namespace Josi.Native {
     public readonly GhostController Ghost = new GhostController();
     public string SignedInName { get { var name = User["displayName"].Text; return name.Length == 0 ? User["username"].Text : name; } }
     public bool IsAdministrator { get { return User["role"].Text == "super_admin"; } }
+    /// Whether this person may let Josi work on the PCs they are signed in on.
+    /// The owner always; a member unless the owner switched it off for them.
+    public bool CanControlPc { get { return Flags.LocalWorkspace && (IsAdministrator || User["pcControlAllowed"].Flag); } }
     public bool RecoveryPending { get { return !VaultRecovery.IsNull || !Recovery.IsNull || !MfaRecovery.IsNull; } }
     public List<Wire> ChatGoals { get { return Goals.Where(g => g["threadId"].Text == SelectedThread).Take(6).ToList(); } }
 
@@ -572,7 +575,23 @@ namespace Josi.Native {
       try { SessionStore.Save(api.OriginText, identifier, token); }
       catch (JosiException e) { Error = e.Message; }
       RememberedIdentifier = identifier ?? "";
+      api.SignedInAt = DateTime.UtcNow;
       await FinishLogin(api, result["user"]);
+      if (Api == api && Screen == Screen.Workspace) _ = ApproveThisPc(api);
+    }
+    /// Signing in makes this PC a node of the account: Windows asks for
+    /// elevation (the computer's administrator) and the sign-in just made is
+    /// the person. Declined or failed, nothing is enrolled and "Approve This
+    /// PC" stays in PC Control and in chat.
+    async Task ApproveThisPc(JosiApi api) {
+      if (!CanControlPc || window == null || Josi.Native.Automation.Demo || AppLinks.Testing) return;
+      try {
+        api.BindPc(User["id"].Text);
+        try { await api.Request("/admin/pc-control/register", "PUT", Wires.O()); } catch (JosiException) { }
+        if (Api != api) return;
+        if (await api.PcAuthority.Approve(api, window, true)) PcInbox.Set(PcInbox.Requests, false);
+      } catch (JosiException) { }
+      catch (Exception e) when (e is System.IO.IOException || e is TaskCanceledException || e is System.Net.Http.HttpRequestException) { }
     }
     void ClearAccount() {
       User = Wire.Null; Threads.Clear(); Messages.Clear(); Turns.Clear(); Goals.Clear(); Tasks.Clear(); TaskRuns.Clear();
@@ -586,6 +605,8 @@ namespace Josi.Native {
       await api.PrimeCsrf();
       if (Api != api) return;
       User = user; MfaChallenge = ""; Screen = Screen.Workspace; section = "chat";
+      // Opened again at the next launch, so this PC stays a node of its server.
+      if (!api.IsLocal && api.Tunnel == null && !Josi.Native.Automation.Demo) AppPrefs.LastServer = api.OriginText;
       Notify();
       await ReloadWorkspace();
       await FollowWindowsZone(api);
@@ -606,6 +627,7 @@ namespace Josi.Native {
         try { await Api.Request("/auth/logout", "POST", Wires.O()); }
         catch (JosiException e) { if (e.Status != 401) throw; /* An already-ended session still clears locally. */ }
         SessionStore.Forget(Api.OriginText);
+        if (AppPrefs.LastServer == Api.OriginText) AppPrefs.LastServer = "";
       }
       RememberedIdentifier = "";
       StopWorkStream();

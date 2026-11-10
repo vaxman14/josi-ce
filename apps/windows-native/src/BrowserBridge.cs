@@ -285,7 +285,7 @@ namespace Josi.Native {
       while (true) {
         await Task.Delay(1000);
         var api = model.Api;
-        if (api == null || model.Screen != Screen.Workspace || !model.IsAdministrator) continue;
+        if (api == null || model.Screen != Screen.Workspace || !model.CanControlPc) continue;
         try {
           if (DesktopExecutor.Current.PendingStop) {
             await api.Request("/admin/pc-control/stop", "POST", Wires.O());
@@ -355,7 +355,7 @@ namespace Josi.Native {
           if (outcome.Item1 && next["payload"]["kind"].Text == "desktop.terminal.open")
             _ = PcTerminals.Watch(next.Id,
               async token => (await api.Request("/admin/pc-control/executor/terminals/" + api.Uuid(next.Id) + "/lease", "GET", null, null, token))["authorized"].Flag,
-              () => model.Api == api && model.Screen == Screen.Workspace && model.IsAdministrator && !DesktopExecutor.Current.Paused);
+              () => model.Api == api && model.Screen == Screen.Workspace && model.CanControlPc && !DesktopExecutor.Current.Paused);
           await api.Request("/admin/pc-control/executor/" + api.Uuid(next.Id) + "/result", "POST", Wires.O("ok", outcome.Item1, "result", outcome.Item2));
         } catch (JosiException) { }
         catch (Exception e) when (e is IOException || e is TaskCanceledException || e is System.Net.Http.HttpRequestException) { }
@@ -366,7 +366,7 @@ namespace Josi.Native {
       var desktop = request["payload"]["kind"].Text.StartsWith("desktop.", StringComparison.Ordinal);
       var route = "/admin/pc-control/executor/" + api.Uuid(request.Id) + "/lease";
       return PcExecutionLease.Run(async cancellation => (await api.Request(route, "GET", null, null, cancellation))["authorized"].Flag,
-        () => model.Api == api && model.Screen == Screen.Workspace && model.IsAdministrator && !DesktopExecutor.Current.Paused,
+        () => model.Api == api && model.Screen == Screen.Workspace && model.CanControlPc && !DesktopExecutor.Current.Paused,
         () => desktop ? DesktopExecutor.Current.Run(request) : Dispatch(request), () => {
         DesktopExecutor.Current.Pause();
         lock (gate) { if (link != null) { Fail(link.Queued, "control_stopped"); Fail(link.Sent, "control_stopped"); link.Queued = link.Sent = null; } }
