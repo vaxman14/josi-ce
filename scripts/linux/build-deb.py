@@ -39,6 +39,13 @@ def main() -> None:
     prerm.write_text('#!/bin/sh\nset -e\nif [ "$1" = remove ] && [ -d /run/systemd/system ]; then\n'
         f'  systemctl disable --now {units} >/dev/null 2>&1 || true\nfi\n')
     prerm.chmod(0o755)
+    # Python caches are never part of the program: the payload check counts
+    # every file, and dpkg keeps files it did not install, so one left by an
+    # older version would stop every later upgrade.
+    postinst = control / 'postinst'
+    postinst.write_text('#!/bin/sh\nset -e\n'
+        'find /usr/lib/josi/runtime -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true\n')
+    postinst.chmod(0o755)
     postrm = control / 'postrm'
     postrm.write_text('#!/bin/sh\nset -e\ncase "$1" in remove|purge)\n'
         '  if [ -d /run/systemd/system ]; then\n'
