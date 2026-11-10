@@ -34,9 +34,10 @@ Mac") is in the range and touches shared PC control code Mac also edited in
      `{publicKey, password}` or `{publicKey, elevated: true}` on a session at
      most ten minutes old (401 otherwise). The executor's signed proof is
      required in both.
-   - Mac undid part of this in `ed2bcdc` ("one key per owner"): the key must
-     be per server and per user, and the node loop, PC Control page and nav
-     item must follow `pcControlAllowed`, not the owner role.
+   - Mac's key is per user id and Mac since `ed2bcdc` (the server address is
+     left out on purpose). Keep that; "owner" there must mean the signed-in
+     user. The node loop, PC Control page and nav item must follow
+     `pcControlAllowed`, not the owner role.
    - Enrolment after an interactive sign-in: ask macOS for an administrator
      (Authorization Services, the system prompt), record the approval where
      only an administrator can write (Windows uses `HKLM\SOFTWARE\Josi\Nodes`:
