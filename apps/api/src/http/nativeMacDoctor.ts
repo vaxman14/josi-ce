@@ -86,7 +86,8 @@ export function nativeMacDoctor(options: Options): DoctorHelper {
     await probe(linux ? 'native_linux_runtime' : 'native_runtime', async () => {
       const meta = JSON.parse(await readFile(join(app, 'package.json'), 'utf8'));
       const cfg = JSON.parse(await readFile(join(data, 'config/runtime.json'), 'utf8'));
-      const shape = linux ? /^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$/ : /^\d+\.\d+\.\d+-macos\.\d+$/;
+      // Mac releases are plain versions now (1.2.8); older builds were 0.1.78-macos.18.
+      const shape = linux ? /^\d+\.\d+\.\d+(?:-[a-z0-9.]+)?$/ : /^\d+\.\d+\.\d+(?:-(?:macos\.\d+|[a-z0-9.]+))?$/;
       if (!shape.test(version) || version !== meta.version
         || cfg.version !== version || cfg.schemaVersion !== 1) throw new Error();
       for (const file of ['apps/api/dist/server.js', 'apps/worker/dist/main.js', 'apps/web/dist/index.html']) {

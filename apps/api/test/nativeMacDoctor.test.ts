@@ -120,6 +120,15 @@ describe('native Mac Doctor', () => {
     expect((await checks()).native_workspace).toBe('fail');
   });
 
+  it('accepts the plain release versions the Mac ships now', async () => {
+    for (const plain of ['1.2.8', '1.2.8-beta.1']) {
+      env = { ...env, JOSI_VERSION: plain };
+      await writeFile(join(root, 'app/package.json'), JSON.stringify({ version: plain }));
+      await writeFile(join(root, 'data/config/runtime.json'), JSON.stringify({ schemaVersion: 1, version: plain }));
+      expect((await checks()).native_runtime).toBe('pass');
+    }
+    await writeFile(join(root, 'app/package.json'), JSON.stringify({ version }));
+  });
   it('detects version drift, missing migrations and unsupported architecture', async () => {
     await writeFile(join(root, 'data/config/runtime.json'), JSON.stringify({ schemaVersion: 1, version: 'wrong' }));
     expect((await checks()).native_runtime).toBe('fail');
