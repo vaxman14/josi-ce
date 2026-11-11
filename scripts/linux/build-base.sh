@@ -13,7 +13,7 @@ case "$arch" in
     image_base=debian:12-slim@sha256:f3034a6ec3c1205360777c4aae76234998866ad18806ae62b63a3f84ccad782b ;;
   aarch64) platform=linux/arm64; tag=debian12-arm64
     python_sha=2e1ba0e7f22e01c534caebf7f09e7820322bc0d055271d3434af671e8400f96f
-    image_base=debian:12-slim@sha256:ec8534cda2cb30f29f44f23e135297af7a1496f2990fd8e4e84aa36b081a757a ;;
+    image_base=debian:12-slim@sha256:0c8bbb8e987a035fe1d9704eb2e571b7e9a836e1caa46345290674b45b69e417 ;;
   *) echo "unknown processor: $arch" >&2; exit 2 ;;
 esac
 export TMPDIR="$base/tmp"
