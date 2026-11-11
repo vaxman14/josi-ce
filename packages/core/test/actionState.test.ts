@@ -27,8 +27,48 @@ const emailSlots={recipient:'romanvaxman14@gmail.com',subject:'testing the coone
 const calendarSlots={title:'Phone call with EDD',start:'2026-09-18T15:00:00-07:00',end:'2026-09-18T15:30:00-07:00',calendar_source:{source_id:'source-main',provider:'google',account_id:'account-main',calendar_id:'primary',calendar_name:'Main'}};
 
 describe('transactional conversational action state',()=>{
+  it('brings an expired request back to approve when the person agrees in words, and sends nothing on the stale yes',async()=>{
+    const {task,state}=await prepared('email',emailSlots);
+    await db.query(`update approvals set expires_at=now()-interval '1 minute' where id=$1`,[state.approval.id]);
+    await db.query(`update assistant_action_states set expires_at=now()-interval '1 minute' where task_id=$1`,[task.id]);
+    // Josi has said something else since, as the model did on gate.
+    await addMessage(db,{threadId:thread,direction:'out',body:'Use the card above.'});
+    const live=()=>db.query<{id:string;subject_id:string}>(`select id,subject_id from approvals where owner_user_id=$1 and status='pending' and expires_at>now()`,[owner]);
+    expect(await live()).toHaveLength(0);
+
+    // A bare yes after an unrelated message is ordinary talk, and nothing is prepared.
+    expect(await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes',requireReplyTarget:true,replyToMessageId:null})).toEqual({handled:false});
+    expect(await live()).toHaveLength(0);
+
+    const again=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'send it now',requireReplyTarget:true,replyToMessageId:null});
+    expect(again.handled).toBe(true);
+    expect(again.reply).toMatch(/expired before it was approved, so nothing was sent/);
+    expect(again.prepared).toMatchObject({summary:'email preview',action_class:'email_send'});
+    const [fresh]=await live();
+    expect(fresh.id).toBe(again.prepared!.approval_id);
+    expect(fresh.id).not.toBe(state.approval.id);
+    expect(again.task!.id).not.toBe(task.id);
+    expect(again.task!.slots).toEqual(emailSlots);
+    expect((await getTask(db,task.id)).state).toBe('cancelled');
+    // The stale yes sent nothing: neither task was released.
+    expect(await db.query(`select 1 from job_queue where kind='task.wake'`)).toHaveLength(0);
+
+    // The new request is approved the ordinary way, once it has been shown.
+    const shown=await addMessage(db,{threadId:thread,direction:'out',body:again.reply!});
+    await markActionsPresented(db,{ownerUserId:owner,threadId:thread,taskIds:[again.task!.id],messageId:shown.id});
+    expect(await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'approved',requireReplyTarget:true,replyToMessageId:shown.id})).toMatchObject({handled:true,action:{status:'approved'}});
+    expect((await getTask(db,again.task!.id)).state).toBe('ready');
+
+    // A no to a request that ran out says so and prepares nothing.
+    const second=await prepared('email',emailSlots);
+    await db.query(`update approvals set expires_at=now()-interval '1 minute' where id=$1`,[second.state.approval.id]);
+    await db.query(`update assistant_action_states set expires_at=now()-interval '1 minute' where task_id=$1`,[second.task.id]);
+    expect((await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'no'})).reply).toMatch(/already expired/);
+    expect(await live()).toHaveLength(0);
+  });
+
   it('takes the plain words people type for approving and refusing, and nothing looser',async()=>{
-    for(const word of ['approved','Approved.','go ahead','I approve','approve']){
+    for(const word of ['approved','Approved.','go ahead','I approve','approve','send it now','go ahead and send it','yes, send it','ok send it','approve it']){
       const {task}=await prepared('email',emailSlots);
       expect(await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:word}),word).toMatchObject({handled:true,action:{domain:'email'}});
       expect((await getTask(db,task.id)).state,word).toBe('ready');

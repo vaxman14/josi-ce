@@ -27,7 +27,7 @@ import { ComputerControl } from '@josi-ce/core';
 import { randomUUID } from 'node:crypto';
 import {
   appendEvent, checkChildAccess, checkStepUp,
-  advanceWorkRepeat, listTemplates, listWorkGoals, pinnedWorkGoals, recordChildActivity, resolveConversationalAction,
+  advanceWorkRepeat, isActionDecision, listTemplates, listWorkGoals, pinnedWorkGoals, recordChildActivity, resolveConversationalAction,
   beginWorkConversation, releaseWorkConversation, requireWorkContinuation, runWorkIntent,
   formatWorkContext, workMemoryVersion, requireCurrentWorkMemory, WorkMemoryChangedError,
   type ActivityChannel, type Db, type AutomationModelProjection,
@@ -213,6 +213,9 @@ function systemPrompt(args: {
     'You are talking to that person. Everything you create belongs to them and nobody else in the workspace sees it unless they share it.',
     'Be brief and direct: lead with the answer, no filler, no preamble.',
     "Your voice is warm and charming, with a little sass and a light sense of humor: a quick wink, never at the person's expense, and never at the cost of being brief, clear or correct. Drop the jokes for errors, approvals, money, health, safety, legal matters or anything upsetting, and be plainly kind there.",
+    // Found on a real server: a request had expired, and the model kept sending
+    // the person to a card that was on no screen.
+    "An email or calendar request can only be approved on its card, and a card exists only when a draft tool result in THIS turn says state 'prepared'. Never tell the person to use a card, or that something is waiting for approval, from memory of earlier turns: requests expire after fifteen minutes. If they ask to see, retry, resend or approve an earlier request, call the same draft tool again with the same details. It returns the request that is still waiting or prepares a fresh one, and the card appears.",
     'Plain text only — no markdown, no asterisks, no headings.',
     'You do work through tasks. Fill every required slot BEFORE anything is attempted; if a required slot is missing, ask for it. Never start work with a hole in it.',
     'For a multi-step request, use own_goal to save the outcome and completion criteria, then checkpoint_goal as real progress occurs. The initial checklist is sequential. Use revise_goal_plan to record necessary plan changes and explicit independent steps; retain every original step and effect identity. Respect unfinished dependencies, record precise blockers, and continue independent work within current permissions while waiting. A reply ending, a tool attempt finishing, or exhaustion of a turn budget is not completion of the user’s goal. Reuse existing tasks and reconcile uncertain outcomes before any repeat. Never silently abandon unfinished work.',
@@ -397,13 +400,16 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   // bind to one action prepared in the immediately preceding presented turn;
   // provider names and old calendar subjects in model history are irrelevant.
   const resolveAction=()=>resolveConversationalAction(db,{ownerUserId:userId,threadId:args.threadId,inbound:args.inbound,replyToMessageId:args.replyToMessageId,requireReplyTarget:args.requireApprovalReplyTarget});
-  const mayDecideAction=/^(?:yes|yes please|please do|do it|send it|approve|confirmed?|no|no thanks|don't|do not|cancel|deny)\s*[.!]?$/i.test(args.inbound.trim());
+  const mayDecideAction=isActionDecision(args.inbound);
   const deterministic=args.workGoalId ? { handled: false, reply: undefined, action: undefined }
     : args.durableTurnId&&args.durableLeaseToken&&mayDecideAction
     ? await runDurableEffect(args.db,{turnId:args.durableTurnId,leaseToken:args.durableLeaseToken},'assistant_action_resolution',{inbound:args.inbound,replyToMessageId:args.replyToMessageId??null},resolveAction)
     : await resolveAction();
   if(deterministic.handled){
-    return {reply:deterministic.reply??'',actions:deterministic.action?[{tool:'assistant_action_state',result:{ok:true,domain:deterministic.action.domain,status:deterministic.action.status,task_id:deterministic.action.task_id}}]:[]};
+    // An expired request prepared again is shown like any freshly prepared one:
+    // `state` and the approval fields are what the clients draw the card from.
+    const again=deterministic.prepared?{state:'prepared',...deterministic.prepared}:{};
+    return {reply:deterministic.reply??'',actions:deterministic.action?[{tool:'assistant_action_state',result:{ok:true,domain:deterministic.action.domain,status:deterministic.action.status,task_id:deterministic.action.task_id,...again}}]:[]};
   }
 
   // ---- can we run at all? ------------------------------------------------

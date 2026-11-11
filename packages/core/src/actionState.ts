@@ -2,7 +2,7 @@ import type { Db } from './db.js';
 import { appendEvent } from './events.js';
 import { ApprovalError, approvalHash, decideApproval, requestApproval, type Approval } from './approvals.js';
 import { enqueue } from './queue.js';
-import { getTask, setSlots, transition, type Task } from './tasks.js';
+import { createTask, getTask, setSlots, transition, type Task } from './tasks.js';
 
 export type ActionDomain = 'email' | 'calendar' | 'contacts';
 export type ActionOperation = 'send' | 'create' | 'update';
@@ -97,11 +97,38 @@ export async function markActionsPresented(db:Db,args:{ownerUserId:string;thread
     [args.ownerUserId,args.threadId,args.taskIds,args.messageId]);
 }
 
-export interface ConversationalDecision { handled:boolean; reply?:string; action?:AssistantActionState; task?:Task }
-const YES=/^(?:yes|yes please|please do|do it|send it|go ahead|approved?|i approve|confirmed?)\s*[.!]?$/i;
+export interface ConversationalDecision { handled:boolean; reply?:string; action?:AssistantActionState; task?:Task;
+  /** Set when an expired request was prepared again: what the clients draw the new card from. */
+  prepared?:{approval_id:string;summary:string;action:string;action_class:string;expires_at:string|null} }
+// The plain ways people agree to a request that is in front of them. A lone
+// "ok" or "sure" is not here on purpose: it is too often just an acknowledgement.
+const YES=/^(?:(?:yes|ok|okay|sure|please)[,.!]?\s+)?(?:yes|yes please|please do|do it|send it|send|go ahead|go ahead and send(?: it)?|approved?|approve it|i approve|confirmed?)(?:\s+(?:now|please))?\s*[.!]?$/i;
 const NO=/^(?:no|no thanks|don't|do not|don't send(?: it)?|do not send(?: it)?|cancel|deny|denied|decline|declined)\s*[.!]?$/i;
 const EMAIL_STATUS=/\b(?:was|is|did).{0,16}(?:email|it).{0,12}(?:sent|send)/i;
 const BARE_WHY=/^why\s*[?!.]?$/i;
+/** A yes that names the act, so it can only be about the request ("send it now", "approved"). */
+const NAMES_THE_ACT=/\b(?:send|approv)/i;
+
+/** Whether this message, on its own, is an answer to an approval request. */
+export function isActionDecision(text:string):boolean{const t=text.trim();return YES.test(t)||NO.test(t);}
+
+/** An approval lasts fifteen minutes. When the person agrees after that, the
+ * yes is not spent on the stale request and nothing is sent: the same exact
+ * action is prepared again, with a new request to approve. */
+async function prepareAgain(db:Db,old:AssistantActionState){
+  if(!old.approval_id)return null;
+  const [approval]=await db.query<Approval>(`select * from approvals where id=$1`,[old.approval_id]);
+  if(!approval)return null;
+  const previous=await getTask(db,old.task_id);
+  await db.query(`update assistant_action_states set status='expired' where id=$1 and status='prepared'`,[old.id]);
+  await db.query(`update approvals set status='expired' where id=$1 and status='pending'`,[approval.id]);
+  if(previous.state==='awaiting_approval')await transition(db,previous.id,'cancelled',{actor:'user',actorUserId:old.owner_user_id});
+  const task=await createTask(db,{ownerUserId:old.owner_user_id,templateKey:previous.template_key,slots:previous.slots,threadId:old.thread_id});
+  const state=await attachCollectingAction(db,{ownerUserId:old.owner_user_id,threadId:old.thread_id,domain:old.domain,operation:old.operation,taskId:task.id});
+  const out=await prepareAction(db,{actionState:state,task,summary:approval.summary,actionClass:approval.action_class,action:approval.action});
+  return {action:out as AssistantActionState,task:await getTask(db,task.id),approval:out.approval};
+}
+const isExpired=(action:AssistantActionState)=>action.status==='expired'||(!!action.expires_at&&new Date(action.expires_at)<=new Date());
 
 async function latestPresented(db:Db,args:{ownerUserId:string;threadId:string;status?:ActionStatus;domain?:ActionDomain}){
   const rows=await db.query<AssistantActionState>(`select a.* from assistant_action_states a join messages m on m.id=a.presented_turn_id
@@ -197,9 +224,29 @@ export async function resolveConversationalAction(db:Db,args:{ownerUserId:string
     // A yes or no while nothing waits for approval is ordinary talk
     // (the answer to a question Josi asked): it goes to the model like any
     // other message and approves nothing.
-    const candidates=await latestPresented(db,{ownerUserId:args.ownerUserId,threadId:args.threadId,status:'prepared'});
-    if(!candidates.length)return {handled:false};
+    let candidates=await latestPresented(db,{ownerUserId:args.ownerUserId,threadId:args.threadId,status:'prepared'});
     const [lastOutbound]=await db.query<{id:string}>(`select id from messages where thread_id=$1 and direction='out' order by created_at desc limit 1`,[args.threadId]);
+    // A request that ran out is not "still waiting further up", and its card is
+    // gone from every screen. A yes that is plainly about it (it answers the
+    // message that showed it, or it names the act) brings the same request
+    // back to approve; anything else is ordinary talk for the model.
+    // Looked up by the thread, not by what was last shown: any later message from
+    // Josi takes a request off the screen (conversations.ts), which is exactly when
+    // people go looking for it. Only the newest request counts, and only for a day.
+    const live=candidates.length>0&&!isExpired(candidates[0]);
+    const [newest]=live?[]:await db.query<AssistantActionState>(`select * from assistant_action_states
+      where owner_user_id=$1 and thread_id=$2 and created_at>now()-interval '24 hours' order by created_at desc limit 1`,[args.ownerUserId,args.threadId]);
+    const stale=newest&&(newest.status==='prepared'||newest.status==='expired')&&isExpired(newest)?newest:null;
+    if(stale){
+      if(NO.test(text))return candidates.length&&candidates[0].id===stale.id?{handled:true,reply:`That request had already expired. The ${stale.domain==='email'?'email was not sent':'calendar was not changed'}.`,action:stale}:{handled:false};
+      const about=(!!lastOutbound&&stale.presented_turn_id===lastOutbound.id)||NAMES_THE_ACT.test(text);
+      const again=about?await prepareAgain(db,stale):null;
+      if(!again)return {handled:false};
+      return {handled:true,action:again.action,task:again.task,
+        prepared:{approval_id:again.approval.id,summary:again.approval.summary,action:again.approval.action,action_class:again.approval.action_class,expires_at:again.approval.expires_at},
+        reply:`That request expired before it was approved, so nothing was sent. Here it is again:\n\n${again.approval.summary}\n\nApprove it below, or say yes.`};
+    }
+    if(!candidates.length)return {handled:false};
     if(!lastOutbound||candidates[0].presented_turn_id!==lastOutbound.id)return {handled:true,reply:'That did not approve anything. A request is still waiting for your approval further up; use Approve or Deny on it.'};
     // Durable clients can queue multiple turns before any reply exists. For
     // them, arrival order is not consent: yes/no must explicitly reply to the
