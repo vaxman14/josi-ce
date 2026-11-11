@@ -9,13 +9,12 @@
 #   JOSI_PC_CONTROL    1 (default) or 0: let Josi control the container as user josi
 #   JOSI_BROWSER       1 (default) or 0: Josi's own browser on a hidden screen
 set -uo pipefail
-# Where `docker logs` reads from. With a terminal (docker run -t) that is the
-# console. Without one there is no console device at all, and writing to
-# /dev/console would only make an ordinary file nobody reads: the container's
-# first process still holds the pipe Docker collects, so write there.
-out=/proc/1/fd/1
-[ -c /dev/console ] && out=/dev/console
-exec > >(tee "$out") 2>&1
+# `docker logs` shows the console, and a container has one only when it was
+# started with a terminal (docker run -t, or `tty: true` in Compose). Without
+# one, systemd has nowhere to print and writing to /dev/console would only make
+# an ordinary file nobody reads. Everything below is in the journal either way:
+#   docker exec <name> journalctl -u josi-firstboot -o cat
+if [ -c /dev/console ]; then exec > >(tee /dev/console) 2>&1; fi
 
 # systemd does not pass `docker run -e` on to its services; the container's
 # first process (PID 1) still holds them.

@@ -27,6 +27,10 @@ Open the link (it works once, for 10 minutes), then set Josi up in the browser
 like any install. For a new link: `docker restart josi`, wait a minute, then
 `docker logs josi 2>&1 | grep "Open this" | tail -1`.
 
+The run line needs `-t`: without a terminal a container has no console and
+`docker logs` stays empty. The link is always in the container's own journal:
+`docker exec josi journalctl -u josi-firstboot -o cat | grep "Open this" | tail -1`.
+
 Or with Compose, from this folder: set `JOSI_HOST_ADDRESS` in the environment
 (or in a `.env` file beside `docker-compose.yml`) and run `docker compose up -d`.
 
