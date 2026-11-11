@@ -4,7 +4,7 @@
 # the PC-control service and Josi's own browser, working as the container's
 # `josi` user. The container is the computer Josi controls.
 #
-#   docker build -t josi -f Dockerfile <folder holding josi_*_amd64.deb>
+#   docker build -t josi -f Dockerfile <folder holding josi_*_amd64.deb or josi_*_arm64.deb>
 #   docker run -d -t --name josi --privileged --cgroupns=host \
 #     -v josi-data:/var/lib/josi -v josi-pc:/var/lib/josi-pc -v josi-home:/home/josi \
 #     -v josi-etc:/etc/josi -p 8080:8080 -e JOSI_HOST_ADDRESS=<this machine's address> josi
@@ -35,9 +35,14 @@ RUN useradd --create-home --shell /bin/bash --uid 1000 josi
 
 # The package is installed into the image; the first start configures and
 # starts it (systemd is not running during a build).
-COPY josi_*_amd64.deb /tmp/
-RUN apt-get update && apt-get install -y --no-install-recommends /tmp/josi_*_amd64.deb \
-    && rm -rf /var/lib/apt/lists/* /tmp/josi_*_amd64.deb
+# TARGETARCH is amd64 or arm64, whichever the image is built for
+# (docker build --platform linux/arm64 for a Raspberry Pi). ARM has no Chrome
+# for Testing for Linux, so there Josi's browser is Debian's Chromium.
+ARG TARGETARCH
+COPY josi_*_${TARGETARCH}.deb /tmp/
+RUN apt-get update && apt-get install -y --no-install-recommends /tmp/josi_*_${TARGETARCH}.deb \
+      $([ "$TARGETARCH" = arm64 ] && echo chromium) \
+    && rm -rf /var/lib/apt/lists/* /tmp/josi_*_${TARGETARCH}.deb
 
 COPY josi-firstboot.sh /usr/local/sbin/josi-firstboot
 COPY josi-firstboot.service /etc/systemd/system/josi-firstboot.service

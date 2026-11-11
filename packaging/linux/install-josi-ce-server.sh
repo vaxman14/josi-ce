@@ -952,13 +952,15 @@ ask_browser() {
 # Every library it needs, picking whichever name this release has (Debian 13
 # and Ubuntu 24.04+ renamed several to ...t64). One by one if the batch fails.
 browser_packages() {
-  local item name pick
+  local item name pick arm_browser=''
   REPLY=''
+  # ARM has no Chrome for Testing for Linux: Josi uses the system's Chromium.
+  case "$(uname -m)" in aarch64 | arm64) arm_browser=chromium ;; esac
   for item in xvfb xauth unzip openbox xdotool wmctrl imagemagick fonts-liberation fonts-noto-color-emoji \
       libnss3 libgbm1 libxkbcommon0 libxss1 libdrm2 libxcomposite1 libxdamage1 libxrandr2 libxshmfence1 \
       libpango-1.0-0 libcairo2 ca-certificates libasound2t64/libasound2 libgtk-3-0t64/libgtk-3-0 \
       libcups2t64/libcups2 libatk-bridge2.0-0t64/libatk-bridge2.0-0 libatk1.0-0t64/libatk1.0-0 \
-      libglib2.0-0t64/libglib2.0-0; do
+      libglib2.0-0t64/libglib2.0-0 $arm_browser; do
     pick=''
     for name in ${item//\// }; do
       case $(apt-cache policy "$name" 2>/dev/null | awk '/Candidate:/ { print $2 }') in

@@ -7,7 +7,10 @@ controls: she acts as its `josi` user.
 
 ## Build
 
-Put `josi_<version>_amd64.deb` (from a release folder) next to these files:
+Put the package for the machine's processor (from a release folder) next to
+these files: `josi_<version>_amd64.deb` for Intel and AMD, or
+`josi_<version>_arm64.deb` for ARM (a Raspberry Pi 4 or 5 with a 64-bit
+system, an ARM cloud server). Docker picks the one that matches.
 
 ```bash
 docker build -t josi:latest .

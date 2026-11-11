@@ -14,7 +14,7 @@
 // X authority cookie.
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, createReadStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, createReadStream, existsSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { pipeline } from 'node:stream/promises';
 import { createWriteStream } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -47,8 +47,24 @@ async function sha256(path) {
   return hash.digest('hex');
 }
 
+/** On ARM there is no Chrome for Testing for Linux, so Josi uses the system's
+ * Chromium (the `chromium` package of Debian and Raspberry Pi OS), which also
+ * loads an unpacked extension. It is linked where the pinned Chrome would be,
+ * so everything that looks for Josi's browser finds it in the same place. */
+function systemChromium() {
+  const found = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/lib/chromium/chromium'].find(p => existsSync(p));
+  if (!found) throw new Error('Chromium is not installed (ARM has no Chrome for Testing): install the chromium package, or run the Josi installer again and choose the browser');
+  const dir = join(ROOT, 'chrome-0', 'chrome-linux64'), link = join(dir, 'chrome');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  let current = null; try { current = readlinkSync(link); } catch { /* not there yet */ }
+  if (current !== found) { rmSync(link, { force: true }); symlinkSync(found, link); }
+  log('using the system Chromium at', found);
+  return link;
+}
+
 /** Downloads and unpacks the pinned Chrome once; a bad hash is never used. */
 async function ensureChrome() {
+  if (process.arch !== 'x64') return systemChromium();
   const dir = join(ROOT, 'chrome-' + CHROME.version), binary = join(dir, 'chrome-linux64', 'chrome');
   if (existsSync(join(dir, '.verified')) && existsSync(binary)) return binary;
   mkdirSync(ROOT, { recursive: true, mode: 0o700 });
