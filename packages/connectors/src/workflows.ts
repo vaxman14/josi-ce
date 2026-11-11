@@ -21,15 +21,14 @@ import {
 } from "@josi-ce/core";
 import { requireConnectorVault } from './credentialVault.js';
 import { withWorkflowTransaction, openWorkflowCallback, prepareWorkflowCredentials, sameWorkflowCredentials } from './workflowVault.js';
-import { assertPublicHost } from "./customApiRequest.js";
+import { assertPublicHost, pinnedLookup } from "./customApiRequest.js";
 
 /** Reuse the network policy, not the Custom API connector protocol. */
 const publicWorkflowFetch: typeof fetch = async (url, init) => {
   const addresses = await assertPublicHost(new URL(String(url)).hostname);
   const dispatcher = new Agent({
     connect: {
-      lookup: (_host, _options, callback) =>
-        callback(null, addresses[0], isIP(addresses[0])),
+      lookup: pinnedLookup(addresses),
     },
   });
   try {

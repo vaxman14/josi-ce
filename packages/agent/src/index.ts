@@ -3,6 +3,7 @@ export * from './automationTools.js';
 export * from './claimGuard.js';
 export * from './dataClaimGuard.js';
 export * from './customApiTools.js';
+export * from './mcpTools.js';
 export * from './workflowTools.js';
 export * from './developerIntegrationTools.js';
 export * from './dataTools.js';

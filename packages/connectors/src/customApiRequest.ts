@@ -342,6 +342,23 @@ async function defaultResolve(hostname: string): Promise<string[]> {
   return results.map((r) => r.address);
 }
 
+
+/** A socket lookup that answers only with addresses that already passed the
+ * public-address check, so a second DNS answer cannot move the request.
+ *
+ * Node asks in two shapes. Since Node 20 a connection tries several addresses
+ * at once and calls lookup with `all: true`, expecting a LIST; older callers
+ * expect one address and its family. Answering the first shape with the second
+ * fails every request with "Invalid IP address: undefined", so both are
+ * answered. */
+export function pinnedLookup(addresses: string[]) {
+  return (_hostname: string, options: unknown, callback: (...args: any[]) => void): void => {
+    const all = !!options && typeof options === 'object' && (options as { all?: boolean }).all === true;
+    if (all) callback(null, addresses.map((address) => ({ address, family: isIP(address) })));
+    else callback(null, addresses[0], isIP(addresses[0]));
+  };
+}
+
 /**
  * Resolves a host and refuses anything that is not on the public internet.
  *
@@ -462,10 +479,7 @@ export async function customApiFetch(
   // would leave a DNS-rebinding window between those two operations.
   const dispatcher = opts.fetchImpl ? undefined : new Agent({
     connect: {
-      lookup: (_hostname, _options, callback) => {
-        const address = approvedAddresses[0];
-        callback(null, address, isIP(address));
-      },
+      lookup: pinnedLookup(approvedAddresses),
     },
   });
   try {

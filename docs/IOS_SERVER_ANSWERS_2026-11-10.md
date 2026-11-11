@@ -203,3 +203,20 @@ Changes to item 6. Old calls still work; a phone that ignores all of this keeps 
   package names separated by commas. Label is now "Package names (optional)".
 - New service `stripe` (one field, `token`: a restricted API key). Off for members until the owner allows it.
 - Supabase accounts are now named by their organization, not by a project count.
+
+## 10. Custom MCP servers: built in 1.2.8-beta.18
+
+Each person can connect their own MCP servers (remote, https). The full contract, with every request
+and response shape, is in `docs/CUSTOM_MCP.md` in the server repo. What the phone needs to know:
+
+- Routes are under `/api/connections/mcp`: list, add, check, rename/disable, remove, and browser
+  sign-in (`POST /:id/oauth/start {native: true}` → `{authorizationUrl}`, then
+  `POST /oauth/complete {state, code}`).
+- `GET /api/connections/mcp` says `allowed` (whether this person may use the feature) and lists
+  `connections` with their tools; each tool says whether it runs freely or asks first.
+- A tool that is not marked read-only by its server never runs without the person's yes. The request
+  waits in `GET /api/connections/mcp/pending`; answer with `POST …/pending/:id/approve` or `/deny`.
+- **Push:** a waiting MCP request sends the normal approval push (`data.route = "approval"`), but its
+  `data.id` is an MCP pending id, which is NOT in `/api/assistant/approvals`. When an approval id is
+  not found there, look in `/api/connections/mcp/pending`.
+- Also from beta.18: parental controls are always on (see 8d).

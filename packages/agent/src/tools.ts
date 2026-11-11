@@ -10,6 +10,7 @@ import { MEMORY_TOOLS } from './memoryEngine.js';
 import { AUTOMATION_DISCOVERY_TOOL, AUTOMATION_RECEIPT_TOOL, AUTOMATION_CONTROL_TOOLS } from './automationTools.js';
 import type { ToolDefinition } from '@josi-ce/llm';
 import { CUSTOM_API_TOOLS } from './customApiTools.js';
+import { MCP_TOOLS } from './mcpTools.js';
 import { DATA_TOOLS } from './dataTools.js';
 import { WORKFLOW_TOOLS } from './workflowTools.js';
 import { DEVELOPER_INTEGRATION_TOOLS, OBSIDIAN_TOOLS } from './developerIntegrationTools.js';
@@ -243,6 +244,9 @@ export const ALL_TOOLS: ToolSpec[] = [
   ...AUTOMATION_CONTROL_TOOLS,
   ...DATA_TOOLS,
   ...CUSTOM_API_TOOLS,
+  // The two fixed MCP tools. A person's per-server tools (`mcp_<server>__<tool>`)
+  // differ for everybody and are found with `isMcpDynamicToolName` instead.
+  ...MCP_TOOLS,
   ...WORKFLOW_TOOLS,
   ...DEVELOPER_INTEGRATION_TOOLS,
   ...OBSIDIAN_TOOLS,

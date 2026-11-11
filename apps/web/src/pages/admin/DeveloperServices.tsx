@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Badge, Button, CollapsibleCard, Empty, ErrorNote, Input, Working } from '@/components/ui';
+import { McpPolicyCard } from './McpPolicy';
 
 type Mode = 'not_allowed' | 'everyone' | 'specific_users';
 
@@ -109,6 +110,8 @@ export function AdminDeveloperServices({ embedded = false }: { embedded?: boolea
         <p className="mt-1 text-sm text-muted-foreground">Connect a REST API through an explicit endpoint allowlist. Read actions can run directly; write and delete actions require approval.</p>
         <Link className="mt-2 inline-block text-sm underline" to="/admin/custom-apis">Manage Custom APIs</Link>
       </div>
+      {/* Each person's own outside tool servers: one permission for everybody. */}
+      <McpPolicyCard />
 
       <div className="grid gap-3 sm:grid-cols-2">
         {INTEGRATION_CATALOG.map(([category, services]) => (

@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Input, NotYet, Working } from '@/components/ui';
 import { CloudFolders } from '@/components/CloudFolders';
+import { McpServers } from '@/components/McpServers';
 import { plain } from '@/lib/plainLanguage';
 
 interface Capability {
@@ -284,6 +285,8 @@ export function Connections() {
       ))}
 
       <DeveloperServices />
+
+      <McpServers />
 
       <DocumentInventory />
     </div>

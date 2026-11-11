@@ -310,6 +310,22 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
     source: { migrationTable: 'custom_api_pending_calls', column: 'status' },
     labels: { pending: 'Waiting for you', approved: 'Approved', denied: 'Declined', expired: 'Expired', executed: 'Sent', failed: 'Did not go through' },
   },
+  mcp_status: {
+    source: { migrationTable: 'mcp_connections', column: 'status' },
+    labels: { active: 'Working', needs_sign_in: 'Sign-in needed', needs_attention: 'Needs attention' },
+    detail: {
+      needs_sign_in: 'Sign in to this server again so Josi can use it.',
+      needs_attention: 'The server did not answer or did not accept the sign-in. Check it, or remove it and add it again.',
+    },
+  },
+  mcp_auth_kind: {
+    source: { migrationTable: 'mcp_connections', column: 'auth_kind' },
+    labels: { none: 'No sign-in', bearer: 'A token', header: 'A value in a named header', oauth: 'Sign in with the browser' },
+  },
+  mcp_call_status: {
+    source: { migrationTable: 'mcp_pending_calls', column: 'status' },
+    labels: { pending: 'Waiting for you', approved: 'Approved', denied: 'Declined', expired: 'Expired', executed: 'Done', failed: 'Did not go through' },
+  },
   workflow_provider: {
     source: { literal: ['zapier', 'n8n', 'make'] },
     labels: { zapier: 'Zapier', n8n: 'n8n automation', make: 'Make' },

@@ -17,6 +17,19 @@ import { Badge, Button, Card, Empty, ErrorNote } from '@/components/ui';
 import { watchApprovals, type ApprovalSnapshot } from '@/lib/approvalRefresh';
 import { plain } from '@/lib/plainLanguage';
 
+/** A tool on one of this person's own MCP servers that is not marked
+ * read-only, waiting for a yes. Approving runs it at once, like a call to a
+ * connected API. */
+interface PendingMcpCall {
+  id: string;
+  connectionName: string;
+  host: string;
+  tool: string;
+  summary: string;
+  requestedAt: string;
+  expiresAt: string;
+}
+
 interface PendingCall {
   id: string;
   connectionName: string;
@@ -48,6 +61,7 @@ function TemplatePreview({ id }: { id: string }) {
 export function Approvals() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [calls, setCalls] = useState<PendingCall[]>([]);
+  const [mcpCalls, setMcpCalls] = useState<PendingMcpCall[]>([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
@@ -58,6 +72,8 @@ export function Approvals() {
         .then((r) => setApprovals(r.approvals)).catch(() => undefined),
       api.get<{ pending: PendingCall[] }>('/custom-apis/pending')
         .then((r) => setCalls(r.pending)).catch(() => undefined),
+      api.get<{ pending: PendingMcpCall[] }>('/connections/mcp/pending')
+        .then((r) => setMcpCalls(r.pending)).catch(() => undefined),
     ]);
   }, []);
 
@@ -106,7 +122,27 @@ export function Approvals() {
     }
   }
 
-  const nothing = approvals.length === 0 && calls.length === 0;
+  async function decideMcpCall(call: PendingMcpCall, approve: boolean) {
+    setBusy(call.id);
+    setError('');
+    setNotice('');
+    try {
+      const res = await api.post<{ ok?: boolean }>(`/connections/mcp/pending/${call.id}/${approve ? 'approve' : 'deny'}`);
+      setNotice(approve
+        ? (res?.ok === false
+          ? `${call.connectionName} ran the tool and reported a problem. Ask Josi what it said.`
+          : `Done on ${call.connectionName}. Ask Josi to carry on and it will pick up the answer.`)
+        : 'Declined. Nothing was sent.');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not record that');
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const nothing = approvals.length === 0 && calls.length === 0 && mcpCalls.length === 0;
 
   return (
     <div className="page">
@@ -159,9 +195,45 @@ export function Approvals() {
         </section>
       ) : null}
 
+      {mcpCalls.length ? (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold">Tools on your MCP servers</h2>
+          <p className="text-sm text-muted-foreground">
+            These have not happened. The server does not mark these tools as read-only, so Josi asks first.
+            Approving one runs it immediately, exactly as described.
+          </p>
+          <ul className="space-y-2">
+            {mcpCalls.map((call) => (
+              <li key={call.id}>
+                <Card>
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                    <span className="min-w-0 text-sm font-medium">{call.connectionName}</span>
+                    <Badge tone="danger">May change something</Badge>
+                  </div>
+                  {/* Written by Josi from the stored server and the exact details, not by the model or the server. */}
+                  <p className="mt-1 whitespace-pre-wrap break-words text-sm">{call.summary}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Expires {new Date(call.expiresAt).toLocaleString()} — an old request is not
+                    consent, so it stops being answerable then.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button onClick={() => void decideMcpCall(call, true)} disabled={busy === call.id}>
+                      {busy === call.id ? 'Running…' : 'Approve and run'}
+                    </Button>
+                    <Button variant="secondary" onClick={() => void decideMcpCall(call, false)} disabled={busy === call.id}>
+                      Decline
+                    </Button>
+                  </div>
+                </Card>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       {approvals.length ? (
         <section className="space-y-2">
-          {calls.length ? <h2 className="text-sm font-semibold">Work Josi has prepared</h2> : null}
+          {calls.length || mcpCalls.length ? <h2 className="text-sm font-semibold">Work Josi has prepared</h2> : null}
           <ul className="space-y-2">
             {approvals.map((a) => (
               <li key={a.id}>

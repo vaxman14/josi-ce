@@ -17,7 +17,7 @@ import {
   expirePreparedActionApprovals, settleActionForTask, transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
 import {
-  accessTokenFor, can, connectionsWithCapability, createInternalEvent, createStateStore, dueCalendarOrigins, dueCloudMappings, dueOrigins, expireCustomApiCalls,
+  accessTokenFor, can, connectionsWithCapability, createInternalEvent, createStateStore, dueCalendarOrigins, dueCloudMappings, dueOrigins, expireCustomApiCalls, expireMcpCalls, purgeMcpOAuthStates,
   ensureInternalCalendar, loadClient, markAttempted, markCalendarAttempted, markSyncScheduled, provisionCalendarOrigins,
   processCalendarOutbox, syncCalendarOrigin, syncCloudMapping, syncOrigin, updateInternalEvent,
 } from '@josi-ce/connectors';
@@ -268,6 +268,8 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       await expirePreparedActionApprovals(db);
       await expireApprovals(db);
       await expireCustomApiCalls(db);
+      await expireMcpCalls(db);
+      await purgeMcpOAuthStates(db);
       return;
     }
 

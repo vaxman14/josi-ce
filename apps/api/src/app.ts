@@ -30,6 +30,7 @@ import {
   adminDeveloperServiceRoutes, developerServiceRoutes,
 } from './http/developerServiceRoutes.js';
 import { adminCustomApiRoutes, customApiRoutes } from './http/customApiRoutes.js';
+import { adminMcpRoutes, mcpRoutes } from './http/mcpRoutes.js';
 import { personaRoutes } from './http/personaRoutes.js';
 import { migrationRoutes } from './http/migrationRoutes.js';
 import { adminLlmRoutes, llmRoutes, startModelWarmup } from './http/llmRoutes.js';
@@ -260,6 +261,13 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/developer-services', adminDeveloperServiceRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.developerServiceFetch,
   }));
+  // A person's own MCP servers. Before /connections for the same reason as
+  // /connections/developer: `mcp` is not an account provider. The outbound
+  // seam is the one Custom APIs use — an address somebody typed.
+  api.use('/connections/mcp', mcpRoutes({
+    db, masterKey: cfg.masterKeyCheck, appUrl: cfg.appUrl, fetchImpl: cfg.customApiFetch, resolve: cfg.outboundResolve,
+  }));
+  api.use('/admin/mcp', adminMcpRoutes({ db }));
 
   api.use('/connections', connectorRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,

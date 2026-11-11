@@ -25,6 +25,7 @@ import { connectionsWithCapability } from '@josi-ce/connectors';
 import { providerStatus } from './providerStatus.js';
 import { DATA_TOOL_FAMILY, executeDataTool, selectedCalendars, writeActionCapabilities, type ConnectorAccess } from './dataTools.js';
 import { executeCustomApiTool, isCustomApiTool } from './customApiTools.js';
+import { executeMcpTool, isMcpTool } from './mcpTools.js';
 import { executeWorkflowTool, WORKFLOW_TOOL_NAMES } from './workflowTools.js';
 import { executeObsidianTool, DEVELOPER_INTEGRATION_TOOL, executeDeveloperIntegrationTool, executeDeveloperResourceTool } from './developerIntegrationTools.js';
 import { resolveCalendarTimeIntent, validateAbsoluteCalendarRange, type CalendarTimeResolution } from './calendarTimeIntent.js';
@@ -137,6 +138,11 @@ export async function executeAssistantTool(
       name,
       input,
     );
+  }
+  // A person's own MCP servers. Resolved by owner at this moment; a tool the
+  // server did not mark read-only becomes a pending approval, never a call.
+  if (isMcpTool(name)) {
+    return executeMcpTool(db, { userId, threadId: ctx.threadId, access: ctx.connectors ?? null }, name, input);
   }
   if (WORKFLOW_TOOL_NAMES.has(name)) {
     if (!ctx.connectors) return { ok: false, message: 'Native workflow credentials are unavailable.' };

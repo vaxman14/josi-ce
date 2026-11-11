@@ -18,8 +18,10 @@
 //     CE and four hand-written probes. Nothing about it is operator-supplied,
 //     so there is no allowlist to keep. Here the host comes from a form, so the
 //     host IS the allowlist and it is a column that every request re-checks.
-//   * AN MCP SERVER is not implemented in CE, and this is not a step towards
-//     one: nothing here speaks a protocol and nothing here is a tunnel.
+//   * AN MCP SERVER is a different feature with a different owner: a person's
+//     own outside tool server, added by that person with their own sign-in
+//     (mcpConnections.ts, docs/CUSTOM_MCP.md). Nothing in this file speaks
+//     that protocol, and nothing here is a tunnel.
 //
 // OWNERSHIP, because it is the opposite of the call made in 0034
 //
