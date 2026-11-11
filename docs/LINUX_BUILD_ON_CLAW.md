@@ -32,6 +32,7 @@ guess it says so.
 | Test VMs on claw | Ubuntu 24.04: ssh port **2224**, web port 18891. Debian 13: ssh port **2223**, web port 18890. User `roman`, passwordless sudo |
 | VM test script on claw | `~/josi-linux/vmtest.sh <ssh port> <fresh|upgrade>` |
 | LAN install folder on claw | `~/josi-linux/lan`, served by `python3 -m http.server 18099 --bind 10.10.1.3` (already running) |
+| ARM test machine | Raspberry Pi 4, 8 GB, Debian 13: `roman@10.10.1.195` (hostname `josipie`), key `~/.ssh/id_ed25519_josi_pi`, passwordless sudo. It is also where Roman runs Josi, so ask before wiping it |
 | Test server | gate, `roman@10.10.1.5`, key `~/.ssh/id_ed25519_josi_gate`. Read-only for us |
 | Running notes | `docs/LINUX_HANDOFF_2026-11-10.md` in the repo: one section per beta. Add yours |
 
@@ -77,26 +78,31 @@ Claw builds only what is on GitHub.
 ```bash
 ssh … 'cd ~/josi-linux/src && git pull -q --ff-only origin linux/josi-server && git log --oneline | head -1 \
   && cd ~/josi-linux && (DOCKER_CONFIG=$HOME/josi-linux/docker-anon nohup bash -c \
-  "cd src && bash scripts/linux/build-release.sh --version 1.2.8-beta.21 --skip-provision" > build-23.log 2>&1 &); sleep 2; echo started'
+  "cd src && bash scripts/linux/build-release.sh --version 1.2.8-beta.23 --skip-provision --arm64" > build-25.log 2>&1 &); sleep 2; echo started'
 ```
 
 - Call the script with `bash` (it is not executable).
 - `--skip-provision` reuses the already-built Node, PostgreSQL and Python. Leave it on.
 - `DOCKER_CONFIG=…/docker-anon` makes Docker pull anonymously. Without it the build fails on a
   stale login.
-- It takes about 18 to 20 minutes. The stages print as lines starting `== `.
+- `--arm64` also makes the arm64 packages (for a Raspberry Pi). Its compiled parts are already
+  built and kept in `~/JosiDrive/BuildTemp/josi-ce-native-linux-20261010-aarch64`; only a change
+  to PostgreSQL, Python or the voice packages needs them again (drop `--skip-provision`, which
+  takes over an hour under emulation). After claw restarts, switch emulation back on first:
+  `docker run --privileged --rm tonistiigi/binfmt --install arm64`.
+- It takes about 25 minutes with `--arm64`. The stages print as lines starting `== `.
 - The script stamps the licence key into `packages/core/src/buildStamp.ts` and puts the file back.
   After a build, `git status --short` in `~/josi-linux/src` must be empty.
 
 Wait for it (note the bracket in the pattern, so the wait does not match itself):
 
 ```bash
-ssh … 'while pgrep -f "[b]uild-release.sh" >/dev/null; do sleep 20; done; tail -2 ~/josi-linux/build-23.log; ls ~/JosiDrive/BuildTemp/josi-ce-native-linux-20261010/releases/1.2.8-beta.21/'
+ssh … 'while pgrep -f "[b]uild-release.sh" >/dev/null; do sleep 20; done; tail -2 ~/josi-linux/build-25.log; ls ~/JosiDrive/BuildTemp/josi-ce-native-linux-20261010/releases/1.2.8-beta.23/'
 ```
 
-A good build leaves 10 files: `install.sh`, `linux`, `linux-latest.json`, `SHA256SUMS.txt`,
-`PKGBUILD`, `josi.install`, `RELEASE-NOTES.md`, the `.deb`, the `.pkg.tar.zst` and the
-`josi-root-…tar.zst`.
+A good build leaves 13 files: `install.sh`, `linux`, `linux-latest.json`, `SHA256SUMS.txt`,
+`PKGBUILD`, `josi.install`, `RELEASE-NOTES.md`, and for each processor (amd64/x86_64 and
+arm64/aarch64) a `.deb`, a `.pkg.tar.zst` and a `josi-root-…tar.zst`.
 
 ### 4. Test on both VMs
 
@@ -113,6 +119,10 @@ ssh … 'cd ~/josi-linux && sed -i "s/1\.2\.8-beta\.20/1.2.8-beta.21/g; s/josi-i
 
 Pass means, for each VM: `josi 1.2.8~beta.21`, no `INSTALL FAILED`, and
 `RESULT e2e-fake rc=0`, `RESULT e2e-pc rc=0`, `RESULT e2e-signin rc=0`. About 3 to 10 minutes.
+
+The VMs are Intel. For arm64, install on the Pi (see "Where things are") and run the same
+three scripts there with the installed Node, as `vmtest.sh` does on a VM. They set up a test
+owner account, so wipe afterwards (`sudo josi-uninstall --purge`) and install again clean.
 
 `upgrade` installs over what the VM has. `fresh` purges first and does a first-time install; use
 it when the installer or first-run setup changed.
@@ -149,7 +159,8 @@ gh release delete v1.2.8-beta.20 --repo vaxman14/josi-ce --yes
 ```
 
 - `--target` needs the **full** commit id. A short one fails with "target_commitish is invalid".
-- Nine files, the same nine every time. Write `notes.md` yourself in plain words.
+- Twelve files with arm64: add `josi_…_arm64.deb`, `josi-…-aarch64.pkg.tar.zst` and
+  `josi-root-…-aarch64.tar.zst` to the list above. Write `notes.md` yourself in plain words.
 - Use `rsync`, not `scp` with a brace list (that failed).
 
 ### 7. Write it down
@@ -192,7 +203,10 @@ The web app can be run from the Mac against a test VM, signed in with that VM's 
 
 ## State when this was written
 
-- Latest build: **1.2.8-beta.20**, commit `d5ceb8b` (handoff commit `d7ca64d` after it).
-- LAN installer and the one GitHub draft are beta.20. Gate was on beta.19 when last looked.
-- `vmtest.sh` on claw currently names beta.20 and `josi-install-20`.
+- Latest build: **1.2.8-beta.22**, commit `ca6c044`, Intel and arm64. beta.21 was built and
+  never handed out. The next version is beta.23 and the next log `build-25.log`.
+- LAN installer and the one GitHub draft are beta.22. Gate was on beta.19 when last looked.
+- `vmtest.sh` on claw currently names beta.22 and `josi-install-22`.
+- The version numbers in the commands above still say beta.21 and beta.20 in places: read them
+  as "the new one" and "the one before".
 - Before any public release: set `DEBUGGER_BUILT_IN` to `false` in `packages/core/src/debugger.ts`.

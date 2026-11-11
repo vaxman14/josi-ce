@@ -394,6 +394,37 @@ installer serves beta.20.
 - Do not wait with `pgrep -f` on a pattern that also appears later in the same command line; it
   matches itself. Use a marker file.
 
+## beta.21 and beta.22 (2026-11-11 afternoon): arm64, for a Raspberry Pi
+
+The owner asked for an arm64 version for a Pi. beta.21 was built and never handed out (its arm64
+package did not start on a Pi 4); beta.22 is the one.
+
+- **Build.** `build-release.sh --arm64` makes the arm64 packages after the Intel ones. The
+  compiled parts (PostgreSQL, the setup helper, the voice packages) are built once in an arm64
+  Debian 12 image under emulation on claw and kept in `<build base>-aarch64`; staging and
+  packaging run on claw itself with `JOSI_LINUX_ARCH=aarch64`. Details in
+  `docs/LINUX_BUILD_ON_CLAW.md`.
+- **Passwords.** `@node-rs/argon2`'s Linux arm64 file dies with an illegal instruction on a Pi 4
+  when it is loaded, which killed the web server and the worker. Linux arm64 now uses Node's own
+  argon2 (`packages/auth/src/passwords.ts`); every other platform is unchanged. Same stored
+  format; `passwordEngines.test.ts` checks each accepts the other's hashes.
+- **Josi's browser.** There is no Chrome for Testing for Linux on ARM, so there
+  `josi-browser.mjs` links the system's Chromium where the pinned Chrome would be, and the
+  installer adds the `chromium` package on ARM.
+- **Docker.** `packaging/linux/docker/Dockerfile` takes the package named for `TARGETARCH`
+  (amd64 or arm64) and adds `chromium` on arm64. An arm64 image has not been built.
+- **Tested.** Intel: Ubuntu 24.04 and Debian 13 VMs, upgrade, all three e2e sets pass. Pi 4
+  (8 GB, Debian 13, `roman@10.10.1.195`, key `~/.ssh/id_ed25519_josi_pi`, passwordless sudo):
+  fresh install, all services up, `e2e-signin` 5/5, `e2e-pc` 8/9 (the miss was the test asking
+  for a window named Chrome; fixed in the test afterwards, not rerun), `e2e-fake` 4/5.
+- **Open: Codex on the Pi gets no Josi tools.** `e2e-fake` step 5: Claude Code passes, Codex
+  runs but the model is offered 3 tools instead of 6 and never calls one. Codex does start the
+  tool server and list its tools on the Pi (seen with a stand-in server), and Josi's server
+  loads in 2.4 s there, so it is not the 10 s start limit. Not found yet. Intel is fine.
+- **Not tried on ARM:** an upgrade, voice (speech in and out), a real model, a Pi 5, Ubuntu or
+  Raspberry Pi OS (only Debian 13), the Arch arm64 package, the Docker image.
+- The Pi was left with a clean beta.22 install for the owner to set up.
+
 ## In beta.19 (was: after beta.18)
 
 - Managed child accounts cannot add or use MCP servers unless the owner turns on
