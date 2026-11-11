@@ -17,7 +17,7 @@
 import { createHash } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import {
-  SUPPORTED_BUILD_ROUTE, appendEvent, canVerifyLicences, getInstallId, verifyLicence,
+  SUPPORTED_BUILD_ROUTE, appendEvent, canVerifyLicences, getInstallId, isIncludedModule, verifyLicence,
   type Db, type LicenceStatus,
 } from '@josi-ce/core';
 import { asyncRoute } from './async.js';
@@ -112,6 +112,8 @@ function view(status: LicenceStatus & { activatedAt: string | null }) {
           expiresAt: status.payload.expiresAt,
         }
       : null,
+    /** True while parental controls are on for everybody without a licence. */
+    included: isIncludedModule('parental_controls'),
     /** Whether entering a key here could ever work. */
     canActivate: status.state !== 'unverifiable_build',
     /** Only when it could not. A dead-end explanation is what this replaces. */

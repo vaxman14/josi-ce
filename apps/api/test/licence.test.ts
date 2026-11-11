@@ -17,6 +17,10 @@ import { testDb, type TestDb } from '../../../packages/core/test/helpers.js';
 import { entitlementStatus, getInstallId, verifyLicence } from '@josi-ce/core';
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
+import { setIncludedModules } from '@josi-ce/core';
+// These suites exercise the PAID path: a licence switches the module on. Parental
+// controls are included for everybody right now (entitlements.ts), so say so here.
+setIncludedModules([]);
 
 let server: Server;
 let base: string;

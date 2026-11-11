@@ -164,8 +164,10 @@ request). It is in the trail and on the child's web Family page.
 
 ### 8d. Turned on
 
-The web Family page and the Admin "Parental controls" page are now shown. How a customer gets the
-licence is still the owner's decision.
+The web Family page and the Admin "Parental controls" page are now shown. From the build after
+beta.17 parental controls are **always on**: no licence is needed and the routes no longer answer
+404 for a missing licence. The owner may make it a paid module later, so keep handling a 404 on
+`/api/parental/*` as "not available on this server".
 
 ### 8e. Asking Josi: built
 

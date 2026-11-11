@@ -40,6 +40,8 @@ interface LicenceView {
   detail: string;
   activatedAt: string | null;
   licence: LicenceDetails | null;
+  /** Parental controls work here without a licence, for now. */
+  included?: boolean;
   canActivate: boolean;
   supportedBuild: SupportedBuild | null;
   installationId: string;
@@ -117,10 +119,20 @@ export function AdminParentalControls() {
           device-level controls, and verify restrictions independently.
         </p>
       </div>
-      <p className="text-sm text-muted-foreground">
-        Parental controls are a licensed feature. This page is where the licence is activated and
-        managed.
-      </p>
+      {view?.included ? (
+        <Card>
+          <CardTitle>Included for now</CardTitle>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Parental controls are switched on for everyone on this server and no licence is needed.
+            This may become a paid feature later. If it does, a licence activated below keeps it on.
+          </p>
+        </Card>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Parental controls are a licensed feature. This page is where the licence is activated and
+          managed.
+        </p>
+      )}
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {!view ? <Working text="Loading…" /> : null}
 

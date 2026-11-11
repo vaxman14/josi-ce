@@ -288,6 +288,13 @@ on a request: the trail says that something was asked and how it was answered.
 
 ## The licence
 
+**Included for now (owner's decision, 2026-11-10).** Parental controls are on for every
+installation without a licence: `entitlementStatus` answers `included` for the modules listed in
+`includedModules` in `packages/core/src/entitlements.ts`. They may become a paid module again;
+that is removing `parental_controls` from that list, after which everything below applies as
+written and an installation without a live licence goes inert. Wherever this document says the
+module is "off until a licence is activated", read it as describing that paid state.
+
 The supported Admin licence page accepts the installation licence format
 `<payload>.<signature>`: a JSON payload naming the covered features, buyer,
 optional installation id and optional expiry, with an Ed25519 signature over

@@ -24,6 +24,10 @@ import {
   minutesUsedToday, nextOpening, normalizeWindows, parentalAuthority, recordChildActivity,
   setControls, usageSummary,
 } from '../src/parental.js';
+import { setIncludedModules } from '../src/entitlements.js';
+// These suites exercise the PAID path: a licence switches the module on. Parental
+// controls are included for everybody right now (entitlements.ts), so say so here.
+setIncludedModules([]);
 
 const keys = generateKeyPairSync('ed25519');
 /** The publisher's key as a build would carry it: raw 32 bytes, base64. */

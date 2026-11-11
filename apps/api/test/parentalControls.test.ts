@@ -40,6 +40,10 @@ import { testDb, testVault, type TestDb } from '../../../packages/core/test/help
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 import { MasterKey } from '@josi-ce/core';
+import { setIncludedModules } from '@josi-ce/core';
+// These suites exercise the PAID path: a licence switches the module on. Parental
+// controls are included for everybody right now (entitlements.ts), so say so here.
+setIncludedModules([]);
 import { executeFamilyTool, familyToolAvailability } from '../../../packages/agent/src/familyTools.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'josi-ce-parental-'));

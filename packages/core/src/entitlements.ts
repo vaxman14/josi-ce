@@ -165,7 +165,23 @@ export type EntitlementState =
   | 'active'
   | 'expired'
   | 'revoked'
-  | 'wrong_installation';
+  | 'wrong_installation'
+  /** No licence is needed right now: the module is included for everybody. */
+  | 'included';
+
+/** Modules that are on for every installation without a licence.
+ *
+ * OWNER'S DECISION, 2026-11-10: parental controls are always on for now, and
+ * may become a paid module again later. Going back is one line: take the
+ * module out of this list and every installation without a live licence goes
+ * inert again, exactly as before. The licence machinery below is untouched and
+ * still works, so a licence activated today keeps working after that change.
+ *
+ * A setter rather than a constant only so the suites can still exercise the
+ * paid path; nothing in production calls it. */
+let includedModules: ReadonlySet<PaidModule> = new Set<PaidModule>(['parental_controls']);
+export function isIncludedModule(module: PaidModule): boolean { return includedModules.has(module); }
+export function setIncludedModules(modules: readonly PaidModule[]): void { includedModules = new Set(modules); }
 
 export interface EntitlementStatus {
   module: PaidModule;
@@ -220,7 +236,15 @@ export async function entitlementStatus(
     [module],
   );
   const row = rows[0];
-  if (!row) return ABSENT(module);
+  if (!row) return isIncludedModule(module) ? { ...ABSENT(module), state: 'included', entitled: true } : ABSENT(module);
+  const licensed = await licensedStatus(db, row, opts);
+  // An included module is on whatever the licence row says. A live licence is
+  // still reported as itself, so the admin page shows what was activated.
+  return !licensed.entitled && isIncludedModule(module) ? { ...licensed, state: 'included', entitled: true } : licensed;
+}
+
+async function licensedStatus(db: Db, row: EntitlementRow, opts: { now?: Date }): Promise<EntitlementStatus> {
+  const module = row.module;
 
   const base = {
     module,
