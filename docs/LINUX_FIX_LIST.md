@@ -145,3 +145,28 @@ comes back that the person would want to talk about (a reply, a result, a surpri
 should say it and wait for the person, as in a conversation, instead of filing it as a
 fact and running the next step. The plan saying "if he confirms, create the meeting" is
 permission to prepare it, not a reason to skip the exchange.
+
+## TO FIX, in order (Roman, 2026-11-10: "add those things to the fix")
+These are no longer notes. They are the fix list for the next round, from Roman using
+beta.11 to beta.14 on gate as a user. Details for each are in the entries above.
+1. **Goals hold a conversation.** When something comes back that the person would want to
+   talk about (a reply, a result, a surprise), Josi says it and waits for the person. She
+   does not file it as a fact and run the next step. Shared code.
+2. **A goal notices its own work.** When the email a goal asked for is approved and sent
+   (including a request prepared again after expiry), the goal ticks that step and goes
+   on by itself. Its question is never about a card that no longer exists. Shared code.
+3. **A goal that waits for a reply watches for it.** It checks the mailbox on a schedule
+   and tells the person when the reply arrives, or that none has after a while. Shared code.
+4. **Approvals that expire say so.** Today the card vanishes after fifteen minutes and
+   Josi's last message still points at it. Decide the time limit with Roman (fifteen
+   minutes may be short) and have her say when one has expired. Shared code.
+5. **One word for the second button.** Josi says "Approve or Deny"; the web card says
+   "Approve" and "Not now". Web and agent.
+6. **Typed approval on Windows, Mac and iPhone.** They do not send `reply_to_message_id`,
+   so a typed yes is refused there. Their sessions' work; the server side is ready.
+7. **The installer ghost's animation.** Still looks weird to Roman in a real terminal; ask
+   him what (screenshot or recording) before touching it. Linux.
+8. **A typed-answers run in the VM tests.** The e2e runs use `--yes` and missed both the
+   lost keystrokes and the screen drift. Linux.
+9. **An Admin screen for the sending account** (pick or change it after setup). Shared.
+The built-in debugger Roman asked for is planned separately: `docs/JOSI_DEBUGGER_PLAN.md`.
