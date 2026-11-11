@@ -105,3 +105,25 @@ its trail stay still while the ghost moves under them; the eyes blink every 40 t
 the whole ghost is redrawn on every frame change, which can flicker over ssh. My check
 was a terminal model that only shows the final state of each screen, so it could not see
 motion at all.
+
+**A goal that sends an email loses the thread (Roman, gate, 2026-11-10). Shared code, not Linux.**
+Roman asked Josi to check whether someone was free for a call and create the meeting if he
+confirmed. She made a four-step goal: send the email, wait for and check the reply, draft
+the event, get it approved. What happened on gate (beta.14):
+1. The email approval expired; Roman had it prepared again and approved it; both emails
+   were sent (tasks `confirmed`, action states `succeeded`).
+2. The goal never learned that. `work_goals.state` stayed `needs_instruction`, with the
+   question "Please approve the resurfaced email action card", unchanged for an hour.
+   Step 1 was not ticked, so step 2 never started.
+3. The other person replied. Nothing was scheduled to look at the inbox
+   (`continuation_ready_at` null), and Josi said nothing. Roman had to be told to tell her.
+What it should do, from the person's side: once the email it asked for is sent, the goal
+moves on by itself; while it is waiting for a reply it checks the mailbox on a schedule
+and tells the person when the reply comes (or that none has, after a while); the question
+it shows is never about a card that no longer exists.
+Where to look: how an approved action reports back to the goal that asked for it (the
+fresh request made by `draft_email` or by `prepareAgain` in actionState.ts is a new task
+with no link to the goal's step); `work-goals.reconcile` in the worker; how a goal sets
+`continuation_ready_at` when its next step is "wait for a reply"; whether anything reads
+mail without being asked. Not investigated beyond gate's status columns. Roman: a real
+problem, do not fix now.
