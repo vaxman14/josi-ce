@@ -206,8 +206,14 @@ export async function executeAssistantTool(
         if(prepared){
           const previous=await getTask(db,prepared.task_id);
           const unchanged=Object.entries(draftSlots).every(([key,value])=>JSON.stringify(previous.slots[key])===JSON.stringify(value));
-          if(unchanged)return {ok:true,task_id:previous.id,state:'prepared',approval_id:prepared.approval_id,summary:await actionSummary(db,userId,domain,operation,previous.slots),message:'This exact action is already prepared and waiting for approval.'};
-          await db.query(`update assistant_action_states set status='superseded' where id=$1 and status='prepared'`,[prepared.id]);
+          // "Already waiting" is only true while its approval can still be answered.
+          // Approvals expire (fifteen minutes): after that there is no card and no
+          // button anywhere, so the same draft is prepared afresh instead of
+          // pointing the person at a control that no longer exists.
+          const live=(!prepared.expires_at||new Date(prepared.expires_at)>new Date())&&!!prepared.approval_id
+            &&(await db.query(`select 1 from approvals where id=$1 and status='pending' and (expires_at is null or expires_at>now())`,[prepared.approval_id])).length>0;
+          if(unchanged&&live)return {ok:true,task_id:previous.id,state:'prepared',approval_id:prepared.approval_id,summary:await actionSummary(db,userId,domain,operation,previous.slots),message:'This exact action is already prepared and waiting for approval.'};
+          await db.query(`update assistant_action_states set status=$2 where id=$1 and status='prepared'`,[prepared.id,unchanged?'expired':'superseded']);
           if(prepared.approval_id)await db.query(`update approvals set status='expired' where id=$1 and status='pending'`,[prepared.approval_id]);
           if(previous.state==='awaiting_approval')await transition(db,previous.id,'cancelled',{actor:'user',actorUserId:userId});
         }

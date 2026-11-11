@@ -25,6 +25,33 @@ async function present(result:{task_id?:unknown},body:string){
 }
 
 describe('action drafts are merged only inside their namespace',()=>{
+  it('prepares the same email afresh once its approval has expired, instead of pointing at a card that is gone',async()=>{
+    const draft={recipient:'romanvaxman14@gmail.com',subject:'Call tomorrow',body:'Are you free at nine?'};
+    const first=await executeAssistantTool(db,ctx(),'draft_email',draft) as any;
+    expect(first.state).toBe('prepared');
+    await present(first,'Approve?');
+    const pending=()=>db.query<{id:string}>(`select id from approvals where owner_user_id=$1 and status='pending' and (expires_at is null or expires_at>now())`,[user]);
+    expect((await pending()).map(row=>row.id)).toEqual([first.approval_id]);
+
+    // Asked again while it is still waiting: the same request, no duplicate.
+    const again=await executeAssistantTool(db,ctx(),'draft_email',draft) as any;
+    expect(again).toMatchObject({state:'prepared',approval_id:first.approval_id,task_id:first.task_id});
+    expect(await pending()).toHaveLength(1);
+
+    // Fifteen minutes pass. Nothing can be approved any more.
+    await db.query(`update approvals set expires_at=now()-interval '1 minute' where id=$1`,[first.approval_id]);
+    await db.query(`update assistant_action_states set expires_at=now()-interval '1 minute' where task_id=$1`,[first.task_id]);
+    expect(await pending()).toHaveLength(0);
+
+    const fresh=await executeAssistantTool(db,ctx(),'draft_email',draft) as any;
+    expect(fresh.state).toBe('prepared');
+    expect(fresh.approval_id).not.toBe(first.approval_id);
+    expect(fresh.task_id).not.toBe(first.task_id);
+    expect((await pending()).map(row=>row.id)).toEqual([fresh.approval_id]);
+    expect((await db.query<{status:string}>(`select status from assistant_action_states where task_id=$1`,[first.task_id]))[0].status).toBe('expired');
+    expect((await getTask(db,first.task_id)).state).toBe('cancelled');
+  });
+
   it('completes the exact email transcript while preserving recipient and body',async()=>{
     const first=await executeAssistantTool(db,ctx(),'draft_email',{
       recipient:'romanvaxman14@gmail.com',body:'testing the connection',
