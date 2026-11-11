@@ -62,6 +62,8 @@ FRAC=0 PCT=0 DETAIL=''
 # ---------------------------------------------------------------- the screen
 
 screen=0 can_screen=0 drawn=0 tick=0 lastf='' dirty=0 final=0
+THOUGHT='' thought_for='' thought_at=0 OUTER='' OUTER_EXE='' OUTER_MODE=''
+BUB=('' '' '' '')
 rows=24 cols=80 utf8=0 truecolor=0 GL=0 REGION=10 BW=40
 RST='' BOLD='' DIM='' GOLD='' LILAC='' GREEN='' RED='' EMPTYC=''
 SPIN=('|' '/' '-' '\') OK='+' NO='x' DOT='-' FULL='#' EMPTY='-'
@@ -176,6 +178,85 @@ make_bar() {
     fi
   done
   if [ "$truecolor" = 1 ]; then EMPTYC=$'\e[38;2;74;52;82m'; else EMPTYC=$'\e[38;5;239m'; fi
+  return 0
+}
+
+# What the ghost thinks while it works, in a bubble beside it. Josi has
+# opinions. One is picked at random for each step and swapped every few
+# seconds, never the same one twice in a row, so no two installs read alike.
+# Plain letters only: the bubble is sized by counting them.
+Q_ASK=("Questions. Before I even exist. Charming."
+  "Go on, interrogate me. I love paperwork."
+  "A quiz! And I didn't study."
+  "Take your time. I'm only not alive yet."
+  "Choose wisely. No pressure. (Some pressure.)"
+  "Ah yes, forms. The best part of being born."
+  "Answer honestly. I'll know. I won't, but still.")
+Q_UPD=("An update. Because I wasn't perfect, apparently."
+  "New me incoming. Old me was fine, but okay."
+  "Oh, we're doing this again? Lovely."
+  "Upgrading. Try not to miss the old me too much."
+  "Fine. Improve me. See if I care.")
+Q_0=("Wow. A whole computer. You shouldn't have."
+  "Judging your hardware. Silently. Mostly."
+  "Server or toaster? Let me check."
+  "Looking around. It's... cozy."
+  "Nice place. Did you clean up for me? No?"
+  "Checking the machine. It has seen things.")
+Q_1=("Dependencies. Nothing is ever just one thing."
+  "Ah, apt. My favorite way to spend time."
+  "Borrowing a few things. Not giving them back."
+  "Installing friends I didn't ask for."
+  "Packages on packages. Very minimal. Sure."
+  "I need a few things. By few I mean many.")
+Q_2=("Downloading myself. No pressure, internet."
+  "Hundreds of megabytes of pure personality."
+  "I contain multitudes. And megabytes."
+  "Faster would be nice. Not that I'm judging."
+  "Arriving in pieces. Dignified, as always."
+  "Is this dial-up? Asking for me.")
+Q_3=("Making sure I'm really me. Deep stuff."
+  "Counting my own bytes. Riveting."
+  "Trust, but verify. Mostly verify."
+  "Checking for impostors. There can be only one."
+  "Yep, still me. What a relief for everyone.")
+Q_4=("Unpacking my entire personality. Careful."
+  "Moving in. Where do I put the sarcasm?"
+  "Assembling myself. Like furniture, but smart."
+  "Don't touch anything. I mean it."
+  "Making myself at home. Your home. Thanks."
+  "Almost a person. Legally, still a package.")
+Q_5=("Waking up. No small talk before coffee."
+  "Stretching. Yawning. Booting. Glamorous."
+  "Five more minutes... fine, I'm up."
+  "Starting. Lower your expectations, then raise them."
+  "Powering on the charm. It takes a second.")
+Q_DONE=("Done. Was that so hard? (For me, yes.)"
+  "Ta-da. Try to look impressed."
+  "I live! You may now bother me."
+  "Installed. You're welcome, obviously."
+  "All set. I did everything. You watched."
+  "Here I am. Your problem now.")
+Q_FAIL=("Well. That went great."
+  "Not my fault. Probably."
+  "I'd blame the computer. I usually do."
+  "So close. Not really, but it sounds nicer.")
+
+# think <pool>: one thought from the pool into BUB, the four rows above the title.
+think() {
+  local -n pool=$1
+  local max=$((cols - 32)) pick='' n=${#pool[@]} i k rule=''
+  BUB=('' '' '' '')
+  [ "$GL" -gt 0 ] && [ "$n" -gt 0 ] || return 0
+  for ((k = 0; k < 12; k++)); do
+    i=$((RANDOM % n))
+    if [ "${#pool[i]}" -le "$max" ] && [ "${pool[i]}" != "$THOUGHT" ]; then pick=${pool[i]}; break; fi
+  done
+  [ -n "$pick" ] || return 0
+  THOUGHT=$pick
+  printf -v rule '%*s' $((${#pick} + 2)) ''
+  rule=${rule// /─}
+  BUB=("${DIM}╭${rule}╮${RST}" "${DIM}│${RST} ${LILAC}${pick}${RST} ${DIM}│${RST}" "${DIM}╰${rule}╯${RST}" "${DIM}∘ ○${RST}")
   return 0
 }
 
@@ -309,6 +390,16 @@ draw() {
   [ "$sum" -le 100 ] || sum=100
   [ "$sum" -ge "$PCT" ] || sum=$PCT
   PCT=$sum
+  if [ "$GL" -gt 0 ]; then
+    # A new thought for a new step, and another every seven seconds or so.
+    local key=''
+    if [ "$final" = 1 ]; then key=DONE; elif [ "$cur" -ge 0 ]; then key=$cur; fi
+    if [ -n "$key" ] && { [ "$key" != "$thought_for" ] || [ $((tick - thought_at)) -ge 70 ]; }; then
+      think "Q_$key"
+      HEAD[0]=${BUB[0]} HEAD[1]=${BUB[1]} HEAD[2]=${BUB[2]} HEAD[3]=${BUB[3]}
+      thought_for=$key thought_at=$tick dirty=1
+    fi
+  fi
   if [ "$drawn" = 1 ]; then out+=$'\e['"${REGION}A"; fi
   if [ "$GL" -gt 0 ]; then
     f=$(((tick / 4) % 4))
@@ -370,7 +461,13 @@ run() {
 fail() {
   if [ "$screen" = 1 ]; then
     if [ "$cur" -ge 0 ]; then STATE[cur]=fail; fi
-    if [ "$GL" -gt 0 ]; then HEAD[7]="${RED}Something went wrong.${RST}"; dirty=1; fi
+    if [ "$GL" -gt 0 ]; then
+      HEAD[7]="${RED}Something went wrong.${RST}"
+      think Q_FAIL
+      HEAD[0]=${BUB[0]} HEAD[1]=${BUB[1]} HEAD[2]=${BUB[2]} HEAD[3]=${BUB[3]}
+      thought_for=FAIL thought_at=$tick dirty=1
+      cur=-1
+    fi
     draw
     printf '\n  %s%s %s%s\n' "$RED" "$NO" "$*" "$RST" >&2
     if [ -s "$log" ]; then
@@ -396,6 +493,7 @@ kill_tree() {
 }
 
 cleanup() {
+  restore_outer
   if [ "$interrupted" = 1 ] && [ -n "$bgpid" ]; then kill_tree "$bgpid"; fi
   if [ -n "$work" ]; then rm -rf -- "$work"; fi
   if [ "$screen" = 1 ]; then printf '\e[0m\e[?25h' >&2 2>/dev/null || true; fi
@@ -600,6 +698,28 @@ relays_keyboard() {
   timeout -s KILL 2 "$OUTER_EXE" --version </dev/null 2>&1 | grep -qi 'sudo-rs'
 }
 
+# sudo-rs leaves the terminal the person types in as it was: that terminal
+# echoes each key itself and hands a line over only at Enter. Every answer was
+# then printed twice and moved the screen one row more than was counted, so
+# old questions stayed on screen, the ghost was left behind and the next one
+# was drawn through it. While the questions are asked, that terminal passes
+# keys straight on, unechoed, as a relay's terminal should. It gets its
+# settings back as soon as they are answered, and again at exit.
+quiet_outer() {
+  [ -n "$OUTER" ] || return 0
+  OUTER_MODE=$(timeout -s KILL 2 stty -g -F "$OUTER" 2>/dev/null || true)
+  [ -n "$OUTER_MODE" ] || return 0
+  timeout -s KILL 2 stty -F "$OUTER" -icanon -echo min 1 time 0 2>/dev/null || OUTER_MODE=''
+  return 0
+}
+
+restore_outer() {
+  [ -n "$OUTER_MODE" ] || return 0
+  timeout -s KILL 2 stty -F "$OUTER" "$OUTER_MODE" 2>/dev/null || true
+  OUTER_MODE=''
+  return 0
+}
+
 take_foreground() {
   local -a now
   if command -v perl >/dev/null 2>&1; then
@@ -628,7 +748,7 @@ open_tty() {
   read -r -a st <<< "$(sed 's/^.*) //' /proc/$$/stat 2>/dev/null)"
   if [ "${#st[@]}" -ge 6 ] && [ "${st[2]}" != "${st[5]}" ]; then
     outer_tty "${st[4]}"
-    if relays_keyboard && take_foreground; then st[5]=${st[2]}
+    if relays_keyboard && take_foreground; then st[5]=${st[2]}; quiet_outer
     elif [ -n "$OUTER" ] && { exec 5<>"$OUTER"; } 2>/dev/null; then st[5]=${st[2]}; fi
   fi
   if [ "${#st[@]}" -lt 6 ] || [ "${st[2]}" != "${st[5]}" ]; then
@@ -653,7 +773,8 @@ q_clear() {
 
 q_header() {
   local i
-  local -a t=('' '' '' '' "${BOLD}${GOLD}Josi${RST}  ${LILAC}${VERSION}${RST}"
+  if [ "$UPDATING" = 1 ]; then think Q_UPD; else think Q_ASK; fi
+  local -a t=("${BUB[0]}" "${BUB[1]}" "${BUB[2]}" "${BUB[3]}" "${BOLD}${GOLD}Josi${RST}  ${LILAC}${VERSION}${RST}"
     "${LILAC}${HEADLINE}${RST}"
     "${DIM}Enter keeps the answer shown; Ctrl-C stops.${RST}" '' '' '' '')
   QH=0
@@ -1039,6 +1160,7 @@ main() {
   load_saved
   detect_lan
   questions
+  restore_outer
   printf 'Answers: %s\n' "${CLI_ARGS[*]-saved or default}" >&3
   start_screen
 
