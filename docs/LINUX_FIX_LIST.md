@@ -93,3 +93,15 @@ sudo-rs made) instead of the outer one, so check whether that terminal's size an
 line count still agree, and that the header is cleared before the progress ghost is
 drawn. A 30-row window may also be too short for both. Reproduce by typing through a
 real pty on Ubuntu 26.04; the VM runs use `--yes` and never draw the questions.
+
+**Installer: the ghost's animation still looks weird (Roman, beta.13 on gate, 2026-11-10).**
+The remarks in the thought bubble are fine. The doubled ghost and leftover questions were
+fixed in beta.13 (`efcaba8`), so this is about the animation itself, seen in a real
+Terminal window over ssh. Roman said not to redo it now and has not yet said what looks
+wrong. Ask him first (a screenshot or a short screen recording). Things to look at when
+it is taken up: the float is done by shifting the whole picture down a row at a time
+(`make_frames`, offsets 0 1 2 1), which reads as a jump in half-block art; the bubble and
+its trail stay still while the ghost moves under them; the eyes blink every 40 ticks;
+the whole ghost is redrawn on every frame change, which can flicker over ssh. My check
+was a terminal model that only shows the final state of each screen, so it could not see
+motion at all.
