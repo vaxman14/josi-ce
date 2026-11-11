@@ -350,7 +350,17 @@ the beta.17 draft is deleted. Gate is still on beta.14.
 - `vmtest.sh` waits: `pgrep -f "[v]mtest.sh"` matches a stale idle bash (pid 2634591) on claw, so
   wait on the "== ALL DONE" line in the log instead.
 
-## After beta.18 (not in a build yet)
+## beta.19 (2026-11-11, 01:43 PST)
+
+Commit `f4897d3`. Built on claw (build-21.log). Full suite: no new failures. Upgrade from beta.18
+passed all three e2e scripts on both VMs. LAN installer and the one GitHub draft are beta.19; the
+beta.18 draft is deleted. Gate was on beta.16 when last looked.
+
+- The Ubuntu VM's first upgrade failed with a full disk: every old version stays in
+  `/var/lib/josi/versions` (fix list: "old versions pile up"). Cleared beta.4 to beta.15 by hand on
+  that VM; it then passed. The Debian VM is at 47%. Gate has 1.8T free.
+
+## In beta.19 (was: after beta.18)
 
 - Managed child accounts cannot add or use MCP servers unless the owner turns on
   `allowManagedChildren` in the MCP policy (migration 0134, `mcpPermitted`). The owner asked for
