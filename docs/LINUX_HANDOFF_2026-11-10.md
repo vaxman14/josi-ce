@@ -373,6 +373,27 @@ LAN installer and the one GitHub draft are beta.20. Both VMs pass all three e2e 
   builds were still alive on claw and were killed. A single clean run passed. Before starting
   vmtest, check `ps -eo pid,cmd | grep "[v]mtest"` is empty, and wait on "== ALL DONE" in the log.
 
+## beta.20 and the Docker image (2026-11-11, 02:19 PST)
+
+Commit `d5ceb8b` (Connections page: search box, everything collapsed; checked in Chrome against the
+Ubuntu VM). Built on claw (build-22.log). Both VMs upgraded and passed all three e2e scripts. LAN
+installer serves beta.20.
+
+- Docker: `packaging/linux/docker` (Debian 13 + systemd + the same .deb). Image `josi:1.2.8-beta.20`
+  built on claw from the beta.20 package; all three e2e scripts pass inside the container.
+  Packed as `~/josi-linux/lan/josi-docker-1.2.8-beta.20.tar.gz` (1.8 GB) with a starter served at
+  `http://10.10.1.3:18099/docker` (`curl -fsSL … | sudo bash`; `JOSI_PORT`, `JOSI_NAME`,
+  `JOSI_HOST_ADDRESS`). A fresh one runs on claw as `josi-docker` at `http://10.10.1.3:18095`.
+- A systemd container has no console without `docker run -t`, so `docker logs` is empty and the
+  setup link is only in the journal (`docker exec <name> journalctl -u josi-firstboot -o cat`).
+  README, compose file and starter all use a terminal now (commits `767cd92`, `1a895fa`).
+- The image is not built by `build-release.sh` and is not on any registry.
+- GitHub has TWO `v1.2.8-beta.20` drafts (ids 441537589 and 441539939, same commit, 9 files each);
+  the first appeared two minutes before this session made the second. Deleting one was refused by
+  the permission check, so the owner has to delete one by hand.
+- Do not wait with `pgrep -f` on a pattern that also appears later in the same command line; it
+  matches itself. Use a marker file.
+
 ## In beta.19 (was: after beta.18)
 
 - Managed child accounts cannot add or use MCP servers unless the owner turns on
