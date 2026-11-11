@@ -2,14 +2,20 @@
 # Build the Josi CE release for Linux and, if asked, attach it to the GitHub
 # release the Windows and Mac installers share.
 #
-#   scripts/linux/build-release.sh --version 1.0.0 [--publish] [--skip-provision] [--skip-code] [--skip-portable]
+#   scripts/linux/build-release.sh --version 1.0.0 [--publish] [--skip-provision] [--skip-code] [--skip-portable] [--arm64]
+#
+# --arm64 also builds the arm64 (aarch64) packages, for a Raspberry Pi and other
+# ARM machines. The parts that must be compiled run in an arm64 Debian image
+# under emulation, so Docker needs it switched on once per boot:
+#   docker run --privileged --rm tonistiigi/binfmt --install arm64
+# They are compiled the first time and kept in <build base>-aarch64.
 #
 # Runs on an x86_64 Linux machine with Docker, Node and npm. Every step is an
 # existing script under scripts/linux; this one only orders them, names the
 # version once, and collects the result in <build base>/releases/<version>.
 set -euo pipefail
 
-version=; publish=0; provision=1; code=1; portable=0
+version=; publish=0; provision=1; code=1; portable=0; arm64=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) version=${2:-}; shift 2 ;;
@@ -18,6 +24,7 @@ while [ $# -gt 0 ]; do
     --skip-code) code=0; shift ;;
     --skip-portable) portable=0; shift ;;
     --portable) portable=1; shift ;;
+    --arm64) arm64=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -76,6 +83,35 @@ python3 -B scripts/linux/build-arch.py
 python3 -B scripts/linux/build-deb.py
 # The Ghost Stage needs all 14 clips in both formats and the still.
 python3 -B scripts/linux/check-ghost-assets.py
+
+if [ "$arm64" = 1 ]; then
+  # A second runtime and its packages, in a build folder of their own. The
+  # compiled server and web app are the ones built above: they are the same
+  # for every processor.
+  arm_base=$base-aarch64
+  (
+    export JOSI_LINUX_ARCH=aarch64 JOSI_LINUX_BUILD_BASE="$arm_base"
+    if [ "$provision" = 1 ] || [ ! -f "$arm_base/prefix/.complete" ]; then
+      step 'arm64: pinned inputs, private Python, then PostgreSQL, the setup helper and the voice packages (emulated, slow)'
+      [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ] \
+        || fail 'arm64 emulation is off: run  docker run --privileged --rm tonistiigi/binfmt --install arm64'
+      rm -f "$arm_base/prefix/.complete"
+      python3 -B scripts/linux/acquire.py
+      bash scripts/linux/build-base.sh python
+      bash scripts/linux/build-base.sh portable
+      touch "$arm_base/prefix/.complete"
+    fi
+    step "arm64: runtime staging and payload inventory ($version)"
+    rm -rf "$arm_base/stage/runtime/app/node_modules"
+    python3 -B scripts/linux/stage.py
+    step 'arm64: packages, Arch (pacman) and Debian/Ubuntu'
+    rm -f "$arm_base/artifacts/SHA256SUMS.txt" "$arm_base/artifacts"/josi*.deb "$arm_base/artifacts"/josi*.pkg.tar.zst "$arm_base/artifacts"/josi-root-*.tar.zst
+    python3 -B scripts/linux/build-arch.py
+    python3 -B scripts/linux/build-deb.py
+    python3 -B scripts/linux/check-ghost-assets.py
+  )
+  cp "$arm_base/artifacts"/josi*_arm64.deb "$arm_base/artifacts"/josi-*-aarch64.pkg.tar.zst "$arm_base/artifacts"/josi-root-*-aarch64.tar.zst "$out/"
+fi
 
 step 'One-command installer (linux) and update feed (linux-latest.json)'
 python3 -B scripts/linux/build-headless-installer.py

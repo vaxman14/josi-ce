@@ -1,4 +1,6 @@
-FROM debian:12-slim@sha256:f3034a6ec3c1205360777c4aae76234998866ad18806ae62b63a3f84ccad782b
+# The arm64 build passes the arm64 image of the same Debian 12 (build-base.sh).
+ARG BASE=debian:12-slim@sha256:f3034a6ec3c1205360777c4aae76234998866ad18806ae62b63a3f84ccad782b
+FROM ${BASE}
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \

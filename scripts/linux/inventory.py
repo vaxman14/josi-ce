@@ -12,7 +12,8 @@ def digest(path):
     with path.open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
 def main(root):
-    architecture={'x86_64':'x86_64','aarch64':'aarch64'}[platform.machine()]
+    architecture=os.environ.get('JOSI_LINUX_ARCH') or {'x86_64':'x86_64','aarch64':'aarch64'}[platform.machine()]
+    if architecture not in ('x86_64','aarch64'):raise SystemExit('Unknown JOSI_LINUX_ARCH: '+architecture)
     files=[];native=[]
     for path in sorted(root.rglob('*')):
         relative=path.relative_to(root).as_posix()

@@ -81,12 +81,17 @@ def stage_browser_extension(app):
         shutil.copytree(chrome,target,symlinks=False)
 
 def main():
-    architecture={'x86_64':'x86_64','aarch64':'aarch64'}[platform.machine()]
+    # JOSI_LINUX_ARCH names the processor being built for when it is not this machine's.
+    architecture=os.environ.get('JOSI_LINUX_ARCH') or {'x86_64':'x86_64','aarch64':'aarch64'}[platform.machine()]
+    if architecture not in ('x86_64','aarch64'):raise SystemExit('Unknown JOSI_LINUX_ARCH: '+architecture)
     if RUNTIME.exists():shutil.rmtree(RUNTIME)
     app=RUNTIME/'app';app.mkdir(parents=True,exist_ok=True)
     for path in [REPO/'package.json',REPO/'package-lock.json',*REPO.glob('packages/*/package.json'),*REPO.glob('apps/*/package.json')]:copy(path,app/path.relative_to(REPO))
     env={**os.environ,'npm_config_cache':str(CACHE/'npm')}
-    if not (app/'node_modules').exists():subprocess.run(['npm','ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],cwd=app,env=env,check=True)
+    # Built for another processor: npm picks the prebuilt native parts (koffi,
+    # canvas, argon2) for that one instead of this machine's.
+    foreign=[] if architecture=={'x86_64':'x86_64','aarch64':'aarch64'}.get(platform.machine()) else ['--os=linux','--cpu='+('x64' if architecture=='x86_64' else 'arm64'),'--libc=glibc']
+    if not (app/'node_modules').exists():subprocess.run(['npm','ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund',*foreign],cwd=app,env=env,check=True)
     metadata=json.loads((app/'package.json').read_text());metadata.update(name='josi-ce-native-runtime',version=VERSION,type='module')
     (app/'package.json').write_text(json.dumps(metadata,indent=2)+'\n')
     for path in [*REPO.glob('packages/*/dist'),*(path for path in REPO.glob('apps/*/dist') if path.parent.name!='hosted'),REPO/'packages/db/migrate.mjs',REPO/'packages/db/migrations']:

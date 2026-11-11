@@ -17,9 +17,11 @@ def run(arguments,**kwargs):
     subprocess.run([str(value) for value in arguments],env=env,check=True,**kwargs)
 
 def main():
-    if os.uname().machine!='x86_64':raise ValueError('This acceptance build currently has an x86_64 Python/OpenBLAS lock')
     if not PYTHON.exists():raise ValueError('Run build-base.sh python first')
     portable=os.environ.get('JOSI_PORTABLE_BUILD')=='1'
+    # The portable build takes OpenBLAS from its Debian image, for either processor.
+    if not portable and os.uname().machine!='x86_64':raise ValueError('The non-portable build has an x86_64 OpenBLAS lock only')
+    multiarch=Path('/usr/lib')/(os.uname().machine+'-linux-gnu')
     if not portable and not SYSROOT.exists():
         SYSROOT.mkdir(parents=True);run(['bsdtar','-xf',CACHE/'openblas-0.3.34-1-x86_64.pkg.tar.zst','-C',SYSROOT])
     if SOURCE.exists():shutil.rmtree(SOURCE)
@@ -46,11 +48,11 @@ def main():
     wheel=next(wheels.glob('ctranslate2-*.whl'));run([PYTHON,'-m','pip','install','--force-reinstall','--no-deps',wheel])
     run([PYTHON,REPO/'services/voice-box/patch_whisper.py'])
     library=BASE/'prefix/python/lib/libopenblas.so.0';library.parent.mkdir(parents=True,exist_ok=True)
-    openblas=Path('/usr/lib/x86_64-linux-gnu/openblas-pthread/libopenblas.so.0') if portable else SYSROOT/'usr/lib/libopenblas.so.0'
+    openblas=multiarch/'openblas-pthread/libopenblas.so.0' if portable else SYSROOT/'usr/lib/libopenblas.so.0'
     shutil.copy2(openblas,library)
     if portable:
         for name in ('libgfortran.so.5','libquadmath.so.0','libgomp.so.1'):
-            shutil.copy2(Path('/usr/lib/x86_64-linux-gnu')/name,library.parent/name)
+            shutil.copy2(multiarch/name,library.parent/name)
     for shared in (CT2/'lib').glob('libctranslate2.so*'):shutil.copy2(shared,library.parent/shared.name)
     run([PYTHON,'-m','pip','check'])
     run([PYTHON,'-c','import ctranslate2,numpy,onnxruntime; print(ctranslate2.__version__,numpy.__version__,onnxruntime.__version__)'],

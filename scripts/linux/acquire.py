@@ -24,7 +24,10 @@ def fetch(url,target,expected,size=None):
     temporary.rename(target)
 
 def main():
-    architecture={'x86_64':'x86_64','aarch64':'aarch64'}[__import__('platform').machine()]
+    platform=__import__('platform')
+    # JOSI_LINUX_ARCH names the processor being built for when it is not this machine's.
+    architecture=os.environ.get('JOSI_LINUX_ARCH') or {'x86_64':'x86_64','aarch64':'aarch64'}[platform.machine()]
+    if architecture not in ('x86_64','aarch64'):raise SystemExit('Unknown JOSI_LINUX_ARCH: '+architecture)
     base=json.loads((REPO/'packaging/linux/build-inputs.lock.json').read_text())
     for name in ('node','python','caddy'):
         if architecture not in base[name]:
