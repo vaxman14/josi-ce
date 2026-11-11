@@ -51,7 +51,8 @@ def main():
     openblas=multiarch/'openblas-pthread/libopenblas.so.0' if portable else SYSROOT/'usr/lib/libopenblas.so.0'
     shutil.copy2(openblas,library)
     if portable:
-        for name in ('libgfortran.so.5','libquadmath.so.0','libgomp.so.1'):
+        # libquadmath exists on x86_64 only; arm64's libgfortran does not use it.
+        for name in ('libgfortran.so.5','libgomp.so.1',*(['libquadmath.so.0'] if os.uname().machine=='x86_64' else [])):
             shutil.copy2(multiarch/name,library.parent/name)
     for shared in (CT2/'lib').glob('libctranslate2.so*'):shutil.copy2(shared,library.parent/shared.name)
     run([PYTHON,'-m','pip','check'])
