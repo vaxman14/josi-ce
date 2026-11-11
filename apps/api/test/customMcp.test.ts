@@ -194,6 +194,31 @@ describe('who may add an MCP server', () => {
     expect((await call('/api/connections/mcp', { method: 'POST', body: bearer() })).body.error).toContain('Ask Roman first.');
   });
 
+  it('keeps an account a parent manages out unless the owner switches that on', async () => {
+    // Bob is a managed child of Alice. Everybody is allowed, and still not Bob.
+    await db.query(
+      `insert into parental_links (parent_user_id, child_user_id, created_by_user_id) values ($1, $2, $1)`,
+      [ids.alice, ids.bob],
+    );
+    await call('/api/admin/mcp/policy', { method: 'PUT', jar: jars.admin, body: { mode: 'everyone' } });
+    expect((await call('/api/admin/mcp/policy', { jar: jars.admin })).body.allowManagedChildren).toBe(false);
+    expect((await call('/api/connections/mcp', { jar: jars.alice })).body.allowed).toBe(true);
+    expect((await call('/api/connections/mcp', { jar: jars.bob })).body.allowed).toBe(false);
+    const refused = await call('/api/connections/mcp', { method: 'POST', jar: jars.bob, body: bearer() });
+    expect(refused.status).toBe(403);
+    expect(mcp.seen).toEqual([]);
+
+    // The owner's switch. One setting for the installation; it names nobody.
+    const on = await call('/api/admin/mcp/policy', { method: 'PUT', jar: jars.admin, body: { mode: 'everyone', allowManagedChildren: true } });
+    expect(on.body).toMatchObject({ ok: true, allowManagedChildren: true });
+    expect((await call('/api/connections/mcp', { jar: jars.bob })).body.allowed).toBe(true);
+    // Saving the policy without the switch leaves it where it was.
+    await call('/api/admin/mcp/policy', { method: 'PUT', jar: jars.admin, body: { mode: 'everyone' } });
+    expect((await call('/api/admin/mcp/policy', { jar: jars.admin })).body.allowManagedChildren).toBe(true);
+    await call('/api/admin/mcp/policy', { method: 'PUT', jar: jars.admin, body: { mode: 'everyone', allowManagedChildren: false } });
+    expect((await call('/api/connections/mcp', { jar: jars.bob })).body.allowed).toBe(false);
+  });
+
   it('keeps the policy routes for the owner alone, and refuses a mode that is not one', async () => {
     expect((await call('/api/admin/mcp/policy')).status).toBe(403);
     expect((await call('/api/admin/mcp/policy', { method: 'PUT', body: { mode: 'everyone' } })).status).toBe(403);

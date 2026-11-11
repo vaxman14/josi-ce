@@ -350,6 +350,12 @@ the beta.17 draft is deleted. Gate is still on beta.14.
 - `vmtest.sh` waits: `pgrep -f "[v]mtest.sh"` matches a stale idle bash (pid 2634591) on claw, so
   wait on the "== ALL DONE" line in the log instead.
 
+## After beta.18 (not in a build yet)
+
+- Managed child accounts cannot add or use MCP servers unless the owner turns on
+  `allowManagedChildren` in the MCP policy (migration 0134, `mcpPermitted`). The owner asked for
+  this to be an admin setting, default blocked.
+
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
 (text files she writes); one new draft release when this lands; login terminal may run

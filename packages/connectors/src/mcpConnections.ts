@@ -33,6 +33,7 @@
 // description can never change it.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
+  isManagedChild,
   appendEvent, deleteVaultSlot, json, openCredentialPayload, storeVaultCredentialPayload,
   VaultError, VaultLockedError, type Db, type MasterKey,
 } from '@josi-ce/core';
@@ -201,12 +202,16 @@ export function validateMcpClientId(raw: unknown): string {
 
 // ------------------------------------------------------------------- policy
 
-export interface McpPolicy { mode: PermissionMode; note: string | null; allowedUserIds: string[] }
+export interface McpPolicy {
+  mode: PermissionMode; note: string | null; allowedUserIds: string[];
+  /** Whether an account a parent manages may add MCP servers. Off unless the owner turns it on. */
+  allowManagedChildren: boolean;
+}
 
 export async function mcpPolicy(db: Db): Promise<McpPolicy> {
-  const [row] = await db.query<{ mode: PermissionMode; note: string | null }>('select mode, note from mcp_policy where id = true');
+  const [row] = await db.query<{ mode: PermissionMode; note: string | null; allow_managed_children: boolean }>('select mode, note, allow_managed_children from mcp_policy where id = true');
   const named = await db.query<{ user_id: string }>('select user_id from mcp_allowed_users order by created_at');
-  return { mode: row?.mode ?? 'not_allowed', note: row?.note ?? null, allowedUserIds: named.map((n) => n.user_id) };
+  return { mode: row?.mode ?? 'not_allowed', note: row?.note ?? null, allowedUserIds: named.map((n) => n.user_id), allowManagedChildren: row?.allow_managed_children === true };
 }
 
 /** May this person add and use MCP servers right now? The owner always; a
@@ -219,7 +224,15 @@ export async function mcpPermitted(db: Db, userId: string): Promise<boolean> {
        or exists (select 1 from mcp_policy p where p.id = true and (p.mode = 'everyone'
          or (p.mode = 'specific_users' and exists (select 1 from mcp_allowed_users a where a.user_id = u.id))))
      )`, [userId]);
-  return rows.length === 1;
+  if (rows.length !== 1) return false;
+  // An account a parent manages is refused unless the owner has said such
+  // accounts may. Asked through the parental module's own question, so with
+  // that module inert nobody counts as managed.
+  if (await isManagedChild(db, userId)) {
+    const [policy] = await db.query<{ allow_managed_children: boolean }>('select allow_managed_children from mcp_policy where id = true');
+    return policy?.allow_managed_children === true;
+  }
+  return true;
 }
 
 async function requirePermission(db: Db, userId: string): Promise<void> {
@@ -233,6 +246,8 @@ export { requirePermission as requireMcpPermission };
 
 export async function setMcpPolicy(db: Db, args: {
   actorUserId: string; mode: unknown; note?: unknown; userIds?: unknown;
+  /** Absent leaves it as it is. */
+  allowManagedChildren?: unknown;
 }): Promise<McpPolicy> {
   if (!isPermissionMode(args.mode)) throw new McpInputError('choose whether this is allowed, and for whom');
   const mode = args.mode;
@@ -246,6 +261,9 @@ export async function setMcpPolicy(db: Db, args: {
       `insert into mcp_policy (id, mode, note, updated_at, updated_by) values (true, $1, $2, now(), $3)
        on conflict (id) do update set mode = excluded.mode, note = excluded.note, updated_at = now(), updated_by = excluded.updated_by`,
       [mode, note, args.actorUserId]);
+    if (typeof args.allowManagedChildren === 'boolean') {
+      await tx.query('update mcp_policy set allow_managed_children = $1 where id = true', [args.allowManagedChildren]);
+    }
     if (mode === 'specific_users' && sent) {
       const valid = userIds.length ? await tx.query<{ id: string }>('select id from users where id = any($1::uuid[])', [userIds]) : [];
       await tx.query('delete from mcp_allowed_users');

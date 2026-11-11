@@ -21,6 +21,7 @@ interface PolicyView {
   mode: Mode;
   note: string | null;
   allowedUserIds: string[];
+  allowManagedChildren?: boolean;
   summary: string;
   people: Person[];
   connections: Added[];
@@ -37,6 +38,7 @@ export function McpPolicyCard() {
   const [mode, setMode] = useState<Mode>('not_allowed');
   const [selected, setSelected] = useState<string[]>([]);
   const [note, setNote] = useState('');
+  const [children, setChildren] = useState(false);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -48,6 +50,7 @@ export function McpPolicyCard() {
     setMode(res.mode);
     setSelected(res.allowedUserIds);
     setNote(res.note ?? '');
+    setChildren(res.allowManagedChildren === true);
   }, []);
   useEffect(() => { void load().catch((err) => setError(err instanceof Error ? err.message : 'Could not read the MCP permission')); }, [load]);
 
@@ -57,7 +60,8 @@ export function McpPolicyCard() {
     return q ? people.filter((p) => p.username.toLowerCase().includes(q) || p.email.toLowerCase().includes(q)) : people;
   }, [people, search]);
 
-  const dirty = !!view && (mode !== view.mode || note !== (view.note ?? '') || selected.join(',') !== view.allowedUserIds.join(','));
+  const dirty = !!view && (mode !== view.mode || note !== (view.note ?? '') || selected.join(',') !== view.allowedUserIds.join(',')
+    || children !== (view.allowManagedChildren === true));
   useUnsavedChanges(dirty);
 
   async function save() {
@@ -66,7 +70,7 @@ export function McpPolicyCard() {
     setError('');
     setSaved(false);
     try {
-      await api.put('/admin/mcp/policy', { mode, note, userIds: mode === 'specific_users' ? selected : undefined });
+      await api.put('/admin/mcp/policy', { mode, note, userIds: mode === 'specific_users' ? selected : undefined, allowManagedChildren: children });
       await load();
       setSaved(true);
     } catch (err) {
@@ -129,6 +133,19 @@ export function McpPolicyCard() {
               {!matches.length ? <li className="py-2 text-sm text-muted-foreground">Nobody matches that.</li> : null}
             </ul>
           </div>
+        ) : null}
+
+        {mode !== 'not_allowed' ? (
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-0.5 h-4 w-4" checked={children} onChange={(e) => setChildren(e.target.checked)} />
+            <span>
+              Also let accounts that a parent manages add MCP servers
+              <span className="block text-xs text-muted-foreground">
+                Off by default. An MCP server gives Josi tools and topics a parent&rsquo;s rules do not cover.
+                This is one switch for everyone: you cannot see which accounts are managed.
+              </span>
+            </span>
+          </label>
         ) : null}
 
         <div>

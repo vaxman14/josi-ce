@@ -366,6 +366,14 @@ changed while it waited; `403` if the permission was withdrawn.
 
 `{ "ok": true, "status": "denied" }`.
 
+### Accounts a parent manages
+
+An account that is a managed child (Parental Controls) may not add or use MCP servers, even when the
+policy is "everyone", unless the owner turns on `allowManagedChildren`. It is off by default, it is
+one switch for the whole installation, and it does not tell the owner which accounts are managed.
+`GET` returns `allowManagedChildren`; `PUT` accepts it as a boolean and leaves it alone when absent.
+Added by migration 0134, after beta.18.
+
 ### `GET /admin/mcp/policy` — owner only
 
 ```json

@@ -400,6 +400,7 @@ export function adminMcpRoutes(ctx: Pick<McpRoutesCtx, 'db'>): Router {
       mode: policy.mode,
       note: policy.note,
       allowedUserIds: policy.allowedUserIds,
+      allowManagedChildren: policy.allowManagedChildren,
       summary: summarizeScope({ mode: policy.mode, allowedUserIds: policy.allowedUserIds }, policy.allowedUserIds.map((id) => nameById.get(id) ?? 'someone removed')),
       people: people.map((p) => ({ id: p.id, username: p.username, email: p.email })),
       connections: connections.map((c) => ({
@@ -412,8 +413,9 @@ export function adminMcpRoutes(ctx: Pick<McpRoutesCtx, 'db'>): Router {
   /** Set who may. Un-naming somebody does not delete what they connected: it
    * stops Josi using it, and removing it stays theirs to do. */
   r.put('/policy', handle(async (req, res) => {
-    const policy = await setMcpPolicy(db, { actorUserId: req.user!.id, mode: req.body?.mode, note: req.body?.note, userIds: req.body?.userIds });
-    return res.json({ ok: true, mode: policy.mode, note: policy.note, allowedUserIds: policy.allowedUserIds });
+    const policy = await setMcpPolicy(db, { actorUserId: req.user!.id, mode: req.body?.mode, note: req.body?.note, userIds: req.body?.userIds,
+      allowManagedChildren: req.body?.allowManagedChildren });
+    return res.json({ ok: true, mode: policy.mode, note: policy.note, allowedUserIds: policy.allowedUserIds, allowManagedChildren: policy.allowManagedChildren });
   }));
 
   return r;
