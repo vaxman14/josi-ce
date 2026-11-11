@@ -5,7 +5,7 @@
 # `josi` user. The container is the computer Josi controls.
 #
 #   docker build -t josi -f Dockerfile <folder holding josi_*_amd64.deb>
-#   docker run -d --name josi --privileged --cgroupns=host \
+#   docker run -d -t --name josi --privileged --cgroupns=host \
 #     -v josi-data:/var/lib/josi -v josi-pc:/var/lib/josi-pc -v josi-home:/home/josi \
 #     -v josi-etc:/etc/josi -p 8080:8080 -e JOSI_HOST_ADDRESS=<this machine's address> josi
 #   docker logs josi            # prints the one-time setup link

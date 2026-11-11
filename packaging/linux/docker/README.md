@@ -16,7 +16,7 @@ docker build -t josi:latest .
 ## Run
 
 ```bash
-docker run -d --name josi --privileged --cgroupns=host \
+docker run -d -t --name josi --restart unless-stopped --privileged --cgroupns=host \
   -v josi-data:/var/lib/josi -v josi-pc:/var/lib/josi-pc \
   -v josi-etc:/etc/josi -v josi-home:/home/josi \
   -p 8080:8080 -e JOSI_HOST_ADDRESS=<this machine's address> josi:latest
@@ -24,8 +24,11 @@ docker logs josi          # after about a minute: the one-time setup link
 ```
 
 Open the link (it works once, for 10 minutes), then set Josi up in the browser
-like any install. `docker logs josi | grep "Open this"` prints it again after a
-restart.
+like any install. For a new link: `docker restart josi`, wait a minute, then
+`docker logs josi 2>&1 | grep "Open this" | tail -1`.
+
+Or with Compose, from this folder: set `JOSI_HOST_ADDRESS` in the environment
+(or in a `.env` file beside `docker-compose.yml`) and run `docker compose up -d`.
 
 | Variable | Default | |
 |---|---|---|

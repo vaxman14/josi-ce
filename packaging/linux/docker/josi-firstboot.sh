@@ -9,7 +9,13 @@
 #   JOSI_PC_CONTROL    1 (default) or 0: let Josi control the container as user josi
 #   JOSI_BROWSER       1 (default) or 0: Josi's own browser on a hidden screen
 set -uo pipefail
-exec > >(tee /dev/console) 2>&1
+# Where `docker logs` reads from. With a terminal (docker run -t) that is the
+# console. Without one there is no console device at all, and writing to
+# /dev/console would only make an ordinary file nobody reads: the container's
+# first process still holds the pipe Docker collects, so write there.
+out=/proc/1/fd/1
+[ -c /dev/console ] && out=/dev/console
+exec > >(tee "$out") 2>&1
 
 # systemd does not pass `docker run -e` on to its services; the container's
 # first process (PID 1) still holds them.
