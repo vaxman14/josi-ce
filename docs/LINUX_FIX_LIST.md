@@ -138,3 +138,10 @@ and what stays visible, not about permission. Options to put to Roman: keep the 
 gist on the card ("Roman confirmed: ...") so the reason for the card is on screen with it;
 or stop after reporting a reply and ask before preparing the next step. Shared code
 (goal continuation and the web stage), not Linux. Not fixed.
+Roman's own words for the item above, which is the real point: "there is just no
+conversational follow up. She doesn't take it as something that needs to be a convo,
+just something that needs to know." So the fix is not a layout tweak. When something
+comes back that the person would want to talk about (a reply, a result, a surprise), she
+should say it and wait for the person, as in a conversation, instead of filing it as a
+fact and running the next step. The plan saying "if he confirms, create the meeting" is
+permission to prepare it, not a reason to skip the exchange.
