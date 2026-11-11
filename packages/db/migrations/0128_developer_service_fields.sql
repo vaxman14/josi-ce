@@ -18,7 +18,9 @@ alter table developer_service_policy
     'github', 'netlify', 'vercel', 'supabase',
     'gitlab', 'cloudflare', 'sentry', 'railway', 'render', 'linear',
     'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
-    'appstoreconnect', 'googleplay'
+    'appstoreconnect', 'googleplay',
+    -- Admitted by 0132; named here so re-running this file does not narrow the list.
+    'stripe'
   ));
 
 alter table developer_connections
@@ -29,7 +31,9 @@ alter table developer_connections
     'github', 'netlify', 'vercel', 'supabase',
     'gitlab', 'cloudflare', 'sentry', 'railway', 'render', 'linear',
     'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
-    'appstoreconnect', 'googleplay'
+    'appstoreconnect', 'googleplay',
+    -- Admitted by 0132; named here so re-running this file does not narrow the list.
+    'stripe'
   ));
 
 insert into developer_service_policy (service, mode) values

@@ -21,13 +21,13 @@ export type DeveloperService =
   | 'github' | 'netlify' | 'vercel' | 'supabase'
   | 'gitlab' | 'cloudflare' | 'sentry' | 'railway' | 'render' | 'linear'
   | 'dockerhub' | 'ghcr' | 'jira' | 'npm' | 'neon' | 'notion'
-  | 'appstoreconnect' | 'googleplay';
+  | 'appstoreconnect' | 'googleplay' | 'stripe';
 
 export const DEVELOPER_SERVICES: readonly DeveloperService[] = [
   'github', 'netlify', 'vercel', 'supabase',
   'gitlab', 'cloudflare', 'sentry', 'railway', 'render', 'linear',
   'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
-  'appstoreconnect', 'googleplay',
+  'appstoreconnect', 'googleplay', 'stripe',
 ];
 
 export function isDeveloperService(value: unknown): value is DeveloperService {
@@ -57,6 +57,8 @@ export interface DeveloperServiceField {
   /** A pasted file rather than a single line. */
   multiline: boolean;
   help: string;
+  /** May be left empty. Absent means the box has to be filled. */
+  optional?: boolean;
 }
 
 /** What a person entered, by field key. Sealed whole, as one payload. */
@@ -209,13 +211,21 @@ export const DEVELOPER_SERVICE_CATALOG: readonly DeveloperServiceDescriptor[] = 
     tokenHelp: 'In Google Cloud create a service account and a JSON key for it, and enable the Google Play Android Developer API. '
       + 'Then in Google Play Console open Users and permissions, invite the service account’s email, and give it access to the app.',
     tokenUrl: 'https://play.google.com/console/developers/users-and-permissions',
-    capability: 'Read the reviews of the one Android app you name.',
+    capability: 'See the Android apps this service account can reach and read their reviews.',
     fields: [
       { key: 'serviceAccountJson', label: 'Service account JSON', secret: true, multiline: true,
         help: 'Open the JSON key file Google gave you in a text editor and paste all of it.' },
-      { key: 'packageName', label: 'Package name', secret: false, multiline: false,
-        help: 'The app’s package name exactly as Google Play Console shows it, for example com.example.app.' },
+      { key: 'packageName', label: 'Package names (optional)', secret: false, multiline: false, optional: true,
+        help: 'Leave empty to use every app this service account was invited to. Or list package names, separated by commas, '
+          + 'for example com.example.app, com.example.other.' },
     ],
+  },
+  {
+    service: 'stripe', label: 'Stripe', tokenLabel: 'Restricted API key',
+    tokenHelp: 'In the Stripe Dashboard open Developers → API keys and create a restricted key with read access only. '
+      + 'A secret key also works, but it can move money: prefer a restricted, read-only key.',
+    tokenUrl: 'https://dashboard.stripe.com/apikeys',
+    capability: 'See which Stripe account a key belongs to and list its products.',
   },
 ];
 
@@ -281,6 +291,14 @@ const IDENTITY: Record<Exclude<DeveloperService, 'dockerhub' | 'jira' | Develope
     header: (t) => ({ authorization: `Bearer ${t}`, accept: 'application/vnd.github+json' }),
     label: (b) => (typeof b?.login === 'string' ? `${b.login} packages` : null),
   },
+  stripe: {
+    url: 'https://api.stripe.com/v1/account',
+    header: (t) => ({ authorization: `Bearer ${t}` }),
+    label: (b) => (typeof b?.settings?.dashboard?.display_name === 'string' && b.settings.dashboard.display_name
+      ? b.settings.dashboard.display_name
+      : typeof b?.business_profile?.name === 'string' && b.business_profile.name ? b.business_profile.name
+        : typeof b?.id === 'string' ? b.id : null),
+  },
   netlify: {
     url: 'https://api.netlify.com/api/v1/user',
     header: (t) => ({ authorization: `Bearer ${t}` }),
@@ -292,11 +310,13 @@ const IDENTITY: Record<Exclude<DeveloperService, 'dockerhub' | 'jira' | Develope
     label: (b) => (typeof b?.user?.username === 'string' ? b.user.username : null),
   },
   supabase: {
-    url: 'https://api.supabase.com/v1/projects',
+    url: 'https://api.supabase.com/v1/organizations',
     header: (t) => ({ authorization: `Bearer ${t}` }),
-    // Supabase has no "me" endpoint; a successful project listing is the proof,
-    // and the count is the only thing worth showing back.
-    label: (b) => (Array.isArray(b) ? `${b.length} project${b.length === 1 ? '' : 's'}` : null),
+    // Supabase has no "me" endpoint. The organizations a token reaches are the
+    // nearest thing to a name, and they tell two Supabase accounts apart, which
+    // a count of projects did not.
+    label: (b) => (Array.isArray(b) && typeof b[0]?.name === 'string'
+      ? `${b[0].name}${b.length > 1 ? ` +${b.length - 1}` : ''}` : Array.isArray(b) ? 'No organizations' : null),
   },
   gitlab: {
     url: 'https://gitlab.com/api/v4/user',
@@ -396,7 +416,7 @@ export async function listDeveloperResourcesFor(opts: {
 }): Promise<DeveloperResource[]> {
   const call = { fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs };
   if (opts.service === 'appstoreconnect') return listAppStoreConnectResources(opts.values, { ...call, appId: opts.appId });
-  if (opts.service === 'googleplay') return listGooglePlayResources(opts.values, call);
+  if (opts.service === 'googleplay') return listGooglePlayResources(opts.values, { ...call, appId: opts.appId });
   return listDeveloperResources({ service: opts.service, token: opts.values.token ?? '', username: opts.values.username,
     email: opts.values.email, baseUrl: opts.values.baseUrl, ...call });
 }
@@ -448,6 +468,7 @@ export async function listDeveloperResources(opts:DeveloperCheckOptions):Promise
     ghcr:{url:'https://api.github.com/user/packages?package_type=container&per_page=25',headers:(t)=>({authorization:`Bearer ${t}`,accept:'application/vnd.github+json'}),items:(b)=>Array.isArray(b)?b:[],map:(v)=>v?.id&&v?.name?{id:String(v.id),name:v.name,kind:'container_package',url:v.html_url}:null},
     gitlab:{url:'https://gitlab.com/api/v4/projects?membership=true&per_page=25&order_by=last_activity_at',headers:(t)=>({authorization:`Bearer ${t}`}),items:(b)=>Array.isArray(b)?b:[],map:(v)=>v?.id&&v?.path_with_namespace?{id:String(v.id),name:v.path_with_namespace,kind:'project',url:v.web_url}:null},
     cloudflare:{url:'https://api.cloudflare.com/client/v4/accounts?per_page=25',headers:(t)=>({authorization:`Bearer ${t}`}),items:(b)=>Array.isArray(b?.result)?b.result:[],map:(v)=>v?.id&&v?.name?{id:String(v.id),name:v.name,kind:'account'}:null},
+    stripe:{url:'https://api.stripe.com/v1/products?limit=25',headers:(t)=>({authorization:`Bearer ${t}`}),items:(b)=>Array.isArray(b?.data)?b.data:[],map:(v)=>v?.id&&v?.name?{id:String(v.id),name:String(v.name),kind:'product'}:null},
     netlify:{url:'https://api.netlify.com/api/v1/sites?per_page=25',headers:(t)=>({authorization:`Bearer ${t}`}),items:(b)=>Array.isArray(b)?b:[],map:(v)=>v?.id&&v?.name?{id:String(v.id),name:v.name,kind:'site',url:v.admin_url}:null},
     vercel:{url:'https://api.vercel.com/v9/projects?limit=25',headers:(t)=>({authorization:`Bearer ${t}`}),items:(b)=>Array.isArray(b?.projects)?b.projects:[],map:(v)=>v?.id&&v?.name?{id:String(v.id),name:v.name,kind:'project'}:null},
     supabase:{url:'https://api.supabase.com/v1/projects',headers:(t)=>({authorization:`Bearer ${t}`}),items:(b)=>Array.isArray(b)?b.slice(0,25):[],map:(v)=>v?.id&&v?.name?{id:String(v.id),name:v.name,kind:'project'}:null},

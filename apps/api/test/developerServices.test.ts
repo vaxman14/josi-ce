@@ -39,11 +39,11 @@ let serviceReply: { status: number; body: unknown } | 'throw' = {
 const seen: string[] = [];
 let beforeServiceReply: (() => Promise<void>) | undefined;
 /** Per-address replies for the services that take more than one request. */
-let replyFor: ((url: string) => { status: number; body: unknown } | undefined) | undefined;
-const developerServiceFetch: typeof fetch = async (url) => {
+let replyFor: ((url: string, init?: RequestInit) => { status: number; body: unknown } | undefined) | undefined;
+const developerServiceFetch: typeof fetch = async (url, init) => {
   seen.push(String(url));
   if (beforeServiceReply) { const work = beforeServiceReply; beforeServiceReply = undefined; await work(); }
-  const routed = replyFor?.(String(url));
+  const routed = replyFor?.(String(url), init);
   if (routed) return new Response(JSON.stringify(routed.body), { status: routed.status, headers: { 'content-type': 'application/json' } });
   if (serviceReply === 'throw') throw new Error('ECONNREFUSED');
   return new Response(JSON.stringify(serviceReply.body), {
@@ -147,7 +147,7 @@ describe('every service starts refused', () => {
       'github', 'netlify', 'vercel', 'supabase',
       'gitlab', 'cloudflare', 'sentry', 'render', 'railway', 'linear',
       'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
-      'appstoreconnect', 'googleplay',
+      'appstoreconnect', 'googleplay', 'stripe',
     ]);
     // A developer service reaches a third party with a person's own credential.
     // Defaulting to permitted would switch that on for every installation that
@@ -370,7 +370,7 @@ describe('permission and connection are reported separately', () => {
     // The account's own name is what the owner already sees. Nothing else from
     // the account is carried.
     expect(Object.keys(github.connections[0]).sort()).toEqual([
-      'accountLabel', 'lastCheckAt', 'lastCheckOk', 'lastError', 'lastUsedAt', 'status', 'userId', 'username',
+      'account', 'accountLabel', 'lastCheckAt', 'lastCheckOk', 'lastError', 'lastUsedAt', 'status', 'userId', 'username',
     ]);
   });
 
@@ -478,14 +478,14 @@ describe('every form is described by its fields', () => {
   it('lists fields for the original token services and keeps every key they already had', async () => {
     const res = await call('/api/connections/developer', { jar: jars.alice });
     const by = new Map((res.body.services as any[]).map((s) => [s.service, s]));
-    expect(by.size).toBe(18);
+    expect(by.size).toBe(19);
     for (const [service, row] of by) {
       // Nothing an existing client reads has gone away.
       for (const kept of ['service', 'label', 'tokenLabel', 'tokenHelp', 'tokenUrl', 'capability', 'usernameLabel', 'emailLabel', 'baseUrlLabel', 'allowed', 'note', 'connection']) {
         expect(row, `${service}.${kept}`).toHaveProperty(kept);
       }
       expect(row.fields.length, service).toBeGreaterThan(0);
-      for (const field of row.fields) expect(Object.keys(field).sort(), service).toEqual(['help', 'key', 'label', 'multiline', 'secret']);
+      for (const field of row.fields) expect(Object.keys(field).filter((k) => k !== 'optional').sort(), service).toEqual(['help', 'key', 'label', 'multiline', 'secret']);
     }
     expect(by.get('github').fields).toEqual([{ key: 'token', label: 'Personal access token', secret: true, multiline: false, help: by.get('github').tokenHelp }]);
     expect(by.get('dockerhub').fields.map((f: any) => f.key)).toEqual(['username', 'token']);
@@ -505,7 +505,7 @@ describe('every form is described by its fields', () => {
     expect(by.get('googleplay').label).toBe('Google Play');
     expect(shape('googleplay')).toEqual([
       { key: 'serviceAccountJson', label: 'Service account JSON', secret: true, multiline: true },
-      { key: 'packageName', label: 'Package name', secret: false, multiline: false },
+      { key: 'packageName', label: 'Package names (optional)', secret: false, multiline: false },
     ]);
     // And, like every service, they start refused.
     expect(by.get('appstoreconnect').allowed).toBe(false);
@@ -525,7 +525,7 @@ describe('App Store Connect is connected with a key, checked before it is kept',
     serviceReply = { status: 200, body: { data: [{ id: '1', attributes: { name: 'Fixture App' } }] } };
     const res = await call('/api/connections/developer/appstoreconnect', { method: 'PUT', jar: jars.alice, body: APPLE_BODY });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body).toEqual({ ok: true, accountLabel: `Key ${KEY_ID}` });
+    expect(res.body).toEqual({ ok: true, accountLabel: `Key ${KEY_ID}`, account: 'default', created: true, detail: 'Connected.' });
     expect(seen).toEqual(['https://api.appstoreconnect.apple.com/v1/apps?limit=1']);
 
     const rows = await db.query<{ credentials_enc: string; account_label: string; status: string }>('select credentials_enc, account_label, status from developer_connections');
@@ -586,7 +586,9 @@ describe('Google Play is connected with a service account, checked before it is 
     replyFor = googleHappy;
     const res = await call('/api/connections/developer/googleplay', { method: 'PUT', jar: jars.alice, body: GOOGLE_BODY });
     expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(res.body).toEqual({ ok: true, accountLabel: PACKAGE });
+    expect(res.body).toMatchObject({ ok: true, account: 'default', created: true, detail: 'Connected.' });
+    // The key is the account's, so it is named by the service account, not by one app.
+    expect(res.body.accountLabel).toMatch(/^(Project|Service account)/);
     expect(seen).toEqual([
       'https://oauth2.googleapis.com/token',
       `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${PACKAGE}/reviews?maxResults=1`,
@@ -629,7 +631,7 @@ describe('the original single-token body still works', () => {
     await permit('jira', 'everyone');
     const github = await call('/api/connections/developer/github', { method: 'PUT', jar: jars.alice, body: { token: TOKEN } });
     expect(github.status, JSON.stringify(github.body)).toBe(200);
-    expect(github.body).toEqual({ ok: true, accountLabel: 'octocat' });
+    expect(github.body).toMatchObject({ ok: true, accountLabel: 'octocat', account: 'default' });
     serviceReply = { status: 200, body: { displayName: 'Jira Owner' } };
     const jira = await call('/api/connections/developer/jira', {
       method: 'PUT', jar: jars.alice, body: { token: TOKEN, email: 'owner@example.test', baseUrl: 'https://acme.atlassian.net' },
@@ -641,3 +643,78 @@ describe('the original single-token body still works', () => {
     expect(missing.body.error).toBe('a personal access token is required');
   });
 });
+
+describe('a person can connect as many accounts of one service as they have', () => {
+  // Supabase names an account by its organizations, so two tokens are two accounts.
+  const orgFor: Record<string, string> = { 'token-acme': 'Acme', 'token-client': 'Client Co', 'token-acme-rotated': 'Acme' };
+  const supabase = (url: string, init?: RequestInit) => {
+    const token = String((init?.headers as Record<string, string> | undefined)?.authorization ?? '').replace('Bearer ', '');
+    if (!url.startsWith('https://api.supabase.com/')) return { status: 404, body: {} };
+    return orgFor[token] ? { status: 200, body: [{ id: token, name: orgFor[token] }] } : { status: 401, body: {} };
+  };
+  const mine = async () => {
+    const res = await call('/api/connections/developer', { jar: jars.alice });
+    return res.body.services.find((s: any) => s.service === 'supabase');
+  };
+
+  it('adds, replaces, checks, renames and removes accounts one at a time', async () => {
+    await permit('supabase', 'everyone');
+    replyFor = supabase as typeof replyFor;
+    await call('/api/connections/developer/supabase', { method: 'DELETE', jar: jars.alice });
+
+    const first = await call('/api/connections/developer/supabase/accounts', { method: 'POST', jar: jars.alice, body: { token: 'token-acme' } });
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    expect(first.body).toMatchObject({ ok: true, account: 'default', accountLabel: 'Acme', created: true });
+
+    const second = await call('/api/connections/developer/supabase/accounts', {
+      method: 'POST', jar: jars.alice, body: { token: 'token-client', name: 'Client work' },
+    });
+    expect(second.status).toBe(201);
+    expect(second.body.account).toMatch(/^[a-f0-9]{8}$/);
+    expect(second.body.accountLabel).toBe('Client Co');
+
+    const row = await mine();
+    expect(row.accounts.map((a: any) => [a.account, a.name, a.accountLabel])).toEqual([
+      ['default', null, 'Acme'], [second.body.account, 'Client work', 'Client Co'],
+    ]);
+    // Clients from before there could be several still see the first one.
+    expect(row.connection).toMatchObject({ account: 'default', accountLabel: 'Acme' });
+    // Each has its own sealed credential.
+    expect(await db.query("select id from vault_items where service='developer.supabase'")).toHaveLength(2);
+
+    // replaces the same account instead of doubling it, and a bad token adds nothing
+    const again = await call('/api/connections/developer/supabase/accounts', { method: 'POST', jar: jars.alice, body: { token: 'token-acme-rotated' } });
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ account: 'default', created: false });
+    const bad = await call('/api/connections/developer/supabase/accounts', { method: 'POST', jar: jars.alice, body: { token: 'nope' } });
+    expect(bad.status).toBe(400);
+    expect((await mine()).accounts).toHaveLength(2);
+
+    // checks, renames and removes one account without touching the other
+    const [, other] = (await mine()).accounts;
+    // With two connected, "check" has to say which.
+    const vague = await call('/api/connections/developer/supabase/check', { method: 'POST', jar: jars.alice, body: {} });
+    expect(vague.status).toBe(409);
+    expect(vague.body.error).toMatch(/More than one Supabase account/);
+    const checked = await call(`/api/connections/developer/supabase/accounts/${other.account}/check`, { method: 'POST', jar: jars.alice, body: {} });
+    expect(checked.body).toMatchObject({ ok: true, account: other.account });
+
+    expect((await call(`/api/connections/developer/supabase/accounts/${other.account}`, {
+      method: 'PATCH', jar: jars.alice, body: { name: '  Client   Co (prod) ' },
+    })).status).toBe(200);
+    expect((await mine()).accounts[1].name).toBe('Client Co (prod)');
+
+    // Somebody else's account key is nobody's here.
+    expect((await call(`/api/connections/developer/supabase/accounts/${other.account}`, { method: 'DELETE', jar: jars.bob })).status).toBe(404);
+    expect((await call(`/api/connections/developer/supabase/accounts/${other.account}`, { method: 'DELETE', jar: jars.alice })).status).toBe(204);
+    const left = await mine();
+    expect(left.accounts.map((a: any) => a.account)).toEqual(['default']);
+    expect(await db.query("select id from vault_items where service='developer.supabase'")).toHaveLength(1);
+
+    // The old "disconnect" removes whatever is left.
+    expect((await call('/api/connections/developer/supabase', { method: 'DELETE', jar: jars.alice })).status).toBe(204);
+    expect((await mine()).accounts).toEqual([]);
+    expect(await db.query("select id from vault_items where service='developer.supabase'")).toHaveLength(0);
+  });
+});
+

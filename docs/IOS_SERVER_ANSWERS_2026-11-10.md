@@ -175,3 +175,29 @@ The parent's assistant has a `family_requests` tool (list, approve, deny). Nothi
 
 `data.route = "family"` and `data.id` is: the request id (a child asked, or a parent answered), or
 the child's user id (setup window opened, iPhone limit reached). Refresh rules and requests on any of them.
+
+## 9. Several accounts per service, Stripe, and Google Play by account: built in 1.2.8-beta.17
+
+Changes to item 6. Old calls still work; a phone that ignores all of this keeps working with the first account.
+
+- `GET /api/connections/developer`: every service now also has
+  `accounts: [{account, name, accountLabel, status, lastCheckAt, lastCheckOk, lastError, lastUsedAt}]`
+  and `maxAccounts` (25). `connection` is still there and is the first account.
+  `account` is the key to send back; `name` is the person's own name for it (may be null);
+  `accountLabel` is what the service called it.
+- **Add another account:** `POST /api/connections/developer/:service/accounts` with the field keys
+  and an optional `name` → `201 {ok, account, accountLabel, created: true, detail}`. With no account
+  yet it becomes the first one. Pasting an account that is already connected replaces its key
+  (`200`, `created: false`). Show an "Add another account" button under the list.
+- Replace one account's key: `PUT /api/connections/developer/:service/accounts/:account`.
+- Rename: `PATCH /api/connections/developer/:service/accounts/:account` `{name}`.
+- Check one: `POST /api/connections/developer/:service/accounts/:account/check`.
+- Remove one: `DELETE /api/connections/developer/:service/accounts/:account` → 204.
+- The old `PUT /:service` writes the first account. The old `POST /:service/check` is a 409 when
+  several accounts are connected (it cannot guess which). The old `DELETE /:service` removes
+  **every** account of that service.
+- A field may now carry `optional: true`. Do not require it.
+- `googleplay`: the key is the account's. `packageName` is now optional and may list several
+  package names separated by commas. Label is now "Package names (optional)".
+- New service `stripe` (one field, `token`: a restricted API key). Off for members until the owner allows it.
+- Supabase accounts are now named by their organization, not by a project count.

@@ -96,7 +96,7 @@ async function github(token: string, path: string, fetchImpl: typeof fetch, raw 
 async function sourceToken(db: Db, key: MasterKey | null, userId: string): Promise<string | { ok: false; code: string; message: string }> {
   if (!key) return { ok: false, code: 'vault_locked', message: 'The Vault is locked, so the repository cannot be read right now.' };
   try {
-    const token = (await loadDeveloperCredentials(db, key, { ownerUserId: userId, service: 'github' })).credentials.token;
+    const token = (await loadDeveloperCredentials(db, key, { ownerUserId: userId, service: 'github', first: true })).credentials.token;
     if (!token) throw new Error('no token');
     return token;
   } catch {

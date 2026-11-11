@@ -22,7 +22,8 @@ import {
   DEVELOPER_SERVICES, DEVELOPER_SERVICE_CATALOG, checkDeveloperCredentials, developerServiceFields, normalizeDeveloperFields,
   discoverObsidianVaults, readObsidianNote, DeveloperCredentialError, checkDeveloperCredentialAccess,
   saveDeveloperConnection, loadDeveloperCredentials, recordDeveloperCheck, deleteDeveloperConnection, withDeveloperServiceTransaction,
-  isDeveloperService, isPermissionMode, mayConnect, summarizeScope,
+  isDeveloperService, isPermissionMode, mayConnect, summarizeScope, isDeveloperAccountKey, renameDeveloperAccount,
+  MAX_DEVELOPER_ACCOUNTS_PER_SERVICE,
   type DeveloperService, type EffectiveScope, type PermissionMode, allowDeveloperServiceFor } from '@josi-ce/connectors';
 import { asyncRoute, param } from './async.js';
 import { requireAuth, requireSuperAdmin } from './authz.js';
@@ -37,6 +38,12 @@ export interface DeveloperServiceCtx {
 class RouteError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
+
+/** The account a request names, in the body or the query. */
+const accountOf = (req: Request): string | undefined => {
+  const value = typeof req.body?.account === 'string' ? req.body.account : typeof req.query.account === 'string' ? req.query.account : '';
+  return value.trim() || undefined;
+};
 
 const str = (v: unknown, max = 4000): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 
@@ -102,19 +109,35 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
       const userId = req.user!.id;
       const scopes = await loadScopes(db);
       const mine = await db.query<{
-        service: DeveloperService; account_label: string | null; status: string;
+        service: DeveloperService; account_key: string; nickname: string | null;
+        account_label: string | null; status: string;
         last_check_at: string | null; last_check_ok: boolean | null; last_error: string | null;
         last_used_at: string | null;
       }>(
-        `select service, account_label, status, last_check_at, last_check_ok, last_error, last_used_at
-         from developer_connections where owner_user_id = $1`,
+        `select service, account_key, nickname, account_label, status, last_check_at, last_check_ok, last_error, last_used_at
+         from developer_connections where owner_user_id = $1
+         order by (account_key = 'default') desc, created_at, account_key`,
         [userId],
       );
+      const shown = (c: (typeof mine)[number]) => ({
+        // Which account this is. Send it back as `account` to check, replace,
+        // rename or remove this one and no other.
+        account: c.account_key,
+        // The person's own name for it, when they gave one.
+        name: c.nickname,
+        accountLabel: c.account_label,
+        status: c.status,
+        lastCheckAt: c.last_check_at,
+        lastCheckOk: c.last_check_ok,
+        lastError: c.last_error,
+        lastUsedAt: c.last_used_at,
+      });
 
       return res.json({
         services: DEVELOPER_SERVICE_CATALOG.map((d) => {
           const scope = scopes.get(d.service)!;
-          const connection = mine.find((m) => m.service === d.service) ?? null;
+          const accounts = mine.filter((m) => m.service === d.service);
+          const connection = accounts[0] ?? null;
           return {
             service: d.service,
             label: d.label,
@@ -136,16 +159,12 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
             // is told why by the person who decided rather than by a generic
             // "not available".
             note: scope.note,
-            connection: connection
-              ? {
-                  accountLabel: connection.account_label,
-                  status: connection.status,
-                  lastCheckAt: connection.last_check_at,
-                  lastCheckOk: connection.last_check_ok,
-                  lastError: connection.last_error,
-                  lastUsedAt: connection.last_used_at,
-                }
-              : null,
+            // The first account, for clients written when there was only one.
+            connection: connection ? shown(connection) : null,
+            // Every account of this service. A person may connect as many as
+            // they have.
+            accounts: accounts.map(shown),
+            maxAccounts: MAX_DEVELOPER_ACCOUNTS_PER_SERVICE,
           };
         }),
       });
@@ -173,72 +192,103 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
    * `token` and friends for a token service, the parts of the signing key for
    * a store. It is checked against the service before it is stored. Storing an
    * unverified credential would let somebody leave this screen believing they
-   * had connected something. */
-  r.put(
-    '/:service',
-    handle(async (req, res) => {
-      const service = param(req, 'service');
-      if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
-      const userId = req.user!.id;
+   * had connected something.
+   *
+   * WHICH ACCOUNT. `account` in the body (or the query) says where it goes:
+   * absent is the first account, exactly as before there could be several;
+   * "new" adds another account; an account key replaces that account's
+   * credential. `name` is the person's own name for it. */
+  const connect = async (req: Request, res: Response, forced?: string) => {
+    const service = param(req, 'service');
+    if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
+    const userId = req.user!.id;
 
-      const scopes = await loadScopes(db);
-      const scope = scopes.get(service)!;
-      if (req.user!.role !== 'super_admin' && !mayConnect(scope, userId)) {
-        // 403 with the administrator's reason where there is one. Not 404: the
-        // service plainly exists, and pretending otherwise would send somebody
-        // looking for a bug instead of asking their administrator.
-        throw new RouteError(
-          403,
-          scope.note
-            ? `An administrator has not permitted this service here. ${scope.note}`
-            : 'An administrator has not permitted this service here.',
-        );
-      }
+    const scopes = await loadScopes(db);
+    const scope = scopes.get(service)!;
+    if (req.user!.role !== 'super_admin' && !mayConnect(scope, userId)) {
+      // 403 with the administrator's reason where there is one. Not 404: the
+      // service plainly exists, and pretending otherwise would send somebody
+      // looking for a bug instead of asking their administrator.
+      throw new RouteError(
+        403,
+        scope.note
+          ? `An administrator has not permitted this service here. ${scope.note}`
+          : 'An administrator has not permitted this service here.',
+      );
+    }
+    const account = forced ?? accountOf(req);
+    if (account !== undefined && account !== 'new' && !isDeveloperAccountKey(account)) {
+      throw new RouteError(400, 'account is "new" or the key of an account you have connected');
+    }
 
-      // Held for this one request and nothing else: not stored in the clear,
-      // not logged, not echoed back. A key that cannot be a key at all is
-      // refused here, before anything is asked of the service.
-      const entered = normalizeDeveloperFields(service, req.body);
-      if (!entered.ok) throw new RouteError(400, entered.detail);
+    // Held for this one request and nothing else: not stored in the clear,
+    // not logged, not echoed back. A key that cannot be a key at all is
+    // refused here, before anything is asked of the service.
+    const entered = normalizeDeveloperFields(service, req.body);
+    if (!entered.ok) throw new RouteError(400, entered.detail);
 
-      const key = requireKey(ctx);
-      await checkDeveloperCredentialAccess(db, userId, service);
-      const check = await checkDeveloperCredentials({ service, values: entered.values, fetchImpl: ctx.fetchImpl });
-      if (!check.ok) {
-        throw new RouteError(400, check.detail);
-      }
+    const key = requireKey(ctx);
+    await checkDeveloperCredentialAccess(db, userId, service);
+    const check = await checkDeveloperCredentials({ service, values: entered.values, fetchImpl: ctx.fetchImpl });
+    if (!check.ok) {
+      throw new RouteError(400, check.detail);
+    }
 
-      // Every field goes into the Vault together, as one sealed payload.
-      await saveDeveloperConnection(db, key, { ownerUserId: userId, service, accountLabel: check.accountLabel ?? null,
-        credentials: entered.values });
-      return res.json({ ok: true, accountLabel: check.accountLabel ?? null });
-    }),
-  );
+    // Every field goes into the Vault together, as one sealed payload.
+    const saved = await saveDeveloperConnection(db, key, { ownerUserId: userId, service, accountLabel: check.accountLabel ?? null,
+      credentials: entered.values, account,
+      name: typeof req.body?.name === 'string' ? req.body.name : undefined });
+    return res.status(saved.created && account === 'new' ? 201 : 200)
+      .json({ ok: true, accountLabel: check.accountLabel ?? null, account: saved.account, created: saved.created, detail: check.detail });
+  };
+  r.put('/:service', handle((req, res) => connect(req, res)));
+  /** Add another account of this service. */
+  r.post('/:service/accounts', handle((req, res) => connect(req, res, 'new')));
+  /** Replace one account's credential. */
+  r.put('/:service/accounts/:account', handle((req, res) => connect(req, res, param(req, 'account'))));
 
-  /** Re-check my own connection. */
-  r.post(
-    '/:service/check',
-    handle(async (req, res) => {
-      const service = param(req, 'service');
-      if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
-      const { credentials: opened, reference } = await loadDeveloperCredentials(db, requireKey(ctx), { ownerUserId: req.user!.id, service, requireActive: false });
-      const check = await checkDeveloperCredentials({ service, values: opened, fetchImpl: ctx.fetchImpl });
-      if (!(await recordDeveloperCheck(db, { ownerUserId: req.user!.id, service, reference, check })))
-        throw new RouteError(409, 'The connection or its permission changed during the check. Check the current connection again.');
-      return res.json({ ok: check.ok, detail: check.detail });
-    }),
-  );
+  /** Give one account a name of my own. */
+  r.patch('/:service/accounts/:account', handle(async (req, res) => {
+    const service = param(req, 'service');
+    if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
+    if (!(await renameDeveloperAccount(db, { ownerUserId: req.user!.id, service, account: param(req, 'account'), name: req.body?.name }))) {
+      throw new RouteError(404, 'no such account');
+    }
+    return res.json({ ok: true });
+  }));
 
-  /** Disconnect. The token goes with the row. */
+  /** Re-check my own connection: the one named by `account`, or the only one. */
+  const recheck = async (req: Request, res: Response, forced?: string) => {
+    const service = param(req, 'service');
+    if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
+    const { credentials: opened, reference, account } = await loadDeveloperCredentials(db, requireKey(ctx), {
+      ownerUserId: req.user!.id, service, requireActive: false, account: forced ?? accountOf(req) });
+    const check = await checkDeveloperCredentials({ service, values: opened, fetchImpl: ctx.fetchImpl });
+    if (!(await recordDeveloperCheck(db, { ownerUserId: req.user!.id, service, reference, check })))
+      throw new RouteError(409, 'The connection or its permission changed during the check. Check the current connection again.');
+    return res.json({ ok: check.ok, detail: check.detail, account });
+  };
+  r.post('/:service/check', handle((req, res) => recheck(req, res)));
+  r.post('/:service/accounts/:account/check', handle((req, res) => recheck(req, res, param(req, 'account'))));
+
+  /** Disconnect. The token goes with the row. Without `account` this removes
+   * every account of the service, which is what it did when there was one. */
   r.delete(
     '/:service',
     handle(async (req, res) => {
       const service = param(req, 'service');
       if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
-      await deleteDeveloperConnection(db, req.user!.id, service);
+      await deleteDeveloperConnection(db, req.user!.id, service, accountOf(req));
       return res.status(204).end();
     }),
   );
+  r.delete('/:service/accounts/:account', handle(async (req, res) => {
+    const service = param(req, 'service');
+    if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
+    const removed = await deleteDeveloperConnection(db, req.user!.id, service, param(req, 'account'));
+    if (!removed) throw new RouteError(404, 'no such account');
+    return res.status(204).end();
+  }));
 
   return r;
 }
@@ -281,15 +331,15 @@ export function adminDeveloperServiceRoutes(ctx: DeveloperServiceCtx): Router {
       );
       const health = await db.query<{
         service: DeveloperService; owner_user_id: string; username: string;
-        account_label: string | null; status: string;
+        account_label: string | null; status: string; account_key: string;
         last_check_at: string | null; last_check_ok: boolean | null; last_error: string | null;
         last_used_at: string | null;
       }>(
-        `select c.service, c.owner_user_id, u.username, c.account_label, c.status,
+        `select c.service, c.owner_user_id, u.username, c.account_label, c.status, c.account_key,
                 c.last_check_at, c.last_check_ok, c.last_error, c.last_used_at
          from developer_connections c
          join users u on u.id = c.owner_user_id
-         order by c.service, u.username`,
+         order by c.service, u.username, (c.account_key = 'default') desc, c.created_at`,
       );
       const nameById = new Map(people.map((p) => [p.id, p.username]));
 
@@ -319,6 +369,7 @@ export function adminDeveloperServiceRoutes(ctx: DeveloperServiceCtx): Router {
             connections: connections.map((c) => ({
               userId: c.owner_user_id,
               username: c.username,
+              account: c.account_key,
               accountLabel: c.account_label,
               status: c.status,
               lastCheckAt: c.last_check_at,

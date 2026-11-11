@@ -27,6 +27,8 @@ export function isDeveloperStoreService(value: unknown): value is DeveloperStore
 }
 
 export interface AppStoreConnectKey { issuerId: string; keyId: string; privateKey: string }
+/** `packageName` is optional and may list several, separated by commas. The
+ * service account is the credential; it reaches every app it was invited to. */
 export interface GooglePlayKey { serviceAccountJson: string; packageName: string }
 
 export type StoreFieldResult<T> = { ok: true; values: T } | { ok: false; detail: string };
@@ -36,12 +38,15 @@ const APPLE_AUDIENCE = 'appstoreconnect-v1';
 /** Apple refuses anything over twenty minutes. Ten is plenty for one call. */
 const APPLE_TOKEN_SECONDS = 600;
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const GOOGLE_PLAY_SCOPE = 'https://www.googleapis.com/auth/androidpublisher';
+const GOOGLE_PLAY_SCOPE = 'https://www.googleapis.com/auth/androidpublisher https://www.googleapis.com/auth/playdeveloperreporting';
+/** The one Google call that lists the apps an account can see. */
+const GOOGLE_PLAY_APPS = 'https://playdeveloperreporting.googleapis.com/v1beta1/apps:search?pageSize=25';
 const GOOGLE_PLAY_API = 'https://androidpublisher.googleapis.com/androidpublisher/v3/applications';
 const GOOGLE_ASSERTION_SECONDS = 600;
 const MAX_KEY_CHARS = 20_000;
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
+const clip = (value: unknown, max: number): string => text(value).replace(/\s+/g, ' ').trim().slice(0, max);
 const oneLine = (value: unknown, max: number): string => text(value).replace(/\r\n?/g, '\n').trim().slice(0, max);
 
 /** A pasted PEM, put back into the shape the parser needs.
@@ -125,15 +130,21 @@ function readServiceAccount(json: string): { account: ServiceAccount; key: KeyOb
   };
 }
 
+const isPackageName = (value: string): boolean =>
+  value.length <= 150 && /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(value);
+export const googlePlayPackages = (packageName: string | undefined): string[] => (packageName ?? '').split(',').filter(Boolean);
+
 export function normalizeGooglePlayFields(body: Record<string, unknown>): StoreFieldResult<GooglePlayKey> {
   const rawJson = text(body.serviceAccountJson).replace(/\r\n?/g, '\n').trim();
-  const packageName = oneLine(body.packageName, 200);
+  // Optional, and may name several: the key belongs to the account, not to one app.
+  const packages = [...new Set(text(body.packageName).split(/[\s,;]+/).map((p) => p.trim()).filter(Boolean))];
   if (!rawJson) return { ok: false, detail: 'The service account JSON is required.' };
-  if (!packageName) return { ok: false, detail: 'The app’s package name is required.' };
   if (rawJson.length > MAX_KEY_CHARS) return { ok: false, detail: 'That is too long to be a service account key file.' };
-  if (packageName.length > 150 || !/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(packageName)) {
+  if (packages.length > 50) return { ok: false, detail: 'List at most 50 package names.' };
+  if (packages.some((p) => !isPackageName(p))) {
     return { ok: false, detail: 'That package name is not the right shape. It looks like com.example.app, exactly as shown in Google Play Console.' };
   }
+  const packageName = packages.join(',');
   const read = readServiceAccount(rawJson);
   if (typeof read === 'string') return { ok: false, detail: read };
   // Only what signing needs is kept. The file's own endpoints are dropped
@@ -257,29 +268,64 @@ function googlePlayRefusal(status: number, body: any, packageName: string): Deve
   return null;
 }
 
-/** Ask Google Play whether this service account can read this app's reviews. */
+type PlayApps = { ok: true; apps: Array<{ packageName: string; name: string }> } | { ok: false; status: number };
+
+/** The apps this account can see, from Google's reporting API. That API has to
+ * be switched on in the service account's Google Cloud project; when it is
+ * not, this answers `ok: false` and the caller falls back to named packages. */
+async function searchGooglePlayApps(accessToken: string, opts: StoreCallOptions): Promise<PlayApps> {
+  const response = await boundedFetch(opts)(GOOGLE_PLAY_APPS, {
+    headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json', 'user-agent': 'josi-ce' },
+  });
+  if (!response.ok) return { ok: false, status: response.status };
+  const body: any = await response.json().catch(() => null);
+  const rows: any[] = Array.isArray(body?.apps) ? body.apps.slice(0, 25) : [];
+  return { ok: true, apps: rows.filter((v) => typeof v?.packageName === 'string' && isPackageName(v.packageName))
+    .map((v) => ({ packageName: v.packageName, name: clip(v.displayName, 200) || v.packageName })) };
+}
+
+/** Ask Google whether this service account works.
+ *
+ * The key is the account's, so it is checked as an account: Google has to
+ * accept it, and then either it can list its apps or it can read each package
+ * the person named. A key Google accepts that can do neither yet is still
+ * saved, with a sentence saying what to switch on, because the key is good. */
 export async function checkGooglePlayKey(values: Record<string, string | undefined>, opts: StoreCallOptions = {}): Promise<DeveloperCheck> {
   const normal = normalizeGooglePlayFields(values);
   if (!normal.ok) return { ok: false, category: 'authentication', detail: normal.detail };
-  const { packageName } = normal.values;
+  const packages = googlePlayPackages(normal.values.packageName);
   try {
     const token = await exchangeGoogleToken(normal.values.serviceAccountJson, opts);
     if (!token.ok) return token.check;
-    const response = await boundedFetch(opts)(`${GOOGLE_PLAY_API}/${encodeURIComponent(packageName)}/reviews?maxResults=1`, {
-      headers: { authorization: `Bearer ${token.accessToken}`, accept: 'application/json', 'user-agent': 'josi-ce' },
-    });
-    const body: any = await response.json().catch(() => null);
-    const refusal = googlePlayRefusal(response.status, body, packageName);
-    if (refusal) return refusal;
-    return { ok: true, accountLabel: packageName, detail: 'Connected.' };
+    // Named by its Google Cloud project. The service account's email is left
+    // out of everything this server says back, like the rest of the key file.
+    const file = JSON.parse(normal.values.serviceAccountJson) as { project_id?: string; private_key_id?: string };
+    const label = file.project_id ? `Project ${file.project_id}`
+      : file.private_key_id ? `Service account key ${file.private_key_id.slice(0, 8)}` : 'Service account';
+    for (const packageName of packages.slice(0, 5)) {
+      const response = await boundedFetch(opts)(`${GOOGLE_PLAY_API}/${encodeURIComponent(packageName)}/reviews?maxResults=1`, {
+        headers: { authorization: `Bearer ${token.accessToken}`, accept: 'application/json', 'user-agent': 'josi-ce' },
+      });
+      const body: any = await response.json().catch(() => null);
+      const refusal = googlePlayRefusal(response.status, body, packageName);
+      if (refusal) return refusal;
+    }
+    if (packages.length) return { ok: true, accountLabel: label, detail: 'Connected.' };
+    const found = await searchGooglePlayApps(token.accessToken, opts);
+    if (found.ok) {
+      return { ok: true, accountLabel: label,
+        detail: found.apps.length ? `Connected. ${found.apps.length} app${found.apps.length === 1 ? '' : 's'} visible.`
+          : 'Connected, but this service account cannot see any app yet. Invite its email in Google Play Console → Users and permissions.' };
+    }
+    return { ok: true, accountLabel: label,
+      detail: 'Connected. Google accepted the key, but the list of apps is not available: switch on the Google Play Developer Reporting API '
+        + 'in the service account’s Google Cloud project, or name the package when asking.' };
   } catch {
     return { ok: false, category: 'network', detail: 'Google could not be reached from this server.' };
   }
 }
 
 // ---------------------------------------------------------------- resources
-
-const clip = (value: unknown, max: number): string => text(value).replace(/\s+/g, ' ').trim().slice(0, max);
 
 /** The team's apps, or one app's most recent customer reviews. Read-only. */
 export async function listAppStoreConnectResources(values: Record<string, string | undefined>, opts: StoreCallOptions & { appId?: string } = {}): Promise<DeveloperResource[]> {
@@ -314,13 +360,29 @@ export async function listAppStoreConnectResources(values: Record<string, string
   });
 }
 
-/** The connected app's most recent reviews. Read-only. */
-export async function listGooglePlayResources(values: Record<string, string | undefined>, opts: StoreCallOptions = {}): Promise<DeveloperResource[]> {
+/** One app's most recent reviews, or the apps this account can see.
+ *
+ * `appId` is a package name. Without one: a key saved with exactly one package
+ * reads that app's reviews (what it always did); otherwise the apps are listed,
+ * from Google where it will say and from the saved package names where it will
+ * not. Read-only. */
+export async function listGooglePlayResources(values: Record<string, string | undefined>, opts: StoreCallOptions & { appId?: string } = {}): Promise<DeveloperResource[]> {
   const normal = normalizeGooglePlayFields(values);
   if (!normal.ok) throw new Error('The Google Play key is unreadable.');
+  const saved = googlePlayPackages(normal.values.packageName);
+  const asked = (opts.appId ?? '').trim();
+  if (asked && !isPackageName(asked)) throw new Error('A Google Play app is named by its package name, like com.example.app.');
   const token = await exchangeGoogleToken(normal.values.serviceAccountJson, opts);
   if (!token.ok) throw new Error('Google refused the service account.');
-  const response = await boundedFetch(opts)(`${GOOGLE_PLAY_API}/${encodeURIComponent(normal.values.packageName)}/reviews?maxResults=25`, {
+  const packageName = asked || (saved.length === 1 ? saved[0] : '');
+  if (!packageName) {
+    const found = await searchGooglePlayApps(token.accessToken, opts);
+    const apps = new Map<string, string>(saved.map((p) => [p, p]));
+    if (found.ok) for (const app of found.apps) apps.set(app.packageName, app.name);
+    if (!found.ok && !apps.size) throw new Error(`Google Play would not list this account's apps (${found.status}).`);
+    return [...apps].slice(0, 25).map(([id, name]) => ({ id, name, kind: 'app', detail: id }));
+  }
+  const response = await boundedFetch(opts)(`${GOOGLE_PLAY_API}/${encodeURIComponent(packageName)}/reviews?maxResults=25`, {
     headers: { authorization: `Bearer ${token.accessToken}`, accept: 'application/json', 'user-agent': 'josi-ce' },
   });
   if (!response.ok) throw new Error(`Google Play refused resource discovery (${response.status}).`);

@@ -61,7 +61,7 @@ const sources: Source[] = [
     { column: 'password_enc', service: 'smtp', slot: row => row.kind, binding: 'vault_owner_user_id', kind: 'password' },
   ] },
   { table: 'developer_connections', key: 'id', before: (tx, row) => tx.query("select pg_advisory_xact_lock(hashtext('josi_developer_service'),hashtext($1))", [row.service]), fields: [
-    { column: 'credentials_enc', service: row => `developer.${row.service}`, slot: 'token', owner: 'owner_user_id' },
+    { column: 'credentials_enc', service: row => `developer.${row.service}`, slot: row => (!row.account_key || row.account_key === 'default' ? 'token' : `token.${row.account_key}`), owner: 'owner_user_id' },
   ] },
   { table: 'workflow_integrations', key: 'id', before: fence('josi_workflow_credentials'), fields: [
     { column: 'credentials_enc', service: row => `workflow.${row.provider}`, slot: row => row.id, owner: 'created_by' },

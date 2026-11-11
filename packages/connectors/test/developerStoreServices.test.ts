@@ -46,7 +46,7 @@ describe('the catalog lists every form as fields', () => {
     expect(by.get('jira')!.map((f) => f.key)).toEqual(['email', 'baseUrl', 'token']);
     for (const [service, list] of by) {
       expect(list.length, service).toBeGreaterThan(0);
-      for (const f of list) expect(Object.keys(f).sort(), service).toEqual(['help', 'key', 'label', 'multiline', 'secret']);
+      for (const f of list) expect(Object.keys(f).filter((k) => k !== 'optional').sort(), service).toEqual(['help', 'key', 'label', 'multiline', 'secret']);
       // Exactly the secret parts are marked secret, and every form has one.
       expect(list.some((f) => f.secret), service).toBe(true);
     }
@@ -61,7 +61,7 @@ describe('the catalog lists every form as fields', () => {
     ]);
     expect(by.get('googleplay')!.map(({ key, label, secret, multiline }) => ({ key, label, secret, multiline }))).toEqual([
       { key: 'serviceAccountJson', label: 'Service account JSON', secret: true, multiline: true },
-      { key: 'packageName', label: 'Package name', secret: false, multiline: false },
+      { key: 'packageName', label: 'Package names (optional)', secret: false, multiline: false },
     ]);
   });
 });
@@ -107,7 +107,6 @@ describe('pasted keys are tidied before anything else', () => {
     ['a file with no private key', { ...google, serviceAccountJson: JSON.stringify({ type: 'service_account', client_email: 'a@b.test' }) }, /incomplete/],
     ['a file whose key is unreadable', { ...google, serviceAccountJson: JSON.stringify({ type: 'service_account', client_email: 'a@b.test', private_key: 'garbage' }) }, /could not be read/],
     ['a misshapen package name', { ...google, packageName: 'My App' }, /package name is not the right shape/],
-    ['a missing package name', { ...google, packageName: '' }, /package name is required/],
   ])('refuses %s before any request, without quoting the key', (_name, body, message) => {
     const result = normalizeDeveloperFields('googleplay', body);
     expect(result).toMatchObject({ ok: false, detail: expect.stringMatching(message) });
@@ -193,7 +192,7 @@ describe('Google Play', () => {
   it('trades an RS256 assertion at Google\'s own endpoint, then reads the reviews of the package', async () => {
     const fetchImpl = happy();
     await expect(checkDeveloperCredentials({ service: 'googleplay', values: google, fetchImpl: fetchImpl as typeof fetch }))
-      .resolves.toEqual({ ok: true, accountLabel: PACKAGE, detail: 'Connected.' });
+      .resolves.toEqual({ ok: true, accountLabel: 'Project fixture-project', detail: 'Connected.' });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
 
     const [tokenUrl, tokenInit] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
@@ -206,7 +205,7 @@ describe('Google Play', () => {
     expect(decode(header)).toEqual({ alg: 'RS256', typ: 'JWT', kid: 'fixture-key-id' });
     expect(decode(claims)).toMatchObject({
       iss: 'josi-reader@fixture-project.iam.gserviceaccount.com',
-      scope: 'https://www.googleapis.com/auth/androidpublisher', aud: 'https://oauth2.googleapis.com/token',
+      scope: 'https://www.googleapis.com/auth/androidpublisher https://www.googleapis.com/auth/playdeveloperreporting', aud: 'https://oauth2.googleapis.com/token',
     });
     expect(decode(claims).exp - decode(claims).iat).toBeLessThanOrEqual(3600);
     expect(verify('sha256', Buffer.from(`${header}.${claims}`), createPublicKey(rsa.privateKey), Buffer.from(signature, 'base64url'))).toBe(true);

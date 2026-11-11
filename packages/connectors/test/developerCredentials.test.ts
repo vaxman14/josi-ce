@@ -128,7 +128,7 @@ describe('a store key is one sealed payload', () => {
     await expect(attempt({ issuerId: 'i', keyId: 'k' })).rejects.toThrow(/invalid/);
     await expect(attempt({ ...parts, token: 'x' })).rejects.toThrow(/invalid/);
     await expect(attempt({ token: 'x' })).rejects.toThrow(/invalid/);
-    await expect(attempt({ serviceAccountJson: '{}' }, 'googleplay')).rejects.toThrow(/invalid/);
+    await expect(attempt({ packageName: 'com.example.app' }, 'googleplay')).rejects.toThrow(/invalid/);
     // And a token service does not take key parts either.
     await expect(attempt({ token: 'x', privateKey: 'y' }, 'github')).rejects.toThrow(/invalid/);
     expect(await db.query('select id from developer_connections')).toHaveLength(0);

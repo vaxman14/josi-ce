@@ -61,6 +61,7 @@ describe('a fresh database migrates cleanly', () => {
       { service: 'railway', mode: 'not_allowed', note: null },
       { service: 'render', mode: 'not_allowed', note: null },
       { service: 'sentry', mode: 'not_allowed', note: null },
+      { service: 'stripe', mode: 'not_allowed', note: null },
       { service: 'supabase', mode: 'not_allowed', note: null },
       { service: 'vercel', mode: 'not_allowed', note: null },
     ]);
@@ -131,7 +132,7 @@ describe('a fresh database migrates cleanly', () => {
     const modes = await db.query<{ service: string; mode: string }>(
       `select service, mode from developer_service_policy order by service`,
     );
-    expect(modes).toHaveLength(18);
+    expect(modes).toHaveLength(19);
     expect(modes.every((m) => m.mode === 'not_allowed')).toBe(true);
   });
 

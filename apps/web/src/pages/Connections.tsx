@@ -306,15 +306,27 @@ interface DeveloperServiceRow {
    * whether I have. */
   allowed: boolean;
   note: string | null;
-  connection: {
-    accountLabel: string | null;
-    status: string;
-    lastCheckAt: string | null;
-    lastCheckOk: boolean | null;
-    lastError: string | null;
-    lastUsedAt: string | null;
-  } | null;
+  connection: DeveloperAccount | null;
+  /** Every account of this service I have connected. Older servers send only
+   * `connection`, which is then the only one. */
+  accounts?: DeveloperAccount[];
+  maxAccounts?: number;
 }
+
+interface DeveloperAccount {
+  /** Which account this is. Absent from an older server, where there is one. */
+  account?: string;
+  /** My own name for it. */
+  name?: string | null;
+  accountLabel: string | null;
+  status: string;
+  lastCheckAt: string | null;
+  lastCheckOk: boolean | null;
+  lastError: string | null;
+  lastUsedAt: string | null;
+}
+
+const accountsOf = (row: DeveloperServiceRow): DeveloperAccount[] => row.accounts ?? (row.connection ? [row.connection] : []);
 
 interface DeveloperServiceField {
   key: string;
@@ -322,6 +334,8 @@ interface DeveloperServiceField {
   secret: boolean;
   multiline: boolean;
   help: string;
+  /** May be left empty. */
+  optional?: boolean;
 }
 
 /** The boxes to show for a service: what the server lists, or, for a server
@@ -351,6 +365,8 @@ function DeveloperServices() {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [saved,setSaved]=useState('');
+  // Which services have the "add another account" form open.
+  const [adding, setAdding] = useState<Record<string, boolean>>({});
   useUnsavedChanges(Object.values(values).some((entered) => Object.values(entered).some(Boolean)));
 
   const load = useCallback(async () => {
@@ -363,52 +379,40 @@ function DeveloperServices() {
   }, []);
   useEffect(() => { void load().catch(()=>undefined); }, [load]);
 
-  async function connect(service: string) {
+  async function run(service: string, failed: string, work: () => Promise<void>) {
     if(busy)return;
     setSaved('');
     setBusy(service);
     setError('');
     try {
-      await api.put(`/connections/developer/${service}`, { ...(values[service] ?? {}) });
-      await load();
-      setValues((v) => ({ ...v, [service]: {} }));
-      setSaved(`${service} connection saved.`);
+      await work();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'That could not be connected');
+      setError(err instanceof Error ? err.message : failed);
     } finally {
       setBusy('');
     }
   }
 
-  async function check(service: string) {
-    if(busy)return;
-    setSaved('');
-    setBusy(service);
-    setError('');
-    try {
-      await api.post(`/connections/developer/${service}/check`, {});
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'That check could not run');
-    } finally {
-      setBusy('');
-    }
-  }
+  /** Connect an account. The first one, or another: the server tells them
+   * apart, and pasting an account that is already here replaces its key. */
+  const connect = (service: string, label: string) => run(service, 'That could not be connected', async () => {
+    const { accountName, ...fields } = values[service] ?? {};
+    await api.post(`/connections/developer/${service}/accounts`, { ...fields, ...(accountName?.trim() ? { name: accountName.trim() } : {}) });
+    await load();
+    setValues((v) => ({ ...v, [service]: {} }));
+    setAdding((v) => ({ ...v, [service]: false }));
+    setSaved(`${label} account saved.`);
+  });
 
-  async function disconnect(service: string) {
-    if(busy)return;
-    setSaved('');
-    setBusy(service);
-    setError('');
-    try {
-      await api.del(`/connections/developer/${service}`);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'That could not be disconnected');
-    } finally {
-      setBusy('');
-    }
-  }
+  const check = (service: string, account?: string) => run(service, 'That check could not run', async () => {
+    await api.post(account ? `/connections/developer/${service}/accounts/${account}/check` : `/connections/developer/${service}/check`, {});
+    await load();
+  });
+
+  const disconnect = (service: string, account?: string) => run(service, 'That could not be disconnected', async () => {
+    await api.del(account ? `/connections/developer/${service}/accounts/${account}` : `/connections/developer/${service}`);
+    await load();
+  });
 
   if (!rows?.length) return null;
 
@@ -425,9 +429,10 @@ function DeveloperServices() {
         <Card key={row.service}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>{row.label}</CardTitle>
-            {row.connection ? (
-              <Badge tone={row.connection.lastCheckOk === false ? 'danger' : 'ok'}>
-                {row.connection.lastCheckOk === false ? 'needs attention' : 'connected'}
+            {accountsOf(row).length ? (
+              <Badge tone={accountsOf(row).some((a) => a.lastCheckOk === false) ? 'danger' : 'ok'}>
+                {accountsOf(row).some((a) => a.lastCheckOk === false) ? 'needs attention'
+                  : accountsOf(row).length > 1 ? `${accountsOf(row).length} accounts connected` : 'connected'}
               </Badge>
             ) : (
               <Badge tone="muted">{row.allowed ? 'not connected' : 'not available'}</Badge>
@@ -437,41 +442,54 @@ function DeveloperServices() {
 
           {/* Not permitted: the administrator's reason, and no control. A
               disabled button that looks pressable is worse than none. */}
-          {!row.allowed && !row.connection ? (
+          {!row.allowed && !accountsOf(row).length ? (
             <NotYet title="An administrator has not made this available">
               {row.note ?? 'Ask your administrator if you need it.'}
             </NotYet>
           ) : null}
 
-          {row.connection ? (
-            <div className="mt-2 space-y-2">
-              <p className="text-sm text-muted-foreground">
-                Connected as {row.connection.accountLabel ?? 'your account'}
-                {row.connection.lastCheckAt
-                  ? ` · checked ${new Date(row.connection.lastCheckAt).toLocaleString()}`
-                  : ''}
-                {row.connection.lastUsedAt
-                  ? ` · last used ${new Date(row.connection.lastUsedAt).toLocaleString()}`
-                  : ''}
+          {accountsOf(row).map((account, index) => (
+            <div key={account.account ?? index} className="mt-2 space-y-2 border-t border-border pt-2 first:border-0">
+              <p className="text-sm">
+                <span className="font-medium">{account.name ?? account.accountLabel ?? 'Your account'}</span>
+                {account.name && account.accountLabel ? <span className="text-muted-foreground"> · {account.accountLabel}</span> : null}
               </p>
-              {row.connection.lastCheckOk === false && row.connection.lastError ? (
-                <ErrorNote>{row.connection.lastError}</ErrorNote>
+              <p className="text-xs text-muted-foreground">
+                {account.lastCheckAt ? `Checked ${new Date(account.lastCheckAt).toLocaleString()}` : 'Not checked yet'}
+                {account.lastUsedAt ? ` · last used ${new Date(account.lastUsedAt).toLocaleString()}` : ''}
+              </p>
+              {account.lastCheckOk === false && account.lastError ? (
+                <ErrorNote>{account.lastError}</ErrorNote>
               ) : null}
               <div className="flex flex-wrap gap-2">
                 <Button type="button" variant="secondary" disabled={busy === row.service}
-                        onClick={() => void check(row.service)}>
+                        onClick={() => void check(row.service, account.account)}>
                   {busy === row.service ? 'Checking…' : 'Check it still works'}
                 </Button>
                 <Button type="button" variant="secondary" disabled={busy === row.service}
-                        onClick={() => void disconnect(row.service)}>
+                        onClick={() => void disconnect(row.service, account.account)}>
                   Disconnect
                 </Button>
               </div>
             </div>
-          ) : row.allowed ? (
+          ))}
+
+          {/* As many accounts as the person has: four Supabase accounts are
+              four entries here, not one that keeps being replaced. */}
+          {accountsOf(row).length && row.allowed && !adding[row.service]
+            && accountsOf(row).length < (row.maxAccounts ?? 1) ? (
+            <div className="mt-3">
+              <Button type="button" variant="secondary" disabled={busy === row.service}
+                      onClick={() => setAdding((v) => ({ ...v, [row.service]: true }))}>
+                Add another {row.label} account
+              </Button>
+            </div>
+          ) : null}
+
+          {row.allowed && (!accountsOf(row).length || adding[row.service]) ? (
             <form
               className="mt-2 space-y-2"
-              onSubmit={(e) => { e.preventDefault(); void connect(row.service); }}
+              onSubmit={(e) => { e.preventDefault(); void connect(row.service, row.label); }}
             >
               {fieldsOf(row).map((field) => {
                 const id = `dev-${row.service}-${field.key}`;
@@ -510,15 +528,34 @@ function DeveloperServices() {
                   </div>
                 );
               })}
+              <div className="space-y-1">
+                <label className="block text-sm" htmlFor={`dev-${row.service}-accountName`}>Name for this account (optional)</label>
+                <Input
+                  id={`dev-${row.service}-accountName`}
+                  type="text"
+                  autoComplete="off"
+                  maxLength={60}
+                  placeholder="For example: Work, or a client's name"
+                  value={values[row.service]?.accountName ?? ''}
+                  onChange={(e) => setValues((v) => ({ ...v, [row.service]: { ...v[row.service], accountName: e.target.value } }))}
+                />
+                <p className="text-xs text-muted-foreground">Your own name for it, so you and Josi can tell your accounts apart.</p>
+              </div>
               <p className="text-xs text-muted-foreground">
                 {row.tokenHelp}{' '}
                 <a className="underline" href={row.tokenUrl} target="_blank" rel="noreferrer noopener">
                   Open {row.label}
                 </a>
               </p>
-              <Button type="submit" disabled={busy === row.service || fieldsOf(row).some((field) => !(values[row.service]?.[field.key] ?? '').trim())}>
-                {busy === row.service ? 'Connecting…' : 'Connect'}
+              <Button type="submit" disabled={busy === row.service || fieldsOf(row).some((field) => !field.optional && !(values[row.service]?.[field.key] ?? '').trim())}>
+                {busy === row.service ? 'Connecting…' : accountsOf(row).length ? 'Add account' : 'Connect'}
               </Button>
+              {adding[row.service] ? (
+                <Button type="button" variant="secondary" disabled={busy === row.service}
+                        onClick={() => { setAdding((v) => ({ ...v, [row.service]: false })); setValues((v) => ({ ...v, [row.service]: {} })); }}>
+                  Cancel
+                </Button>
+              ) : null}
               <p className="text-xs text-muted-foreground">
                 Josi checks this with {row.label} before saving it, so a key or token that does not
                 work is never stored as though it did.

@@ -12,7 +12,9 @@ alter table developer_service_policy
     'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
     -- Admitted by 0128. Named here too so re-running this file on a current
     -- database does not narrow the list under rows that already exist.
-    'appstoreconnect', 'googleplay'
+    'appstoreconnect', 'googleplay',
+    -- Admitted by 0132; named here so re-running this file does not narrow the list.
+    'stripe'
   ));
 
 alter table developer_connections
@@ -25,7 +27,9 @@ alter table developer_connections
     'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
     -- Admitted by 0128. Named here too so re-running this file on a current
     -- database does not narrow the list under rows that already exist.
-    'appstoreconnect', 'googleplay'
+    'appstoreconnect', 'googleplay',
+    -- Admitted by 0132; named here so re-running this file does not narrow the list.
+    'stripe'
   ));
 
 insert into developer_service_policy (service, mode) values
