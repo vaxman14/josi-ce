@@ -76,6 +76,8 @@ export function Connections() {
   const [providers, setProviders] = useState<ProviderView[] | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [showAll, setShowAll] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -159,6 +161,13 @@ export function Connections() {
     }
   }
 
+  // The search box. With something typed, a service shows when its name
+  // matches; with nothing typed, when it is connected (or "all" was asked for).
+  const q = query.trim().toLowerCase();
+  const filtering = q.length > 0;
+  const visible = (label: string, connected: boolean): boolean =>
+    (filtering ? label.toLowerCase().includes(q) : connected || showAll);
+
   const cards = useMemo(() => providers?.flatMap((view) => {
     const accounts = view.connections?.filter(Boolean) ?? [];
     return accounts.length
@@ -173,12 +182,33 @@ export function Connections() {
         Your own account, connected by you. An administrator can see whether a connection is working and
         can disconnect it, but cannot read what is inside it.
       </p>
+      {/* One box instead of a long page. What is connected shows; everything
+          else stays out of the way until its name is typed or all is asked for. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          type="search"
+          aria-label="Search services"
+          className="min-w-0 flex-1"
+          placeholder="Search services: Google, Supabase, Stripe, MCP…"
+          autoComplete="off"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <Button type="button" variant="secondary" onClick={() => { setShowAll((v) => !v); setQuery(''); }}>
+          {showAll ? 'Show connected only' : 'Show all services'}
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {filtering ? 'Showing services whose name matches. Clear the box to see what you have connected.'
+          : showAll ? 'Showing every service. Open one to connect it.'
+            : 'Showing what you have connected. To connect something new, type its name.'}
+      </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {!cards ? <Working text="Loading…" /> : null}
 
-      {cards?.map((view) => (
+      {cards?.filter((view) => visible(PROVIDER_LABEL[view.provider], Boolean(view.connection))).map((view) => (
         <CollapsibleCard
-          key={`${view.provider}-${view.connection?.id ?? 'new'}`}
+          key={`${view.provider}-${view.connection?.id ?? 'new'}-${filtering || showAll}`}
           title={PROVIDER_LABEL[view.provider]}
           summary={view.connection?.account ?? view.connection?.serverUrl ?? (view.available ? 'Not connected' : 'Not set up')}
           status={view.connection ? (
@@ -186,7 +216,7 @@ export function Connections() {
               {view.connection.status === 'active' ? 'connected' : 'needs reconnecting'}
             </Badge>
           ) : null}
-          defaultOpen={Boolean(view.connection && view.connection.status !== 'active')}
+          defaultOpen={Boolean(view.connection && view.connection.status !== 'active') || (filtering && !view.connection)}
         >
 
           {/* No application registered: say so, and offer nothing to press.
@@ -284,11 +314,11 @@ export function Connections() {
         </CollapsibleCard>
       ))}
 
-      <DeveloperServices />
+      <DeveloperServices query={q} showAll={showAll} />
 
-      <McpServers />
+      <McpServers query={q} showAll={showAll} />
 
-      <DocumentInventory />
+      {!filtering ? <DocumentInventory /> : null}
     </div>
   );
 }
@@ -361,7 +391,7 @@ function fieldsOf(row: DeveloperServiceRow): DeveloperServiceField[] {
  * reason is shown here rather than leaving a control that fails — but the
  * refusal is enforced by the server, not by this component hiding a button.
  */
-function DeveloperServices() {
+function DeveloperServices({ query, showAll }: { query: string; showAll: boolean }) {
   const [rows, setRows] = useState<DeveloperServiceRow[] | null>(null);
   // What has been typed, by service and then by field key.
   const [values, setValues] = useState<Record<string, Record<string, string>>>({});
@@ -418,6 +448,10 @@ function DeveloperServices() {
   });
 
   if (!rows?.length) return null;
+  const filtering = query.length > 0;
+  // Connected services show; the rest wait for their name to be typed.
+  const shown = rows.filter((row) => (filtering ? row.label.toLowerCase().includes(query) : accountsOf(row).length > 0 || showAll));
+  if (!shown.length) return null;
 
   return (
     <>
@@ -428,20 +462,24 @@ function DeveloperServices() {
       </p>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {saved ? <p role="status">{saved}</p> : null}
-      {rows.map((row) => (
-        <Card key={row.service}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle>{row.label}</CardTitle>
-            {accountsOf(row).length ? (
-              <Badge tone={accountsOf(row).some((a) => a.lastCheckOk === false) ? 'danger' : 'ok'}>
-                {accountsOf(row).some((a) => a.lastCheckOk === false) ? 'needs attention'
-                  : accountsOf(row).length > 1 ? `${accountsOf(row).length} accounts connected` : 'connected'}
-              </Badge>
-            ) : (
-              <Badge tone="muted">{row.allowed ? 'not connected' : 'not available'}</Badge>
-            )}
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">{row.capability}</p>
+      {shown.map((row) => (
+        <CollapsibleCard
+          key={`${row.service}-${filtering || showAll}`}
+          title={row.label}
+          summary={accountsOf(row).length
+            ? accountsOf(row).map((a) => a.name ?? a.accountLabel ?? 'Your account').join(', ')
+            : row.capability}
+          status={accountsOf(row).length ? (
+            <Badge tone={accountsOf(row).some((a) => a.lastCheckOk === false) ? 'danger' : 'ok'}>
+              {accountsOf(row).some((a) => a.lastCheckOk === false) ? 'needs attention'
+                : accountsOf(row).length > 1 ? `${accountsOf(row).length} accounts` : 'connected'}
+            </Badge>
+          ) : (
+            <Badge tone="muted">{row.allowed ? 'not connected' : 'not available'}</Badge>
+          )}
+          defaultOpen={accountsOf(row).some((a) => a.lastCheckOk === false) || (filtering && shown.length <= 3 && !accountsOf(row).length)}
+        >
+          {accountsOf(row).length ? <p className="text-sm text-muted-foreground">{row.capability}</p> : null}
 
           {/* Not permitted: the administrator's reason, and no control. A
               disabled button that looks pressable is worse than none. */}
@@ -565,7 +603,7 @@ function DeveloperServices() {
               </p>
             </form>
           ) : null}
-        </Card>
+        </CollapsibleCard>
       ))}
     </>
   );

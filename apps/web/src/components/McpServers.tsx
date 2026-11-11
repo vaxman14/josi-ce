@@ -14,7 +14,7 @@
 //     server's, not Josi's.
 import { useCallback, useEffect, useState } from 'react';
 import { api, ApiError } from '@/lib/api';
-import { Badge, Button, Card, CardTitle, ErrorNote, Input, NotYet } from '@/components/ui';
+import { Badge, Button, Card, CardTitle, CollapsibleCard, ErrorNote, Input, NotYet } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 import { useUnsavedChanges } from '@/lib/useUnsavedChanges';
 
@@ -76,7 +76,7 @@ function signInProblem(reason: string): string {
   }
 }
 
-export function McpServers() {
+export function McpServers({ query = '', showAll = false }: { query?: string; showAll?: boolean }) {
   const [view, setView] = useState<McpView | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [adding, setAdding] = useState(false);
@@ -171,6 +171,17 @@ export function McpServers() {
   });
 
   if (!view) return null;
+  // The Connections page's search box. With something typed, this section
+  // shows when "mcp" or one of the servers matches; otherwise when there is a
+  // server, or everything was asked for. A sign-in in progress always shows.
+  const filtering = query.length > 0;
+  const sectionMatches = 'custom mcp servers'.includes(query);
+  const connections = filtering && !sectionMatches
+    ? view.connections.filter((c) => c.name.toLowerCase().includes(query) || c.host.toLowerCase().includes(query))
+    : view.connections;
+  const showSection = adding || Boolean(notice) || Boolean(error)
+    || (filtering ? sectionMatches || connections.length > 0 : view.connections.length > 0 || showAll);
+  if (!showSection) return null;
   const canSubmit = form.name.trim() && form.url.trim()
     && (form.auth !== 'bearer' || form.token.trim())
     && (form.auth !== 'header' || (form.headerName.trim() && form.headerValue.trim()));
@@ -182,10 +193,12 @@ export function McpServers() {
         An MCP server is a web address that gives Josi extra tools, such as searching a notes app or filing a ticket.
         The ones you add here are yours alone: nobody else on this Josi can use them or see your sign-in.
       </p>
-      <p className="text-sm text-muted-foreground">
-        Josi uses a tool on its own only when the server marks it as read-only. Every other tool asks you first, each
-        time, on your Approvals page. Only add servers you trust: what a server tells Josi is the server&apos;s, not Josi&apos;s.
-      </p>
+      {adding || !view.connections.length ? (
+        <p className="text-sm text-muted-foreground">
+          Josi uses a tool on its own only when the server marks it as read-only. Every other tool asks you first, each
+          time, on your Approvals page. Only add servers you trust: what a server tells Josi is the server&apos;s, not Josi&apos;s.
+        </p>
+      ) : null}
       {error ? <ErrorNote>{error}</ErrorNote> : null}
       {notice ? <p role="status" className="text-sm text-success">{notice}</p> : null}
 
@@ -197,19 +210,23 @@ export function McpServers() {
         </Card>
       ) : null}
 
-      {view.connections.map((connection) => {
+      {connections.map((connection) => {
         const working = connection.enabled && connection.status === 'active';
         const runsFreely = connection.tools.filter((t) => t.enabled && !t.asksFirst);
         const asks = connection.tools.filter((t) => t.enabled && t.asksFirst);
         return (
-          <Card key={connection.id}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <CardTitle>{connection.name}</CardTitle>
+          <CollapsibleCard
+            key={connection.id}
+            title={connection.name}
+            summary={`${connection.host} · ${connection.tools.length} tool${connection.tools.length === 1 ? '' : 's'}`}
+            status={(
               <Badge tone={!connection.enabled ? 'muted' : working ? 'ok' : 'danger'}>
                 {connection.enabled ? plain('mcp_status', connection.status) : 'Switched off'}
               </Badge>
-            </div>
-            <p className="mt-1 break-all text-sm text-muted-foreground">{connection.host} · {plain('mcp_auth_kind', connection.auth)}</p>
+            )}
+            defaultOpen={connection.enabled && !working}
+          >
+            <p className="break-all text-sm text-muted-foreground">{connection.host} · {plain('mcp_auth_kind', connection.auth)}</p>
             <p className="text-xs text-muted-foreground">
               {connection.lastCheckAt ? `Checked ${new Date(connection.lastCheckAt).toLocaleString()}` : 'Not checked yet'}
               {' · '}Josi calls it &quot;{connection.slug}&quot;
@@ -284,7 +301,7 @@ export function McpServers() {
                 Remove
               </Button>
             </div>
-          </Card>
+          </CollapsibleCard>
         );
       })}
 
