@@ -282,6 +282,22 @@ Windows and the Mac inherit it when they merge this branch's packages.
 - Reading gate's database: user `josi`, db `josi`, 127.0.0.1:15432, password file under
   `/var/lib/josi/data/secrets/*/database-password` (root). Query status columns only.
 
+## beta.15 and beta.16 (2026-11-10 evening)
+
+- **beta.15**: Josi's built-in debugger, step one (docs/JOSI_DEBUGGER_PLAN.md). Switch
+  `DEBUGGER_BUILT_IN` in `packages/core/src/debugger.ts` is `true`; **set it to `false` before release.**
+- **beta.16**: everything the iPhone app asked the server for (docs/IOS_SERVER_ANSWERS_2026-11-10.md
+  has the exact shapes): push straight to Apple (`packages/core/src/apns.ts`, key pasted in Admin,
+  Overview, "iPhone notifications"), Sign in with Apple on by default, short spoken replies
+  (`reply_style: "spoken_short"` on a turn), two-way reminder sync, App Store Connect and Google Play
+  as connectable services (every service now lists `fields`), and parental additions (rules
+  endpoint, blocked topics and apps, ask-for-more-time with a push to the parent). Migrations 0126 to 0130.
+- Known gaps from that work: the web Family page is still a "Coming Soon" stub; no second parent,
+  invites or spending limits; Apple sign-in revocation on account deletion is not built; overdue
+  phone reminders are refused; a push with no Apple key retries a few minutes and is then dropped;
+  nothing was tried against real Apple or Google keys; every server needs Roman's own Apple push
+  key to notify the Josi iPhone app, so other people's servers cannot notify it yet.
+
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
 (text files she writes); one new draft release when this lands; login terminal may run
