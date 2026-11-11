@@ -9,7 +9,10 @@ alter table developer_service_policy
   check (service in (
     'github', 'netlify', 'vercel', 'supabase',
     'gitlab', 'cloudflare', 'sentry', 'railway', 'render', 'linear',
-    'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion'
+    'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
+    -- Admitted by 0128. Named here too so re-running this file on a current
+    -- database does not narrow the list under rows that already exist.
+    'appstoreconnect', 'googleplay'
   ));
 
 alter table developer_connections
@@ -19,7 +22,10 @@ alter table developer_connections
   check (service in (
     'github', 'netlify', 'vercel', 'supabase',
     'gitlab', 'cloudflare', 'sentry', 'railway', 'render', 'linear',
-    'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion'
+    'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
+    -- Admitted by 0128. Named here too so re-running this file on a current
+    -- database does not narrow the list under rows that already exist.
+    'appstoreconnect', 'googleplay'
   ));
 
 insert into developer_service_policy (service, mode) values

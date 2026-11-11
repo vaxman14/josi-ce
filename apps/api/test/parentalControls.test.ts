@@ -20,6 +20,10 @@
 //   7. The trail records the acts and never the words.
 //   8. The administrator surface has no query into a family — asserted against
 //      the source, not the comment.
+//   9. (block 6b) The child's phone reads one rules object; topics and apps
+//      cost the password again; a child can ask, only the linked parent can
+//      answer, an approval really does reopen the day, and the notification
+//      never carries the child's note.
 //
 // No suite here contacts a model provider: `llmFetch` is injected and no test
 // needs a reply, only whether the door was open.
@@ -212,6 +216,26 @@ describe('an installation that has not bought it does not have it', () => {
       method: 'POST', jar: cookies.parent, body: { password: PW.parent, code: '000000' },
     });
     expect(authority.status).toBe(404);
+  });
+
+  it('answers 404 on the rules and the request routes too, for everybody', async () => {
+    const someRequest = '00000000-0000-4000-8000-000000000001';
+    for (const who of ['parent', 'stranger', 'admin'] as const) {
+      const attempts: Array<[string, Res]> = [
+        ['GET rules', await call('/api/parental/rules', { jar: cookies[who] })],
+        ['GET requests', await call('/api/parental/requests', { jar: cookies[who] })],
+        ['POST requests', await call('/api/parental/requests', {
+          method: 'POST', jar: cookies[who], body: { kind: 'more_time', minutes: 15 },
+        })],
+        ['POST decide', await call(`/api/parental/requests/${someRequest}/decide`, {
+          method: 'POST', jar: cookies[who], body: { decision: 'approve' },
+        })],
+      ];
+      for (const [what, res] of attempts) {
+        expect(res.status, `${who} ${what}`).toBe(404);
+        expect(res.body.error, `${who} ${what}`).toBe('no such endpoint');
+      }
+    }
   });
 
   it('is signed out before it is anything else', async () => {
@@ -660,6 +684,352 @@ describe('the hours and the limit are enforced by the server', () => {
   });
 });
 
+// ------------------------------------- 6b. rules for the phone, and asking
+
+describe('the phone reads its rules, and a child can ask', () => {
+  const NOTE = 'please please, the zebra documentary is not finished';
+  const TOPICS = ['gambling', 'horror films'];
+  const APPS = ['com.example.game', 'com.example.video-app'];
+
+  const pushesFor = (userId: string) => db.query<{
+    event_key: string; category: string; route_type: string; route_id: string; title: string; body: string;
+  }>(
+    `select event_key, category, route_type, route_id, title, body
+     from push_deliveries where owner_user_id = $1 order by created_at, event_key`,
+    [userId],
+  );
+
+  beforeAll(async () => {
+    // One phone each, so there is a device for a notification to be queued to.
+    for (const who of ['parent', 'child', 'stranger', 'admin'] as const) {
+      await db.query(
+        `insert into mobile_devices (owner_user_id, device_identity, platform, expo_token_enc, token_fingerprint)
+         values ($1, $2, 'ios', 'not-a-real-token', $3)`,
+        [ids[who], `phone-${who}`, `fingerprint-${who}`],
+      );
+    }
+  });
+
+  it('tells somebody who is not a managed child exactly that, and nothing else', async () => {
+    for (const who of ['parent', 'stranger', 'admin'] as const) {
+      const res = await call('/api/parental/rules', { jar: cookies[who] });
+      expect(res.status, who).toBe(200);
+      expect(res.body, who).toEqual({ version: 1, managed: false });
+    }
+    expect((await call('/api/parental/rules')).status).toBe(401);
+  });
+
+  it('gives the child one versioned object, in the shape the phone caches', async () => {
+    const res = await call('/api/parental/rules', { jar: cookies.child });
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual([
+      'access', 'blocked_apps', 'blocked_topics', 'daily_limit_minutes', 'extra_minutes_today',
+      'guardian', 'managed', 'minutes_used_today', 'schedule_enabled', 'timezone', 'updated_at',
+      'version', 'windows',
+    ]);
+    expect(res.body).toMatchObject({
+      version: 1, managed: true, guardian: { name: 'pcparent' }, timezone: 'UTC',
+      daily_limit_minutes: 5, extra_minutes_today: 0, schedule_enabled: true,
+      blocked_topics: [], blocked_apps: [],
+      // Section 6 left this child over the limit, and the rules say so.
+      access: { allowed: false, reason: 'daily_limit', opens_again: null },
+    });
+    expect(res.body.minutes_used_today).toBeGreaterThanOrEqual(5);
+    expect(res.body.windows).toHaveLength(7);
+    expect(res.body.windows[0]).toEqual({ weekday: 0, start_minute: 0, end_minute: 1440 });
+    expect(typeof res.body.updated_at).toBe('string');
+  });
+
+  it('asks for the password again before topics or apps change', async () => {
+    // A fresh sign-in is a session that has not confirmed anything.
+    const fresh = await signIn('pcparent', PW.parent);
+    const refused = await call(`/api/parental/children/${ids.child}/controls`, {
+      method: 'PUT', jar: fresh, body: { blocked_topics: TOPICS, blocked_apps: APPS },
+    });
+    expect(refused.status).toBe(401);
+    expect(refused.body.error).toMatch(/password/i);
+    const before = await call(`/api/parental/children/${ids.child}/controls`, { jar: fresh });
+    expect(before.body.controls.blockedTopics).toEqual([]);
+
+    expect((await call('/api/assistant/step-up', {
+      method: 'POST', jar: fresh, body: { password: PW.parent },
+    })).status).toBe(200);
+    const saved = await call(`/api/parental/children/${ids.child}/controls`, {
+      method: 'PUT', jar: fresh, body: { blocked_topics: TOPICS, blocked_apps: APPS },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.controls.blockedTopics).toEqual(TOPICS);
+    expect(saved.body.controls.blockedApps).toEqual(APPS);
+    // Nothing else moved.
+    expect(saved.body.controls.dailyLimitMinutes).toBe(5);
+    expect(saved.body.controls.windows).toHaveLength(7);
+
+    const read = await call(`/api/parental/children/${ids.child}/controls`, { jar: cookies.parent });
+    expect(read.body.controls.blockedTopics).toEqual(TOPICS);
+    expect(read.body.honesty.topics).toMatch(/not a filter/i);
+    expect(read.body.honesty.apps).toMatch(/blocks no app/i);
+
+    const rules = await call('/api/parental/rules', { jar: cookies.child });
+    expect(rules.body.blocked_topics).toEqual(TOPICS);
+    expect(rules.body.blocked_apps).toEqual(APPS);
+  });
+
+  it('does not let the child, another parent or the super admin change them', async () => {
+    for (const who of ['child', 'stranger', 'admin', 'secondChild'] as const) {
+      const res = await call(`/api/parental/children/${ids.child}/controls`, {
+        method: 'PUT', jar: cookies[who], body: { blocked_topics: [], blocked_apps: [] },
+      });
+      expect(res.status, who).toBe(404);
+    }
+    const rules = await call('/api/parental/rules', { jar: cookies.child });
+    expect(rules.body.blocked_topics).toEqual(TOPICS);
+  });
+
+  it('refuses lists that are too long or are not what they claim to be', async () => {
+    await confirmPassword();
+    const put = (body: unknown) => call(`/api/parental/children/${ids.child}/controls`, {
+      method: 'PUT', jar: cookies.parent, body,
+    });
+    expect((await put({ blocked_topics: Array.from({ length: 21 }, (_, i) => `topic ${i}`) })).status).toBe(400);
+    expect((await put({ blocked_topics: ['x'.repeat(61)] })).status).toBe(400);
+    expect((await put({ blocked_topics: ['   '] })).status).toBe(400);
+    expect((await put({ blocked_topics: 'gambling' })).status).toBe(400);
+    expect((await put({ blocked_apps: ['not a bundle id'] })).status).toBe(400);
+    expect((await put({ blocked_apps: ['nodots'] })).status).toBe(400);
+    expect((await put({ blocked_apps: Array.from({ length: 101 }, (_, i) => `com.example.app${i}`) })).status).toBe(400);
+    const rules = await call('/api/parental/rules', { jar: cookies.child });
+    expect(rules.body.blocked_topics).toEqual(TOPICS);
+    expect(rules.body.blocked_apps).toEqual(APPS);
+  });
+
+  it('lets a child ask for more time, once, and tells the parent’s phone without the note', async () => {
+    // Nobody to ask, for somebody who is not a managed child.
+    for (const who of ['parent', 'stranger', 'admin'] as const) {
+      const res = await call('/api/parental/requests', {
+        method: 'POST', jar: cookies[who], body: { kind: 'more_time', minutes: 30 },
+      });
+      expect(res.status, who).toBe(404);
+    }
+    const ask = (body: unknown) => call('/api/parental/requests', { method: 'POST', jar: cookies.child, body });
+    expect((await ask({ kind: 'bedtime' })).status).toBe(400);
+    expect((await ask({ kind: 'more_time', minutes: 3 })).status).toBe(400);
+    expect((await ask({ kind: 'more_time', minutes: 241 })).status).toBe(400);
+    expect((await ask({ kind: 'access', minutes: 30 })).status).toBe(400);
+    expect((await ask({ kind: 'access', note: 'n'.repeat(301) })).status).toBe(400);
+
+    const filed = await ask({ kind: 'more_time', minutes: 30, note: NOTE });
+    expect(filed.status).toBe(201);
+    expect(filed.body.request).toMatchObject({
+      kind: 'more_time', status: 'open', minutes: 30, note: NOTE, minutesGranted: null, decidedAt: null,
+    });
+    ids.timeRequest = filed.body.request.id;
+
+    // The same question again is the same question.
+    const again = await ask({ kind: 'more_time', minutes: 60 });
+    expect(again.status).toBe(409);
+    expect(again.body.error).toMatch(/already asked/i);
+
+    // A different kind is a different question.
+    const access = await ask({ kind: 'access', note: NOTE });
+    expect(access.status).toBe(201);
+    ids.accessRequest = access.body.request.id;
+
+    const pushes = await pushesFor(ids.parent);
+    expect(pushes).toHaveLength(2);
+    const time = pushes.find((p) => p.route_id === ids.timeRequest)!;
+    expect(time).toMatchObject({
+      event_key: `family:${ids.timeRequest}:open`, category: 'family', route_type: 'family',
+      title: 'Josi', body: 'Kid One is asking for more time.',
+    });
+    expect(pushes.find((p) => p.route_id === ids.accessRequest)!.body).toBe('Kid One is asking for access.');
+    expect(JSON.stringify(pushes)).not.toContain('zebra');
+    // Nobody else's phone heard about it.
+    for (const who of ['child', 'stranger', 'admin'] as const) {
+      expect(await pushesFor(ids[who]), who).toHaveLength(0);
+    }
+    // Asking changed nothing.
+    expect((await call('/api/parental/rules', { jar: cookies.child })).body.access.allowed).toBe(false);
+  });
+
+  it('shows the request to the child and to the linked parent, and to nobody else', async () => {
+    const own = await call('/api/parental/requests', { jar: cookies.child });
+    expect(own.status).toBe(200);
+    expect(own.body.role).toBe('child');
+    expect(own.body.requests.map((r: any) => r.id).sort()).toEqual([ids.timeRequest, ids.accessRequest].sort());
+    expect(own.body.requests[0].child).toBeUndefined();
+
+    const parent = await call('/api/parental/requests', { jar: cookies.parent });
+    expect(parent.body.role).toBe('parent');
+    expect(parent.body.requests).toHaveLength(2);
+    const seen = parent.body.requests.find((r: any) => r.id === ids.timeRequest);
+    expect(seen).toMatchObject({
+      kind: 'more_time', status: 'open', minutes: 30, note: NOTE,
+      child: { childUserId: ids.child, name: 'Kid One' },
+    });
+
+    // Another parent sees their own family's list, which is empty.
+    const other = await call('/api/parental/requests', { jar: cookies.stranger });
+    expect(other.body).toEqual({ role: 'parent', requests: [] });
+    // The other child sees their own, which is empty.
+    expect((await call('/api/parental/requests', { jar: cookies.secondChild })).body)
+      .toEqual({ role: 'child', requests: [] });
+    // And the super admin is nobody here.
+    const admin = await call('/api/parental/requests', { jar: cookies.admin });
+    expect(admin.body).toEqual({ role: 'none', requests: [] });
+  });
+
+  it('lets only the linked parent answer, with 404 for everybody else', async () => {
+    for (const who of ['stranger', 'admin', 'child', 'secondChild'] as const) {
+      for (const decision of ['approve', 'deny']) {
+        const res = await call(`/api/parental/requests/${ids.timeRequest}/decide`, {
+          method: 'POST', jar: cookies[who], body: { decision, minutes: 60 },
+        });
+        expect(res.status, `${who} ${decision}`).toBe(404);
+      }
+    }
+    // A request that does not exist is the same answer as one that is not yours.
+    const missing = await call('/api/parental/requests/00000000-0000-4000-8000-000000000009/decide', {
+      method: 'POST', jar: cookies.parent, body: { decision: 'approve' },
+    });
+    expect(missing.status).toBe(404);
+    expect((await call('/api/parental/requests/not-an-id/decide', {
+      method: 'POST', jar: cookies.parent, body: { decision: 'approve' },
+    })).status).toBe(404);
+
+    // Nothing was decided and nothing was granted by any of that.
+    const own = await call('/api/parental/requests', { jar: cookies.child });
+    expect(own.body.requests.every((r: any) => r.status === 'open')).toBe(true);
+    expect((await call('/api/parental/rules', { jar: cookies.child })).body.extra_minutes_today).toBe(0);
+    expect(await pushesFor(ids.child)).toHaveLength(0);
+  });
+
+  it('reopens the day when the parent approves more time', async () => {
+    // Over the limit, and refused, before.
+    const before = await call(`/api/assistant/threads/${ids.childThread}/talk`, {
+      method: 'POST', jar: cookies.child, body: { message: 'still there?' },
+    });
+    expect(before.status).toBe(403);
+    expect(before.body.error).toMatch(/used today/i);
+
+    expect((await call(`/api/parental/requests/${ids.timeRequest}/decide`, {
+      method: 'POST', jar: cookies.parent, body: { decision: 'maybe' },
+    })).status).toBe(400);
+    expect((await call(`/api/parental/requests/${ids.timeRequest}/decide`, {
+      method: 'POST', jar: cookies.parent, body: { decision: 'approve', minutes: 500 },
+    })).status).toBe(400);
+
+    // A plain signed-in session: a new sign-in that has confirmed no password.
+    const fresh = await signIn('pcparent', PW.parent);
+    const decided = await call(`/api/parental/requests/${ids.timeRequest}/decide`, {
+      method: 'POST', jar: fresh, body: { decision: 'approve', minutes: 20 },
+    });
+    expect(decided.status).toBe(200);
+    expect(decided.body.request).toMatchObject({ id: ids.timeRequest, status: 'approved', minutes: 30, minutesGranted: 20 });
+    expect(decided.body.extraMinutesToday).toBe(20);
+
+    // Answered once.
+    const twice = await call(`/api/parental/requests/${ids.timeRequest}/decide`, {
+      method: 'POST', jar: cookies.parent, body: { decision: 'approve', minutes: 20 },
+    });
+    expect(twice.status).toBe(409);
+
+    const rules = await call('/api/parental/rules', { jar: cookies.child });
+    expect(rules.body).toMatchObject({
+      daily_limit_minutes: 5, extra_minutes_today: 20, access: { allowed: true, reason: 'allowed' },
+    });
+
+    // The door is open: no model is configured, so the refusal is about that.
+    const after = await call(`/api/assistant/threads/${ids.childThread}/talk`, {
+      method: 'POST', jar: cookies.child, body: { message: 'thank you' },
+    });
+    expect(after.status).toBe(503);
+    expect(after.body.refusal.reason).toBe('no_model');
+
+    // The standing rules did not move.
+    const controls = await call(`/api/parental/children/${ids.child}/controls`, { jar: cookies.parent });
+    expect(controls.body.controls.dailyLimitMinutes).toBe(5);
+  });
+
+  it('tells the child’s phone the answer, again without the note', async () => {
+    const pushes = await pushesFor(ids.child);
+    expect(pushes).toHaveLength(1);
+    expect(pushes[0]).toMatchObject({
+      event_key: `family:${ids.timeRequest}:approved`, category: 'family', route_type: 'family',
+      route_id: ids.timeRequest, title: 'Josi', body: 'Your parent said yes: 20 more minutes today.',
+    });
+
+    const denied = await call(`/api/parental/requests/${ids.accessRequest}/decide`, {
+      method: 'POST', jar: cookies.parent, body: { decision: 'deny' },
+    });
+    expect(denied.status).toBe(200);
+    expect(denied.body.request).toMatchObject({ status: 'denied', minutesGranted: null });
+    // Denying, and an `access` answer, grant no time.
+    expect(denied.body.extraMinutesToday).toBe(20);
+
+    const all = await pushesFor(ids.child);
+    expect(all).toHaveLength(2);
+    expect(all.map((p) => p.event_key)).toContain(`family:${ids.accessRequest}:denied`);
+    expect(JSON.stringify(all)).not.toContain('zebra');
+    expect(JSON.stringify(await pushesFor(ids.parent))).not.toContain('zebra');
+  });
+
+  it('does not let extra minutes open a closed timetable', async () => {
+    const elsewhere = (new Date().getUTCDay() + 3) % 7;
+    await confirmPassword();
+    const saved = await call(`/api/parental/children/${ids.child}/controls`, {
+      method: 'PUT', jar: cookies.parent,
+      body: { windows: [{ weekday: elsewhere, startMinute: 9 * 60, endMinute: 10 * 60 }] },
+    });
+    expect(saved.status).toBe(200);
+    const rules = await call('/api/parental/rules', { jar: cookies.child });
+    expect(rules.body.extra_minutes_today).toBe(20);
+    expect(rules.body.access).toMatchObject({ allowed: false, reason: 'outside_schedule' });
+    expect(rules.body.access.opens_again).toMatch(/^09:00 /);
+    const blocked = await call(`/api/assistant/threads/${ids.childThread}/talk`, {
+      method: 'POST', jar: cookies.child, body: { message: 'but I have extra time' },
+    });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error).toMatch(/agreed hours/i);
+  });
+
+  it('caps what one day can be given, and how often a child can ask', async () => {
+    const ask = () => call('/api/parental/requests', {
+      method: 'POST', jar: cookies.child, body: { kind: 'more_time', minutes: 240 },
+    });
+    const approve = (id: string) => call(`/api/parental/requests/${id}/decide`, {
+      method: 'POST', jar: cookies.parent, body: { decision: 'approve' },
+    });
+    // 20 already given today; a 240-minute approval tops the day up to 240.
+    const first = await ask();
+    expect(first.status).toBe(201);
+    const topped = await approve(first.body.request.id);
+    expect(topped.status).toBe(200);
+    expect(topped.body.request.minutesGranted).toBe(220);
+    expect(topped.body.extraMinutesToday).toBe(240);
+
+    // After that an approval is refused, and the request stays open to deny.
+    const second = await ask();
+    expect(second.status).toBe(201);
+    const full = await approve(second.body.request.id);
+    expect(full.status).toBe(409);
+    expect(full.body.error).toMatch(/daily limit/i);
+    expect((await call(`/api/parental/requests/${second.body.request.id}/decide`, {
+      method: 'POST', jar: cookies.parent, body: { decision: 'deny' },
+    })).status).toBe(200);
+
+    // Four asked so far this hour; six is the allowance.
+    for (let i = 0; i < 2; i += 1) {
+      const more = await ask();
+      expect(more.status, `request ${i + 5}`).toBe(201);
+      await call(`/api/parental/requests/${more.body.request.id}/decide`, {
+        method: 'POST', jar: cookies.parent, body: { decision: 'deny' },
+      });
+    }
+    const tooMany = await ask();
+    expect(tooMany.status).toBe(429);
+  });
+});
+
 // --------------------------------------------------------------- 7. the trail
 
 describe('the trail records the acts and never the words', () => {
@@ -671,6 +1041,7 @@ describe('the trail records the acts and never the words', () => {
       'parental.authority_granted', 'parental.authority_failed',
       'parental.link_created', 'parental.controls_updated',
       'parental.conversations_listed', 'parental.conversation_read', 'parental.usage_viewed',
+      'parental.request_filed', 'parental.request_decided',
     ]) {
       expect(kinds, kind).toContain(kind);
     }
@@ -682,6 +1053,10 @@ describe('the trail records the acts and never the words', () => {
     );
     const serialised = JSON.stringify(rows);
     expect(serialised).not.toMatch(/maths test/);
+    // Not the child's note, not a blocked topic and not a blocked app either.
+    expect(serialised).not.toContain('zebra');
+    expect(serialised).not.toContain('gambling');
+    expect(serialised).not.toContain('com.example.game');
     expect(serialised).not.toContain('josi-lic');
     expect(serialised).not.toContain(parentTotpSecret);
     expect(serialised).not.toContain(PW.parent);
@@ -707,13 +1082,18 @@ describe('the administrator surface cannot grow one', () => {
     for (const table of [
       'parental_links', 'child_controls', 'child_schedule_windows',
       'child_activity_minutes', 'threads', 'messages',
+      'family_requests', 'child_extra_minutes', 'push_deliveries',
     ]) {
       expect(adminHalf, `the admin router reads ${table}`).not.toContain(table);
     }
   });
 
   it('reaches no function that resolves parental authority', () => {
-    for (const fn of ['parentalAuthority', 'controllerOf', 'childrenOf', 'getControls', 'usageSummary', 'listMessages']) {
+    for (const fn of [
+      'parentalAuthority', 'controllerOf', 'childrenOf', 'getControls', 'usageSummary', 'listMessages',
+      'listFamilyRequestsForParent', 'listOwnFamilyRequests', 'decideFamilyRequest', 'fileFamilyRequest',
+      'extraMinutesToday',
+    ]) {
       expect(adminHalf, `the admin router calls ${fn}`).not.toContain(`${fn}(`);
     }
   });

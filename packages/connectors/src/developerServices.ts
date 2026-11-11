@@ -10,15 +10,24 @@
 // the cheapest request that proves the token is valid and tells the owner which
 // account they just connected; nothing else about the account is read, and
 // nothing is stored from the response but the account's own name.
+import {
+  checkAppStoreConnectKey, checkGooglePlayKey, isDeveloperStoreService, listAppStoreConnectResources,
+  listGooglePlayResources, normalizeAppStoreConnectFields, normalizeGooglePlayFields, type DeveloperStoreService,
+} from './developerStoreServices.js';
+
+export * from './developerStoreServices.js';
+
 export type DeveloperService =
   | 'github' | 'netlify' | 'vercel' | 'supabase'
   | 'gitlab' | 'cloudflare' | 'sentry' | 'railway' | 'render' | 'linear'
-  | 'dockerhub' | 'ghcr' | 'jira' | 'npm' | 'neon' | 'notion';
+  | 'dockerhub' | 'ghcr' | 'jira' | 'npm' | 'neon' | 'notion'
+  | 'appstoreconnect' | 'googleplay';
 
 export const DEVELOPER_SERVICES: readonly DeveloperService[] = [
   'github', 'netlify', 'vercel', 'supabase',
   'gitlab', 'cloudflare', 'sentry', 'railway', 'render', 'linear',
   'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
+  'appstoreconnect', 'googleplay',
 ];
 
 export function isDeveloperService(value: unknown): value is DeveloperService {
@@ -30,6 +39,28 @@ export type PermissionMode = 'not_allowed' | 'everyone' | 'specific_users';
 export function isPermissionMode(value: unknown): value is PermissionMode {
   return value === 'not_allowed' || value === 'everyone' || value === 'specific_users';
 }
+
+/** Every key a connection form can carry. The first four are the original
+ * single-token shape; the rest belong to the stores, whose credential is a
+ * signing key in several parts rather than one token. */
+export type DeveloperFieldKey =
+  | 'token' | 'username' | 'email' | 'baseUrl'
+  | 'issuerId' | 'keyId' | 'privateKey' | 'serviceAccountJson' | 'packageName';
+
+/** One box on the connection form. A client builds the whole form from these
+ * and sends each value back under `key`. */
+export interface DeveloperServiceField {
+  key: DeveloperFieldKey;
+  label: string;
+  /** Mask it, never show it again, never put it anywhere but the Vault. */
+  secret: boolean;
+  /** A pasted file rather than a single line. */
+  multiline: boolean;
+  help: string;
+}
+
+/** What a person entered, by field key. Sealed whole, as one payload. */
+export type DeveloperFieldValues = Partial<Record<DeveloperFieldKey, string>>;
 
 export interface DeveloperServiceDescriptor {
   service: DeveloperService;
@@ -44,6 +75,9 @@ export interface DeveloperServiceDescriptor {
   usernameLabel?: string;
   emailLabel?: string;
   baseUrlLabel?: string;
+  /** Only for services whose credential is not one token. Everything else has
+   * its fields derived from the labels above — see `developerServiceFields`. */
+  fields?: readonly DeveloperServiceField[];
 }
 
 export const DEVELOPER_SERVICE_CATALOG: readonly DeveloperServiceDescriptor[] = [
@@ -155,7 +189,72 @@ export const DEVELOPER_SERVICE_CATALOG: readonly DeveloperServiceDescriptor[] = 
     tokenUrl: 'https://www.notion.so/profile/integrations',
     capability: 'Search and read only the Notion pages explicitly shared with this integration.',
   },
+  {
+    service: 'appstoreconnect', label: 'App Store Connect', tokenLabel: 'App Store Connect API key',
+    tokenHelp: 'In App Store Connect open Users and Access → Integrations → App Store Connect API and generate a team key. '
+      + 'Give it the narrowest role that covers what Josi should see. The .p8 file can be downloaded only once.',
+    tokenUrl: 'https://appstoreconnect.apple.com/access/integrations/api',
+    capability: 'See your apps and read their customer reviews.',
+    fields: [
+      { key: 'issuerId', label: 'Issuer ID', secret: false, multiline: false,
+        help: 'Shown above the list of keys in App Store Connect. It is a long identifier with dashes.' },
+      { key: 'keyId', label: 'Key ID', secret: false, multiline: false,
+        help: 'The short code listed beside the key you generated.' },
+      { key: 'privateKey', label: 'Private key (.p8)', secret: true, multiline: true,
+        help: 'Open the downloaded .p8 file in a text editor and paste all of it, including the BEGIN PRIVATE KEY and END PRIVATE KEY lines.' },
+    ],
+  },
+  {
+    service: 'googleplay', label: 'Google Play', tokenLabel: 'Service account JSON',
+    tokenHelp: 'In Google Cloud create a service account and a JSON key for it, and enable the Google Play Android Developer API. '
+      + 'Then in Google Play Console open Users and permissions, invite the service account’s email, and give it access to the app.',
+    tokenUrl: 'https://play.google.com/console/developers/users-and-permissions',
+    capability: 'Read the reviews of the one Android app you name.',
+    fields: [
+      { key: 'serviceAccountJson', label: 'Service account JSON', secret: true, multiline: true,
+        help: 'Open the JSON key file Google gave you in a text editor and paste all of it.' },
+      { key: 'packageName', label: 'Package name', secret: false, multiline: false,
+        help: 'The app’s package name exactly as Google Play Console shows it, for example com.example.app.' },
+    ],
+  },
 ];
+
+/** The form for a service, as a list of boxes.
+ *
+ * Declared for the stores; derived for everything older, so a client can build
+ * every form from this one list and never needs to know which kind of service
+ * it is looking at. The order is the order to show them in. */
+export function developerServiceFields(d: DeveloperServiceDescriptor): DeveloperServiceField[] {
+  if (d.fields) return d.fields.map((f) => ({ ...f }));
+  const plain = (key: DeveloperFieldKey, label: string): DeveloperServiceField => ({ key, label, secret: false, multiline: false, help: '' });
+  return [
+    ...(d.usernameLabel ? [plain('username', d.usernameLabel)] : []),
+    ...(d.emailLabel ? [plain('email', d.emailLabel)] : []),
+    ...(d.baseUrlLabel ? [plain('baseUrl', d.baseUrlLabel)] : []),
+    { key: 'token', label: d.tokenLabel, secret: true, multiline: false, help: d.tokenHelp },
+  ];
+}
+
+export type DeveloperFieldResult = { ok: true; values: DeveloperFieldValues } | { ok: false; detail: string };
+
+/** A request body, reduced to the fields this service takes and nothing else.
+ *
+ * Field keys are read from the top level of the body. The original token
+ * services are read exactly as they always were, so a body that worked before
+ * works now. Store keys are tidied here (line endings, stray whitespace) and
+ * refused here when they cannot be a key at all, before anything is asked of
+ * Apple or Google. */
+export function normalizeDeveloperFields(service: DeveloperService, body: unknown): DeveloperFieldResult {
+  const nested = body && typeof body === 'object' && typeof (body as any).fields === 'object' && (body as any).fields !== null
+    ? (body as any).fields as Record<string, unknown> : {};
+  const source: Record<string, unknown> = { ...nested, ...(body && typeof body === 'object' ? body as Record<string, unknown> : {}) };
+  if (service === 'appstoreconnect') return normalizeAppStoreConnectFields(source);
+  if (service === 'googleplay') return normalizeGooglePlayFields(source);
+  const line = (v: unknown, max: number): string => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+  const token = typeof source.token === 'string' ? source.token : '';
+  if (!token) return { ok: false, detail: `a ${describeDeveloperService(service)!.tokenLabel.toLowerCase()} is required` };
+  return { ok: true, values: { token, username: line(source.username, 200), email: line(source.email, 320), baseUrl: line(source.baseUrl, 500) } };
+}
 
 export function describeDeveloperService(
   service: string,
@@ -166,7 +265,7 @@ export function describeDeveloperService(
 /** Where each service answers "whose token is this?", and how to read the name
  * out of the reply. Kept in one table so adding a fifth service is an entry
  * rather than another branch in the check function. */
-const IDENTITY: Record<Exclude<DeveloperService, 'dockerhub' | 'jira'>, {
+const IDENTITY: Record<Exclude<DeveloperService, 'dockerhub' | 'jira' | DeveloperStoreService>, {
   url: string;
   header: (token: string) => Record<string, string>;
   request?: RequestInit;
@@ -273,11 +372,39 @@ export interface DeveloperCheckOptions {
   timeoutMs?: number;
 }
 
-export interface DeveloperResource { id:string; name:string; kind:string; url?:string }
+export interface DeveloperResource { id:string; name:string; kind:string; url?:string; detail?:string; rating?:number }
+
+/** Check a connection from its fields, whichever kind of service it is.
+ *
+ * The one entry point the routes use, so a store key and a pasted token are
+ * verified before saving by the same call and nothing has to know which is
+ * which. */
+export async function checkDeveloperCredentials(opts: {
+  service: DeveloperService; values: DeveloperFieldValues; fetchImpl?: typeof fetch; timeoutMs?: number;
+}): Promise<DeveloperCheck> {
+  const call = { fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs };
+  if (opts.service === 'appstoreconnect') return checkAppStoreConnectKey(opts.values, call);
+  if (opts.service === 'googleplay') return checkGooglePlayKey(opts.values, call);
+  return checkDeveloperToken({ service: opts.service, token: opts.values.token ?? '', username: opts.values.username,
+    email: opts.values.email, baseUrl: opts.values.baseUrl, ...call });
+}
+
+/** Bounded read-only discovery from a connection's fields. `appId` narrows App
+ * Store Connect from the list of apps to one app's customer reviews. */
+export async function listDeveloperResourcesFor(opts: {
+  service: DeveloperService; values: DeveloperFieldValues; appId?: string; fetchImpl?: typeof fetch; timeoutMs?: number;
+}): Promise<DeveloperResource[]> {
+  const call = { fetchImpl: opts.fetchImpl, timeoutMs: opts.timeoutMs };
+  if (opts.service === 'appstoreconnect') return listAppStoreConnectResources(opts.values, { ...call, appId: opts.appId });
+  if (opts.service === 'googleplay') return listGooglePlayResources(opts.values, call);
+  return listDeveloperResources({ service: opts.service, token: opts.values.token ?? '', username: opts.values.username,
+    email: opts.values.email, baseUrl: opts.values.baseUrl, ...call });
+}
 
 /** Bounded provider-native discovery. Only fixed, read-only collection APIs
  * live here; providers without a safe collection contract are status-only. */
 export async function listDeveloperResources(opts:DeveloperCheckOptions):Promise<DeveloperResource[]> {
+  if(isDeveloperStoreService(opts.service))throw new Error('Store services are read through listDeveloperResourcesFor.');
   const doFetch:typeof fetch=(url,init)=> (opts.fetchImpl??fetch)(url,{...init,redirect:'error',signal:AbortSignal.timeout(opts.timeoutMs??15_000)});
   if(opts.service==='dockerhub'){
     if(!opts.username?.trim())throw new Error('A Docker Hub username is required.');
@@ -367,6 +494,8 @@ export async function checkDeveloperToken(
     if(!opts.email?.trim())return {ok:false,category:'authentication',detail:'An Atlassian account email is required.'};
     try{const response=await (opts.fetchImpl??fetch)(`${site.origin}/rest/api/3/myself`,{redirect:'error',signal:AbortSignal.timeout(opts.timeoutMs??15_000),headers:{authorization:`Basic ${Buffer.from(`${opts.email.trim()}:${opts.token}`).toString('base64')}`,accept:'application/json','user-agent':'josi-ce'}});if(response.status===401||response.status===403)return {ok:false,category:'authentication',detail:'Jira rejected that email or API token.'};if(!response.ok)return {ok:false,category:'unknown',detail:`Jira answered ${response.status}.`};const body=await response.json().catch(()=>null);return {ok:true,accountLabel:typeof body?.displayName==='string'?`${body.displayName} · ${site.hostname}`:site.hostname,detail:'Connected.'};}catch{return {ok:false,category:'network',detail:'Jira could not be reached from this server.'};}
   }
+  // A store key is several fields and is checked by checkDeveloperCredentials.
+  if (isDeveloperStoreService(opts.service)) return { ok: false, category: 'unknown', detail: 'This service is connected with a key, not a token.' };
   const spec = IDENTITY[opts.service];
   const doFetch:typeof fetch=(url,init)=>(opts.fetchImpl??fetch)(url,{...init,redirect:'error',signal:AbortSignal.timeout(opts.timeoutMs??15_000)});
   const controller = new AbortController();

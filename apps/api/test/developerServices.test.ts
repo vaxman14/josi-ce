@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,9 +38,13 @@ let serviceReply: { status: number; body: unknown } | 'throw' = {
 };
 const seen: string[] = [];
 let beforeServiceReply: (() => Promise<void>) | undefined;
+/** Per-address replies for the services that take more than one request. */
+let replyFor: ((url: string) => { status: number; body: unknown } | undefined) | undefined;
 const developerServiceFetch: typeof fetch = async (url) => {
   seen.push(String(url));
   if (beforeServiceReply) { const work = beforeServiceReply; beforeServiceReply = undefined; await work(); }
+  const routed = replyFor?.(String(url));
+  if (routed) return new Response(JSON.stringify(routed.body), { status: routed.status, headers: { 'content-type': 'application/json' } });
   if (serviceReply === 'throw') throw new Error('ECONNREFUSED');
   return new Response(JSON.stringify(serviceReply.body), {
     status: serviceReply.status,
@@ -114,6 +119,7 @@ beforeEach(async () => {
   ids.bob = (await createUser(db, { email: 'bob@ce.test', username: 'bob', role: 'member', password: PW })).id;
   await testVault(db, new MasterKey(Buffer.alloc(32, 13)));
   beforeServiceReply = undefined;
+  replyFor = undefined;
   jars.admin = await signIn('admin', PW);
   jars.alice = await signIn('alice', PW);
   jars.bob = await signIn('bob', PW);
@@ -141,6 +147,7 @@ describe('every service starts refused', () => {
       'github', 'netlify', 'vercel', 'supabase',
       'gitlab', 'cloudflare', 'sentry', 'render', 'railway', 'linear',
       'dockerhub', 'ghcr', 'jira', 'npm', 'neon', 'notion',
+      'appstoreconnect', 'googleplay',
     ]);
     // A developer service reaches a third party with a person's own credential.
     // Defaulting to permitted would switch that on for every installation that
@@ -435,5 +442,202 @@ describe('developer credential Vault boundaries', () => {
     const res = await call('/api/admin/developer-services/github', { method: 'PUT', body: { mode: 'specific_users', userIds: [ids.bob] } });
     expect(res.status).toBe(500);
     expect(await db.query("select user_id from developer_service_allowed_users where service='github'")).toEqual([{ user_id: ids.alice }]);
+  });
+});
+
+
+// Store keys are several fields, one of them a pasted file. They are generated
+// here so nothing credential-shaped is committed.
+const P8 = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+const RSA_PEM = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs8', format: 'pem' }) as string;
+const keyBody = (pem: string) => pem.replace(/-----[A-Z ]+-----/g, '').replace(/\s+/g, '');
+const ISSUER = '57246542-96fe-1a63-e053-0824d011072a';
+const KEY_ID = 'ABC123DEFG';
+const PACKAGE = 'com.example.app';
+const SERVICE_EMAIL = 'josi-reader@fixture-project.iam.gserviceaccount.com';
+const SERVICE_ACCOUNT = JSON.stringify({ type: 'service_account', private_key_id: 'fixture-key-id', private_key: RSA_PEM, client_email: SERVICE_EMAIL }, null, 2);
+const APPLE_BODY = { issuerId: ISSUER, keyId: KEY_ID, privateKey: P8.replace(/\n/g, '\r\n') };
+const GOOGLE_BODY = { serviceAccountJson: SERVICE_ACCOUNT, packageName: PACKAGE };
+/** Every secret a store connection carries, in the forms it could leak in. */
+const STORE_SECRETS = [keyBody(P8).slice(0, 32), keyBody(RSA_PEM).slice(0, 32), '-----BEGIN', SERVICE_EMAIL, 'short-lived-access', ISSUER];
+
+const googleHappy = (url: string) => (url.includes('oauth2.googleapis.com')
+  ? { status: 200, body: { access_token: 'short-lived-access', expires_in: 3600 } }
+  : { status: 200, body: { reviews: [] } });
+
+async function everythingTheServerSays(): Promise<string> {
+  return JSON.stringify([
+    (await call('/api/connections/developer', { jar: jars.alice })).body,
+    (await call('/api/admin/developer-services')).body,
+    await db.query('select * from developer_connections'),
+    await db.query('select * from events'),
+  ]);
+}
+
+describe('every form is described by its fields', () => {
+  it('lists fields for the original token services and keeps every key they already had', async () => {
+    const res = await call('/api/connections/developer', { jar: jars.alice });
+    const by = new Map((res.body.services as any[]).map((s) => [s.service, s]));
+    expect(by.size).toBe(18);
+    for (const [service, row] of by) {
+      // Nothing an existing client reads has gone away.
+      for (const kept of ['service', 'label', 'tokenLabel', 'tokenHelp', 'tokenUrl', 'capability', 'usernameLabel', 'emailLabel', 'baseUrlLabel', 'allowed', 'note', 'connection']) {
+        expect(row, `${service}.${kept}`).toHaveProperty(kept);
+      }
+      expect(row.fields.length, service).toBeGreaterThan(0);
+      for (const field of row.fields) expect(Object.keys(field).sort(), service).toEqual(['help', 'key', 'label', 'multiline', 'secret']);
+    }
+    expect(by.get('github').fields).toEqual([{ key: 'token', label: 'Personal access token', secret: true, multiline: false, help: by.get('github').tokenHelp }]);
+    expect(by.get('dockerhub').fields.map((f: any) => f.key)).toEqual(['username', 'token']);
+    expect(by.get('jira').fields.map((f: any) => f.key)).toEqual(['email', 'baseUrl', 'token']);
+  });
+
+  it('lists the parts of each store key', async () => {
+    const res = await call('/api/connections/developer', { jar: jars.alice });
+    const by = new Map((res.body.services as any[]).map((s) => [s.service, s]));
+    const shape = (service: string) => by.get(service).fields.map(({ key, label, secret, multiline }: any) => ({ key, label, secret, multiline }));
+    expect(by.get('appstoreconnect').label).toBe('App Store Connect');
+    expect(shape('appstoreconnect')).toEqual([
+      { key: 'issuerId', label: 'Issuer ID', secret: false, multiline: false },
+      { key: 'keyId', label: 'Key ID', secret: false, multiline: false },
+      { key: 'privateKey', label: 'Private key (.p8)', secret: true, multiline: true },
+    ]);
+    expect(by.get('googleplay').label).toBe('Google Play');
+    expect(shape('googleplay')).toEqual([
+      { key: 'serviceAccountJson', label: 'Service account JSON', secret: true, multiline: true },
+      { key: 'packageName', label: 'Package name', secret: false, multiline: false },
+    ]);
+    // And, like every service, they start refused.
+    expect(by.get('appstoreconnect').allowed).toBe(false);
+    expect(by.get('googleplay').allowed).toBe(false);
+  });
+});
+
+describe('App Store Connect is connected with a key, checked before it is kept', () => {
+  it('refuses it at the route until an administrator permits it', async () => {
+    const res = await call('/api/connections/developer/appstoreconnect', { method: 'PUT', jar: jars.alice, body: APPLE_BODY });
+    expect(res.status).toBe(403);
+    expect(seen).toHaveLength(0);
+  });
+
+  it('verifies the key with Apple, seals every part as one payload and returns none of it', async () => {
+    await permit('appstoreconnect', 'everyone');
+    serviceReply = { status: 200, body: { data: [{ id: '1', attributes: { name: 'Fixture App' } }] } };
+    const res = await call('/api/connections/developer/appstoreconnect', { method: 'PUT', jar: jars.alice, body: APPLE_BODY });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toEqual({ ok: true, accountLabel: `Key ${KEY_ID}` });
+    expect(seen).toEqual(['https://api.appstoreconnect.apple.com/v1/apps?limit=1']);
+
+    const rows = await db.query<{ credentials_enc: string; account_label: string; status: string }>('select credentials_enc, account_label, status from developer_connections');
+    expect(rows).toHaveLength(1);
+    expect(isVaultCredentialReference(rows[0].credentials_enc)).toBe(true);
+    expect(rows[0]).toMatchObject({ account_label: `Key ${KEY_ID}`, status: 'active' });
+    // One Vault item holds the whole key; nothing sits in a column.
+    expect(await db.query("select id from vault_items where service='developer.appstoreconnect'")).toHaveLength(1);
+
+    const said = `${JSON.stringify(res.body)}${await everythingTheServerSays()}`;
+    for (const secret of STORE_SECRETS) expect(said, secret).not.toContain(secret);
+    const mine = (await call('/api/connections/developer', { jar: jars.alice })).body.services.find((s: any) => s.service === 'appstoreconnect');
+    expect(mine.connection).toMatchObject({ accountLabel: `Key ${KEY_ID}`, status: 'active', lastCheckOk: true });
+  });
+
+  it('does not save a key Apple rejects, and says what to look at without quoting it', async () => {
+    await permit('appstoreconnect', 'everyone');
+    serviceReply = { status: 401, body: { errors: [{ code: 'NOT_AUTHORIZED' }] } };
+    const res = await call('/api/connections/developer/appstoreconnect', { method: 'PUT', jar: jars.alice, body: APPLE_BODY });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/rejected that key.*Issuer ID.*Key ID/);
+    expect(await db.query('select id from developer_connections')).toHaveLength(0);
+    expect(await db.query("select id from vault_items where service='developer.appstoreconnect'")).toHaveLength(0);
+    for (const secret of STORE_SECRETS) expect(JSON.stringify(res.body), secret).not.toContain(secret);
+  });
+
+  it('refuses a key that cannot be read, or a missing part, before asking Apple anything', async () => {
+    await permit('appstoreconnect', 'everyone');
+    const bad = await call('/api/connections/developer/appstoreconnect', { method: 'PUT', jar: jars.alice, body: { ...APPLE_BODY, privateKey: 'not a key' } });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/could not be read/);
+    const missing = await call('/api/connections/developer/appstoreconnect', { method: 'PUT', jar: jars.alice, body: { privateKey: P8, keyId: KEY_ID } });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toMatch(/Issuer ID is required/);
+    // A token-shaped body is not a store key.
+    const token = await call('/api/connections/developer/appstoreconnect', { method: 'PUT', jar: jars.alice, body: { token: TOKEN } });
+    expect(token.status).toBe(400);
+    expect(seen).toHaveLength(0);
+    expect(await db.query('select id from developer_connections')).toHaveLength(0);
+  });
+
+  it('re-checks from the sealed key and is mine to remove', async () => {
+    await permit('appstoreconnect', 'everyone');
+    serviceReply = { status: 200, body: { data: [] } };
+    expect((await call('/api/connections/developer/appstoreconnect', { method: 'PUT', jar: jars.alice, body: APPLE_BODY })).status).toBe(200);
+    serviceReply = { status: 403, body: {} };
+    const check = await call('/api/connections/developer/appstoreconnect/check', { method: 'POST', jar: jars.alice, body: {} });
+    expect(check.body).toMatchObject({ ok: false, detail: expect.stringMatching(/role is not allowed/) });
+    expect((await db.query<{ status: string }>('select status from developer_connections'))[0].status).toBe('needs_reconnect');
+    expect((await call('/api/connections/developer/appstoreconnect', { method: 'DELETE', jar: jars.alice })).status).toBe(204);
+    expect(await db.query("select id from vault_items where service='developer.appstoreconnect'")).toHaveLength(0);
+  });
+});
+
+describe('Google Play is connected with a service account, checked before it is kept', () => {
+  it('exchanges the key, reads the package\'s reviews, seals everything and returns none of it', async () => {
+    await permit('googleplay', 'everyone');
+    replyFor = googleHappy;
+    const res = await call('/api/connections/developer/googleplay', { method: 'PUT', jar: jars.alice, body: GOOGLE_BODY });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toEqual({ ok: true, accountLabel: PACKAGE });
+    expect(seen).toEqual([
+      'https://oauth2.googleapis.com/token',
+      `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${PACKAGE}/reviews?maxResults=1`,
+    ]);
+    const rows = await db.query<{ credentials_enc: string }>('select credentials_enc from developer_connections');
+    expect(rows).toHaveLength(1);
+    expect(isVaultCredentialReference(rows[0].credentials_enc)).toBe(true);
+    expect(await db.query("select id from vault_items where service='developer.googleplay'")).toHaveLength(1);
+    const said = `${JSON.stringify(res.body)}${await everythingTheServerSays()}`;
+    for (const secret of STORE_SECRETS) expect(said, secret).not.toContain(secret);
+  });
+
+  it.each([
+    ['a key Google rejects', (url: string) => (url.includes('oauth2') ? { status: 400, body: { error: 'invalid_grant', error_description: 'Invalid JWT Signature.' } } : { status: 200, body: {} }), /private key does not match the account/],
+    ['no access to that app', (url: string) => (url.includes('oauth2') ? { status: 200, body: { access_token: 'short-lived-access' } } : { status: 403, body: { error: { errors: [{ reason: 'permissionDenied' }] } } }), /has no access to com\.example\.app/],
+    ['an unknown package', (url: string) => (url.includes('oauth2') ? { status: 200, body: { access_token: 'short-lived-access' } } : { status: 404, body: {} }), /no app called com\.example\.app/],
+  ])('does not save %s, and says so plainly', async (_name, route, message) => {
+    await permit('googleplay', 'everyone');
+    replyFor = route;
+    const res = await call('/api/connections/developer/googleplay', { method: 'PUT', jar: jars.alice, body: GOOGLE_BODY });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(message);
+    expect(await db.query('select id from developer_connections')).toHaveLength(0);
+    expect(await db.query("select id from vault_items where service='developer.googleplay'")).toHaveLength(0);
+    for (const secret of STORE_SECRETS) expect(JSON.stringify(res.body), secret).not.toContain(secret);
+  });
+
+  it('refuses a file that is not a service account before asking Google anything', async () => {
+    await permit('googleplay', 'everyone');
+    const res = await call('/api/connections/developer/googleplay', { method: 'PUT', jar: jars.alice, body: { ...GOOGLE_BODY, serviceAccountJson: '{"type":"authorized_user"}' } });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not a service account key/);
+    expect(seen).toHaveLength(0);
+  });
+});
+
+describe('the original single-token body still works', () => {
+  it('connects GitHub with only a token, and Jira with its extra fields', async () => {
+    await permit('github', 'everyone');
+    await permit('jira', 'everyone');
+    const github = await call('/api/connections/developer/github', { method: 'PUT', jar: jars.alice, body: { token: TOKEN } });
+    expect(github.status, JSON.stringify(github.body)).toBe(200);
+    expect(github.body).toEqual({ ok: true, accountLabel: 'octocat' });
+    serviceReply = { status: 200, body: { displayName: 'Jira Owner' } };
+    const jira = await call('/api/connections/developer/jira', {
+      method: 'PUT', jar: jars.alice, body: { token: TOKEN, email: 'owner@example.test', baseUrl: 'https://acme.atlassian.net' },
+    });
+    expect(jira.status, JSON.stringify(jira.body)).toBe(200);
+    expect(jira.body.accountLabel).toBe('Jira Owner · acme.atlassian.net');
+    const missing = await call('/api/connections/developer/github', { method: 'PUT', jar: jars.alice, body: {} });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toBe('a personal access token is required');
   });
 });

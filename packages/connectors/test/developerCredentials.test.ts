@@ -105,3 +105,32 @@ describe('developer connection Vault authority', () => {
     await expect(checkDeveloperCredentialAccess(db, owner, 'github')).rejects.toThrow('not permitted');
   });
 });
+
+
+describe('a store key is one sealed payload', () => {
+  const parts = { issuerId: 'fixture-issuer', keyId: 'FIXTUREKEY', privateKey: 'synthetic-multi-line\nkey-material\n' };
+  const store = () => ({ ownerUserId: owner, service: 'appstoreconnect' as const });
+  beforeEach(async () => { await db.query("update developer_service_policy set mode='everyone' where service in ('appstoreconnect','googleplay')"); });
+
+  it('seals every part together and gives them back whole, with nothing in a column or an event', async () => {
+    await saveDeveloperConnection(db, key, { ...store(), credentials: parts, accountLabel: 'Key FIXTUREKEY' });
+    const prepared = await loadDeveloperCredentials(db, key, store());
+    expect(prepared.credentials).toEqual(parts);
+    expect(isVaultCredentialReference(prepared.reference)).toBe(true);
+    expect(await db.query("select id from vault_items where service='developer.appstoreconnect'")).toHaveLength(1);
+    const stored = JSON.stringify([await db.query('select * from developer_connections'), await db.query('select * from events')]);
+    for (const secret of ['key-material', 'synthetic-multi-line', 'fixture-issuer']) expect(stored).not.toContain(secret);
+  });
+
+  it('refuses a partial key, a foreign field, or a token where a key belongs', async () => {
+    const attempt = (credentials: Record<string, string>, service: 'appstoreconnect' | 'googleplay' | 'github' = 'appstoreconnect') =>
+      saveDeveloperConnection(db, key, { ownerUserId: owner, service, credentials, accountLabel: null });
+    await expect(attempt({ issuerId: 'i', keyId: 'k' })).rejects.toThrow(/invalid/);
+    await expect(attempt({ ...parts, token: 'x' })).rejects.toThrow(/invalid/);
+    await expect(attempt({ token: 'x' })).rejects.toThrow(/invalid/);
+    await expect(attempt({ serviceAccountJson: '{}' }, 'googleplay')).rejects.toThrow(/invalid/);
+    // And a token service does not take key parts either.
+    await expect(attempt({ token: 'x', privateKey: 'y' }, 'github')).rejects.toThrow(/invalid/);
+    expect(await db.query('select id from developer_connections')).toHaveLength(0);
+  });
+});

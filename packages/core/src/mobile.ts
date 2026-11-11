@@ -4,9 +4,27 @@ import { asSecret } from './sealing.js';
 import { deleteVaultSlot, openCredentialEnvelope, isVaultCredentialReference, openCredentialPayload, storeVaultCredentialPayload, VaultLockedError } from './vault.js';
 import type { MasterKey } from './masterKey.js';
 import { defaultFcmSender, isFcmStoredToken, type FcmSender } from './fcm.js';
+import { defaultApnsSender, isApnsStoredToken, type ApnsSender } from './apns.js';
 
+/** How the reply should be shaped. `spoken_short` is for Siri, Shortcuts and CarPlay: it is read
+ * aloud, so it is one or two plain sentences. */
+export type ReplyStyle='spoken_short';
+export const SPOKEN_HOLDING_LINE="I'm on it. I'll send the answer to your phone.";
+/** Waits a few seconds for a turn to finish, for a caller that has to answer out loud now.
+ * Returns the reply when it is ready in time, and null when the work needs longer. */
+export async function waitForTurnReply(db:Db,args:{ownerUserId:string;turnId:string;seconds:number;intervalMs?:number}):Promise<{status:'completed';text:string;messageId:string}|{status:'failed';code:string|null}|null>{
+  const deadline=Date.now()+Math.max(0,Math.min(25,args.seconds))*1000;
+  for(;;){
+    const [row]=await db.query<{status:TurnStatus;error_code:string|null;assistant_message_id:string|null;body:string|null}>(`select t.status,t.error_code,t.assistant_message_id,m.body from assistant_turns t left join messages m on m.id=t.assistant_message_id where t.id=$1 and t.owner_user_id=$2`,[args.turnId,args.ownerUserId]);
+    if(!row)return null;
+    if(row.status==='completed'&&row.assistant_message_id)return{status:'completed',text:row.body??'',messageId:row.assistant_message_id};
+    if(row.status==='failed')return{status:'failed',code:row.error_code};
+    if(Date.now()>=deadline)return null;
+    await new Promise(resolve=>setTimeout(resolve,args.intervalMs??250));
+  }
+}
 export type TurnStatus='queued'|'running'|'completed'|'failed';
-export interface DurableTurn { id:string;owner_user_id:string;accepted_session_id:string;thread_id:string;client_message_id:string;attempt_of:string|null;inbound_message_id:string;reply_to_message_id:string|null;attachment_ids:string[];status:TurnStatus;assistant_message_id:string|null;tool_receipts:unknown[];error_code:string|null;error_retryable:boolean|null;created_at:string;updated_at:string;work_goal_id?:string|null;work_goal_revision?:number|null;work_control_generation?:number|null; }
+export interface DurableTurn { id:string;owner_user_id:string;accepted_session_id:string;thread_id:string;client_message_id:string;attempt_of:string|null;inbound_message_id:string;reply_to_message_id:string|null;attachment_ids:string[];status:TurnStatus;assistant_message_id:string|null;tool_receipts:unknown[];error_code:string|null;error_retryable:boolean|null;created_at:string;updated_at:string;work_goal_id?:string|null;work_goal_revision?:number|null;work_control_generation?:number|null;reply_style?:ReplyStyle|null; }
 export interface TaskRunSummary { id:string;thread_id:string;thread_title:string|null;status:TurnStatus;attempt_of:string|null;error_code:string|null;error_retryable:boolean|null;started_at:string|null;completed_at:string|null;created_at:string;updated_at:string; }
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const canonical=(v:unknown):string=>JSON.stringify(v,(_k,x)=>x&&typeof x==='object'&&!Array.isArray(x)?Object.fromEntries(Object.entries(x).sort(([a],[b])=>a.localeCompare(b))):x);
@@ -17,7 +35,7 @@ export class MobileError extends Error { constructor(readonly code:string,messag
  * reply receipts are owner/thread-bound, then the inbound message, turn and
  * queue row become visible together. A duplicate key returns the original turn
  * and creates no second message/job. */
-export async function submitDurableTurn(db:Db,args:{ownerUserId:string;sessionId?:string;threadId:string;clientMessageId:string;message:string;replyToMessageId?:string|null;attachmentIds?:string[];attemptOf?:string|null}):Promise<{turn:DurableTurn;duplicate:boolean}>{
+export async function submitDurableTurn(db:Db,args:{ownerUserId:string;sessionId?:string;threadId:string;clientMessageId:string;message:string;replyToMessageId?:string|null;attachmentIds?:string[];attemptOf?:string|null;replyStyle?:ReplyStyle|null}):Promise<{turn:DurableTurn;duplicate:boolean}>{
   const suppliedAttachmentIds=args.attachmentIds??[];
   const attachmentIds=[...new Set(suppliedAttachmentIds)].sort();
   const message=args.message.trim();
@@ -56,8 +74,8 @@ export async function submitDurableTurn(db:Db,args:{ownerUserId:string;sessionId
     ), pinned as (
       update chat_attachments set referenced_at=coalesce(referenced_at,now()) where id=any($6::uuid[]) and exists(select 1 from inbound) returning id
     ), inserted as (
-      insert into assistant_turns(owner_user_id,accepted_session_id,thread_id,client_message_id,attempt_of,inbound_message_id,reply_to_message_id,attachment_ids,request_hash)
-      select $1,$9,$2,$3,$7,id,$5,$6,$8 from inbound returning *
+      insert into assistant_turns(owner_user_id,accepted_session_id,thread_id,client_message_id,attempt_of,inbound_message_id,reply_to_message_id,attachment_ids,request_hash,reply_style)
+      select $1,$9,$2,$3,$7,id,$5,$6,$8,$10 from inbound returning *
     ), queued as (
       insert into job_queue(kind,payload) select 'assistant.turn',jsonb_build_object('turnId',id) from inserted on conflict do nothing
     ), touched as (
@@ -65,7 +83,7 @@ export async function submitDurableTurn(db:Db,args:{ownerUserId:string;sessionId
     )
     select e.*,true duplicate,e.request_hash from existing e
     union all select i.*,false duplicate,i.request_hash from inserted i`,
-    [args.ownerUserId,args.threadId,args.clientMessageId,message||'Sent an attachment',args.replyToMessageId??null,attachmentIds,args.attemptOf??null,requestHash,liveSession.id]);}
+    [args.ownerUserId,args.threadId,args.clientMessageId,message||'Sent an attachment',args.replyToMessageId??null,attachmentIds,args.attemptOf??null,requestHash,liveSession.id,args.replyStyle??null]);}
   catch(err){
     // Concurrent first submissions can race at the unique key. The losing
     // statement is rolled back in full (including its message); return the
@@ -189,10 +207,10 @@ export async function upsertMobileDevice(db:Db,key:MasterKey,ownerUserId:string,
   if(!['ios','android'].includes(input.platform))throw new MobileError('invalid_platform','Platform must be ios or android.');
   if(!['foreground','background','inactive'].includes(input.appState))throw new MobileError('invalid_app_state','Choose a valid app state.');
   const expo=/^(ExponentPushToken|ExpoPushToken)\[[A-Za-z0-9_-]+\]$/.test(input.expoToken);
-  if(!expo&&!(input.platform==='android'&&isFcmStoredToken(input.expoToken)))throw new MobileError('invalid_expo_token','A valid Expo or Firebase push token is required.');
+  if(!expo&&!(input.platform==='android'&&isFcmStoredToken(input.expoToken))&&!(input.platform==='ios'&&isApnsStoredToken(input.expoToken)))throw new MobileError('invalid_expo_token','A valid push address is required.');
   if((!!input.quietStart!==!!input.quietEnd)||(input.quietStart&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.quietStart))||(input.quietEnd&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.quietEnd)))throw new MobileError('invalid_quiet_hours','Quiet hours require both start and end in HH:MM.');
   try{new Intl.DateTimeFormat('en-US',{timeZone:input.timezone}).format();}catch{throw new MobileError('invalid_timezone','A valid IANA timezone is required.');}
-  const supplied=input.categories??{};const categories=Object.fromEntries(['assistant','approval','reminder','calendar'].map(name=>[name,typeof supplied[name]==='boolean'?supplied[name]:true]));
+  const supplied=input.categories??{};const categories=Object.fromEntries(['assistant','approval','reminder','calendar','family'].map(name=>[name,typeof supplied[name]==='boolean'?supplied[name]:true]));
   const fp=digest(input.expoToken);
   // A token belongs to one current device/account binding. The database
   // function serializes account switches and token moves with registration.
@@ -268,7 +286,7 @@ function expoErrorCode(value:unknown,fallback:string):string{return typeof value
 function retryableHttpStatus(status:number):boolean{return status===408||status===425||status===429||status>=500;}
 async function boundedFetch(fetchImpl:typeof fetch,url:string,init:RequestInit,timeoutMs=10_000):Promise<Response>{const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);timer.unref?.();try{return await fetchImpl(url,{...init,signal:controller.signal});}finally{clearTimeout(timer);}}
 function retryAfterSeconds(response:Response):number|undefined{const raw=response.headers.get('retry-after');if(!raw)return;const seconds=Number(raw);if(Number.isFinite(seconds))return Math.max(1,Math.min(3600,Math.ceil(seconds)));const at=Date.parse(raw);return Number.isNaN(at)?undefined:Math.max(1,Math.min(3600,Math.ceil((at-Date.now())/1000)));}
-export async function processPushBatch(db:Db,key:MasterKey,fetchImpl:typeof fetch,now=new Date(),limit=50,fcm?:FcmSender|null):Promise<PushFetchResult>{
+export async function processPushBatch(db:Db,key:MasterKey,fetchImpl:typeof fetch,now=new Date(),limit=50,fcm?:FcmSender|null,apns?:ApnsSender|null):Promise<PushFetchResult>{
   const lease=randomUUID();
   const rows=await db.query<any>(`update push_deliveries p set status='sending',lease_token=$3,attempts=attempts+1 from (select id from push_deliveries where ((status in ('queued','retry') and next_attempt_at<=$1) or (status='sending' and updated_at<$1-interval '10 minutes')) order by created_at for update skip locked limit $2) q where p.id=q.id returning p.*`,[now,Math.min(100,Math.max(1,limit)),lease]);
   let sent=0,ticketed=0,retried=0,deferred=0,suppressed=0,accepted=0;
@@ -285,6 +303,10 @@ export async function processPushBatch(db:Db,key:MasterKey,fetchImpl:typeof fetc
       const viaFcm=deliverable.filter(x=>isFcmStoredToken(x.msg.to));
       if(viaFcm.length){const sender=fcm===undefined?defaultFcmSender(fetchImpl):fcm;for(const item of viaFcm){const outcome=await sendFcmDelivery(tx,item,lease,sender);sent+=outcome.sent;retried+=outcome.retried;accepted+=outcome.accepted;}
         deliverable.splice(0,deliverable.length,...deliverable.filter(x=>!isFcmStoredToken(x.msg.to)));}
+      // iPhones that registered their Apple push address go straight to Apple, one request each.
+      const viaApns=deliverable.filter(x=>isApnsStoredToken(x.msg.to));
+      if(viaApns.length){const sender=apns===undefined?await defaultApnsSender(tx,key).catch(()=>null):apns;for(const item of viaApns){const outcome=await sendApnsDelivery(tx,item,lease,sender);sent+=outcome.sent;retried+=outcome.retried;accepted+=outcome.accepted;}
+        deliverable.splice(0,deliverable.length,...deliverable.filter(x=>!isApnsStoredToken(x.msg.to)));}
       if(!deliverable.length)return;let response:Response;try{response=await boundedFetch(fetchImpl,'https://exp.host/--/api/v2/push/send',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json','Accept-Encoding':'gzip, deflate'},body:JSON.stringify(deliverable.map(x=>x.msg))});sent+=deliverable.length;}catch{for(const {p} of deliverable){await retryPush(tx,p.id,p.attempts,'network',lease);retried++;}return;}if(retryableHttpStatus(response.status)){const delay=retryAfterSeconds(response);for(const {p} of deliverable){await retryPush(tx,p.id,p.attempts,`http_${response.status}`,lease,delay);retried++;}return;}if(!response.ok){for(const {p} of deliverable)await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code=$3 where id=$1 and lease_token=$2`,[p.id,lease,`http_${response.status}`]);return;}let payload:{data?:Array<{status:string;id?:string;details?:{error?:string}}>};try{payload=await response.json() as typeof payload;}catch{for(const {p} of deliverable){await retryPush(tx,p.id,p.attempts,'invalid_response',lease);retried++;}return;}for(let j=0;j<deliverable.length;j++){const {p,d,fingerprint}=deliverable[j],t=payload.data?.[j];if(t?.status==='ok'&&t.id){await tx.query(`update push_deliveries set status='ticketed',lease_token=null,ticket_id=$3,next_attempt_at=now()+interval '15 minutes' where id=$1 and lease_token=$2`,[p.id,lease,t.id]);ticketed++;}else if(t?.details?.error==='DeviceNotRegistered'){await revokePushToken(tx,d.id,fingerprint);await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code='DeviceNotRegistered' where id=$1 and lease_token=$2`,[p.id,lease]);}else{const code=expoErrorCode(t?.details?.error,'ticket_error');if(PERMANENT_EXPO_ERRORS.has(code))await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code=$3 where id=$1 and lease_token=$2`,[p.id,lease,code]);else{await retryPush(tx,p.id,p.attempts,code,lease);retried++;}}}
     });
   }
@@ -300,6 +322,17 @@ async function sendFcmDelivery(tx:Db,item:{p:any;d:any;fingerprint:string;msg:{t
   if(outcome.kind==='unregistered'){await revokePushToken(tx,d.id,fingerprint);await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code='DeviceNotRegistered' where id=$1 and lease_token=$2`,[p.id,lease]);return{sent:1,retried:0,accepted:0};}
   if(outcome.kind==='failed'){await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code=$3 where id=$1 and lease_token=$2`,[p.id,lease,outcome.code]);return{sent:1,retried:0,accepted:0};}
   await retryPush(tx,p.id,p.attempts,outcome.code,lease,outcome.delaySeconds);return{sent:outcome.code==='fcm_auth'?0:1,retried:1,accepted:0};
+}
+/** Caller holds the registration fence. Like Firebase, Apple has no tickets: an accepted send is
+ * final. Without a key on this server the row waits and retries, and nothing else changes. */
+async function sendApnsDelivery(tx:Db,item:{p:any;d:any;fingerprint:string;msg:{to:string;title:string;body:string;data:Record<string,unknown>}},lease:string,sender:ApnsSender|null):Promise<{sent:number;retried:number;accepted:number}>{
+  const {p,d,fingerprint,msg}=item;
+  if(!sender){await retryPush(tx,p.id,p.attempts,'apns_unconfigured',lease);return{sent:0,retried:1,accepted:0};}
+  const outcome=await sender.send(msg.to,{title:msg.title,body:msg.body,data:msg.data,threadId:typeof msg.data.threadId==='string'?msg.data.threadId:String(msg.data.route??'josi')});
+  if(outcome.kind==='accepted'){await tx.query(`update push_deliveries set status='provider_accepted',lease_token=null,receipt_checked_at=now() where id=$1 and lease_token=$2`,[p.id,lease]);return{sent:1,retried:0,accepted:1};}
+  if(outcome.kind==='unregistered'){await revokePushToken(tx,d.id,fingerprint);await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code='DeviceNotRegistered' where id=$1 and lease_token=$2`,[p.id,lease]);return{sent:1,retried:0,accepted:0};}
+  if(outcome.kind==='failed'){await tx.query(`update push_deliveries set status='failed',lease_token=null,last_error_code=$3 where id=$1 and lease_token=$2`,[p.id,lease,outcome.code]);return{sent:1,retried:0,accepted:0};}
+  await retryPush(tx,p.id,p.attempts,outcome.code,lease,outcome.delaySeconds);return{sent:outcome.code==='apns_auth'?0:1,retried:1,accepted:0};
 }
 async function retryPush(db:Db,id:string,attempts:number,code:string,lease:string,delaySeconds?:number){const terminal=attempts>=5;await db.query(`update push_deliveries set status=$3,lease_token=null,next_attempt_at=now()+(coalesce($6,least(3600,power(2,$4)*15))*interval '1 second'),last_error_code=$5 where id=$1 and lease_token=$2`,[id,lease,terminal?'failed':'retry',attempts,code,delaySeconds??null]);}
 async function retryReceipt(db:Db,row:any,code:string,lease:string){const terminal=row.receipt_attempts>=5;await db.query(`update push_deliveries set status=$3,lease_token=null,next_attempt_at=now()+(least(3600,power(2,$4)*30)*interval '1 second'),last_error_code=$5 where id=$1 and lease_token=$2`,[row.id,lease,terminal?'failed':'ticketed',row.receipt_attempts,code]);}

@@ -31,10 +31,58 @@ Disconnect removes the connection and its Vault slot.
 | npm | granular access token → npm user API |
 | Neon | API key → Neon user API |
 | Notion | internal integration secret → bot identity; only explicitly shared pages are accessible |
+| App Store Connect (`appstoreconnect`) | Issuer ID + Key ID + .p8 private key → short-lived ES256 token → `GET /v1/apps?limit=1` |
+| Google Play (`googleplay`) | service account JSON + package name → RS256 JWT-bearer exchange → reviews list for that package |
 
 Provider setup links to the provider's credential page and names the narrowest practical
 credential. Re-check uses the sealed provider-specific fields. A failed check marks the connection
 as needing reconnection and returns a sanitized error.
+
+## Connection fields
+
+`GET /api/connections/developer` describes every service's form as
+`fields: [{ key, label, secret, multiline, help }]`, in display order. A client builds each form from
+`fields` and sends the values back to `PUT /api/connections/developer/:service` as top-level body
+keys named by `key` (the same keys nested under `fields` are also accepted). `secret` fields are
+masked and never returned; `multiline` fields are a pasted file. The older `tokenLabel`,
+`usernameLabel`, `emailLabel` and `baseUrlLabel` keys remain for existing clients, and a body of
+`{ token, username?, email?, baseUrl? }` works as before. For the single-token providers `fields`
+is derived: optional `username`, `email`, `baseUrl`, then `token`.
+
+| Service | Body |
+| --- | --- |
+| `appstoreconnect` | `{ "issuerId": "…", "keyId": "…", "privateKey": "-----BEGIN PRIVATE KEY-----…" }` |
+| `googleplay` | `{ "serviceAccountJson": "{ …the whole key file… }", "packageName": "com.example.app" }` |
+
+## App Store Connect and Google Play
+
+Neither store issues a token to paste; each issues a signing key, and the token is minted from it
+for one call and discarded.
+
+- **App Store Connect** takes a team API key. Josi signs an ES256 JWT (`kid` = Key ID, `iss` =
+  Issuer ID, `aud` = `appstoreconnect-v1`, ten-minute expiry) and uses it as the bearer token.
+  Individual (per-user) API keys, which have no Issuer ID, are not supported.
+- **Google Play** takes a service account JSON key and one package name. Josi signs an RS256
+  assertion for the `https://www.googleapis.com/auth/androidpublisher` scope, exchanges it at
+  `https://oauth2.googleapis.com/token`, and uses the access token once. The `token_uri` inside the
+  pasted file is ignored; only the account email, key id and private key are kept.
+
+Pasted keys are normalised before use: surrounding whitespace is trimmed, `\r\n` and escaped
+`\n` line breaks are accepted, and a key flattened onto one line is re-wrapped. A value that cannot
+be a key (unreadable PEM, the wrong key type, JSON that is not a service account, a misshapen
+Issuer ID, Key ID or package name) is refused with a specific message before any provider request.
+
+The key is then checked with the store before it is saved. A rejected key is not stored, and the
+error names the cause without quoting anything secret: Apple rejecting the key (Issuer ID or Key ID
+not matching the .p8, or a revoked key), a role that cannot read apps, Google rejecting the service
+account, the Android Developer API not being enabled, the service account having no access to the
+package, or an unknown package. Apple does not say which of Issuer ID, Key ID or key was wrong, so
+that message names all three. The connection is shown as `Key <Key ID>` or the package name.
+
+All parts of a store key are sealed together as one Vault payload behind the same
+`credentials_enc` reference as every other provider. No part is stored in a column, returned by any
+route, or written to an audit event. Migration `0128_developer_service_fields.sql` only admits the
+two service names; both start `not_allowed`.
 
 ## Obsidian
 
@@ -53,6 +101,10 @@ Read-only `list_native_resources` performs bounded (maximum 25) provider-native 
 connected account: repositories/packages for GitHub, GitLab, Docker Hub, GHCR and npm; projects for
 Supabase, Railway, Neon and Jira; accounts/services/sites for Cloudflare, Render, Netlify and Vercel;
 organizations or teams for Sentry and Linear; and explicitly shared pages/databases for Notion.
+For App Store Connect it lists the team's apps, or, given `app_id`, that app's latest customer
+reviews; for Google Play it lists the connected package's latest reviews. Both mint their
+short-lived token from the sealed key for that one call. Review text is written by the public and is
+returned as data (truncated to 500 characters); the stores have no write tools.
 Requests use fixed provider endpoints (or Jira's constrained site), refuse redirects, and update
 sanitized last-use/health metadata only after the owner-scoped credential is opened.
 

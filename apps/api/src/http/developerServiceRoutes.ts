@@ -15,11 +15,11 @@
 //     wanted it or nobody was permitted it.
 import { Router, type Request, type Response } from 'express';
 import {
-  appendEvent, asSecret, loadMasterKey, VaultError, VaultLockedError,
+  appendEvent, loadMasterKey, VaultError, VaultLockedError,
   type Db, type LoadOptions, type MasterKey,
 } from '@josi-ce/core';
 import {
-  DEVELOPER_SERVICES, DEVELOPER_SERVICE_CATALOG, checkDeveloperToken, describeDeveloperService,
+  DEVELOPER_SERVICES, DEVELOPER_SERVICE_CATALOG, checkDeveloperCredentials, developerServiceFields, normalizeDeveloperFields,
   discoverObsidianVaults, readObsidianNote, DeveloperCredentialError, checkDeveloperCredentialAccess,
   saveDeveloperConnection, loadDeveloperCredentials, recordDeveloperCheck, deleteDeveloperConnection, withDeveloperServiceTransaction,
   isDeveloperService, isPermissionMode, mayConnect, summarizeScope,
@@ -125,6 +125,11 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
             usernameLabel: d.usernameLabel ?? null,
             emailLabel: d.emailLabel ?? null,
             baseUrlLabel: d.baseUrlLabel ?? null,
+            // The whole form, one entry per box, for every service. The label
+            // keys above stay for clients written before this existed; a
+            // client that reads `fields` needs nothing else to build the form.
+            // These are descriptions of boxes, never their contents.
+            fields: developerServiceFields(d),
             // Whether I MAY, kept separate from whether I HAVE.
             allowed: req.user!.role === 'super_admin' || mayConnect(scope, userId),
             // The administrator's own words when they refused it, so a person
@@ -162,9 +167,11 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
     catch{throw new RouteError(400,'That Markdown note is unavailable inside the selected vault.');}
   }));
 
-  /** Connect, with my own token.
+  /** Connect, with my own token or key.
    *
-   * The token is checked against the service before it is stored. Storing an
+   * The body carries the service's field keys (see `fields` on the catalog):
+   * `token` and friends for a token service, the parts of the signing key for
+   * a store. It is checked against the service before it is stored. Storing an
    * unverified credential would let somebody leave this screen believing they
    * had connected something. */
   r.put(
@@ -188,30 +195,22 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
         );
       }
 
-      const token = asSecret(req.body?.token);
-      if (token.isEmpty) {
-        const descriptor = describeDeveloperService(service)!;
-        throw new RouteError(400, `a ${descriptor.tokenLabel.toLowerCase()} is required`);
-      }
+      // Held for this one request and nothing else: not stored in the clear,
+      // not logged, not echoed back. A key that cannot be a key at all is
+      // refused here, before anything is asked of the service.
+      const entered = normalizeDeveloperFields(service, req.body);
+      if (!entered.ok) throw new RouteError(400, entered.detail);
 
       const key = requireKey(ctx);
       await checkDeveloperCredentialAccess(db, userId, service);
-      const check = await checkDeveloperToken({
-        service,
-        // Revealed for this one request and nothing else: not stored in the
-        // clear, not logged, not echoed back.
-        token: token.reveal(),
-        username: str(req.body?.username, 200),
-        email: str(req.body?.email, 320),
-        baseUrl: str(req.body?.baseUrl, 500),
-        fetchImpl: ctx.fetchImpl,
-      });
+      const check = await checkDeveloperCredentials({ service, values: entered.values, fetchImpl: ctx.fetchImpl });
       if (!check.ok) {
         throw new RouteError(400, check.detail);
       }
 
+      // Every field goes into the Vault together, as one sealed payload.
       await saveDeveloperConnection(db, key, { ownerUserId: userId, service, accountLabel: check.accountLabel ?? null,
-        credentials: { token: token.reveal(), username: str(req.body?.username, 200), email: str(req.body?.email, 320), baseUrl: str(req.body?.baseUrl, 500) } });
+        credentials: entered.values });
       return res.json({ ok: true, accountLabel: check.accountLabel ?? null });
     }),
   );
@@ -223,7 +222,7 @@ export function developerServiceRoutes(ctx: DeveloperServiceCtx): Router {
       const service = param(req, 'service');
       if (!isDeveloperService(service)) throw new RouteError(404, 'no such service');
       const { credentials: opened, reference } = await loadDeveloperCredentials(db, requireKey(ctx), { ownerUserId: req.user!.id, service, requireActive: false });
-      const check = await checkDeveloperToken({ service, ...opened, fetchImpl: ctx.fetchImpl });
+      const check = await checkDeveloperCredentials({ service, values: opened, fetchImpl: ctx.fetchImpl });
       if (!(await recordDeveloperCheck(db, { ownerUserId: req.user!.id, service, reference, check })))
         throw new RouteError(409, 'The connection or its permission changed during the check. Check the current connection again.');
       return res.json({ ok: check.ok, detail: check.detail });

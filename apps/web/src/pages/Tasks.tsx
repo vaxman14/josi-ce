@@ -319,7 +319,7 @@ export function Tasks() {
                 <div className="min-w-0">
                   <p className="break-words font-medium">{reminder.body}</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {reminder.status === 'scheduled' ? `Due ${when(reminder.due_at)}` : `${plain('reminder_status', reminder.status)} ${when(reminder.delivered_at ?? reminder.due_at)}`}
+                    {reminder.status === 'scheduled' ? `Due ${when(reminder.due_at)}` : `${plain('reminder_status', reminder.status)} ${when(reminder.completed_at ?? reminder.delivered_at ?? reminder.due_at)}`}
                   </p>
                 </div>
                 <Badge tone={reminder.status === 'failed' ? 'danger' : reminder.status === 'delivered' ? 'ok' : 'muted'}>Reminder</Badge>

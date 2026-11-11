@@ -75,7 +75,11 @@ const app = createApp(db, {
   cookieSecure,
   appUrl,
   trustedProxies: process.env.JOSI_TRUSTED_PROXIES,
-  appleNativeClientId: process.env.APPLE_NATIVE_CLIENT_ID || null,
+  // Sign in with Apple is on for every server: the Josi iPhone app's own id is
+  // the audience. APPLE_NATIVE_CLIENT_ID=off turns it off; another value is
+  // for a privately built app.
+  appleNativeClientId: process.env.APPLE_NATIVE_CLIENT_ID === 'off' ? null
+    : process.env.APPLE_NATIVE_CLIENT_ID || 'com.socalreceptionist.josice',
   passkeysEnabled: process.env.JOSI_PASSKEYS !== 'off',
   emailCodesEnabled: process.env.JOSI_EMAIL_CODES !== 'off',
   appleWebSignInUrl: process.env.APPLE_WEB_SIGNIN_URL || null,

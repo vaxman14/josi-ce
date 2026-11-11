@@ -3,7 +3,11 @@
 // Everything here configures the installation. Nothing here reads a member's
 // private resource, and the tests assert that rather than trusting the comment.
 import { Router } from 'express';
-import { appendEvent, ensureWorkspace, getWorkspace, listEvents, updateWorkspace, type Db } from '@josi-ce/core';
+import {
+  appendEvent, ensureWorkspace, getWorkspace, listEvents, updateWorkspace, type Db,
+  ApnsKeyError, ApnsSender, DEFAULT_APPLE_BUNDLE_ID, DEFAULT_APPLE_TEAM_ID, applePushKeyStatus, deleteApplePushKey,
+  loadMasterKey, saveApplePushKey, validateApnsCredentials, type ApnsTransport, type LoadOptions,
+} from '@josi-ce/core';
 import {
   UserError, createUser, generatePassword, issueAuthToken, listUsers, updateUser,
   listActiveSessions, revokeAllSessions, revokeSession,
@@ -15,12 +19,54 @@ export interface AdminRoutesCtx {
   db: Db;
   /** Where an invite link points. Set from the configured public URL. */
   appUrl: string;
+  /** Opens the Vault to seal the Apple push key. `false` means no secure storage. */
+  masterKey?: LoadOptions | false;
+  /** Apple's push service, injected so tests never contact Apple. */
+  apnsTransport?: ApnsTransport;
 }
 
 export function adminRoutes(ctx: AdminRoutesCtx): Router {
   const r = Router();
   const { db } = ctx;
   r.use(requireSuperAdmin);
+
+  // ------------------------------------------------------- iPhone notifications
+  // The key is pasted once, checked with Apple, sealed, and never returned.
+  r.get('/push/apple', asyncRoute(async (_req, res) => res.json({
+    ...await applePushKeyStatus(db), defaultTeamId: DEFAULT_APPLE_TEAM_ID, bundleId: DEFAULT_APPLE_BUNDLE_ID,
+  })));
+  r.put('/push/apple', asyncRoute(async (req, res) => {
+    let key; try { key = ctx.masterKey === false ? null : loadMasterKey(ctx.masterKey ?? {}); } catch { key = null; }
+    if (!key) return res.status(503).json({ error: 'Secure storage is unavailable, so the key cannot be saved.' });
+    let credentials;
+    try {
+      credentials = validateApnsCredentials({
+        keyId: req.body?.key_id, teamId: req.body?.team_id || DEFAULT_APPLE_TEAM_ID, privateKey: req.body?.private_key,
+      });
+    } catch (error) {
+      if (error instanceof ApnsKeyError) return res.status(400).json({ error: error.message, code: error.code });
+      throw error;
+    }
+    const checked = await new ApnsSender(credentials, ctx.apnsTransport).check();
+    if (checked === 'rejected') {
+      return res.status(400).json({
+        code: 'key_rejected',
+        error: 'Apple did not accept this key. Check that the Key ID and Team ID match the key, and that the key has Apple Push Notifications turned on.',
+      });
+    }
+    await saveApplePushKey(db, key, { actorUserId: req.user!.id, credentials, checked });
+    await appendEvent(db, {
+      actorUserId: req.user!.id, actor: 'super_admin', kind: 'push.apple_key_saved',
+      payload: { keyId: credentials.keyId, teamId: credentials.teamId, checked },
+    });
+    return res.json({ ...await applePushKeyStatus(db), defaultTeamId: DEFAULT_APPLE_TEAM_ID, bundleId: DEFAULT_APPLE_BUNDLE_ID });
+  }));
+  r.delete('/push/apple', asyncRoute(async (req, res) => {
+    if (await deleteApplePushKey(db, req.user!.id)) {
+      await appendEvent(db, { actorUserId: req.user!.id, actor: 'super_admin', kind: 'push.apple_key_removed', payload: {} });
+    }
+    return res.status(204).end();
+  }));
 
   // ------------------------------------------------------------- workspace
   r.get('/workspace', asyncRoute(async (_req, res) => res.json({ workspace: await getWorkspace(db) })));

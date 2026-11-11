@@ -26,13 +26,28 @@ export interface Reminder {
   due_at: string;
   timezone: string;
   revision: number;
-  status: 'scheduled' | 'delivered' | 'cancelled' | 'failed';
+  /** `completed` is the owner marking it done; it is terminal and never fires. */
+  status: 'scheduled' | 'delivered' | 'cancelled' | 'failed' | 'completed';
   delivered_at: string | null;
+  completed_at: string | null;
+  /** `josi` for reminders made here; otherwise the system that pushed it. */
+  source: ReminderSource;
+  /** That system's own identifier. Opaque: stored and returned, never parsed. */
+  external_id: string | null;
+  notes: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export class ReminderError extends Error {}
+
+export type ReminderSource = 'josi' | 'ios';
+/** Systems allowed to push reminders in. One for now. */
+export const EXTERNAL_REMINDER_SOURCES = ['ios'] as const;
+export type ExternalReminderSource = typeof EXTERNAL_REMINDER_SOURCES[number];
+export const MAX_REMINDER_BODY_CHARS = 2000;
+export const MAX_REMINDER_NOTES_CHARS = 4000;
+export const MAX_REMINDER_EXTERNAL_ID_CHARS = 200;
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -79,7 +94,8 @@ export function reminderInstant(dueAt: Date | string, timezone: string): string 
 
 export function nativeReminderAction(reminder: Reminder): NativeReminderAction | null {
   if (!reminder.thread_id || !Number.isSafeInteger(Number(reminder.revision))) return null;
-  if (reminder.status === 'cancelled') {
+  // Done before it fired is, for a mirror holding the schedule, a withdrawal.
+  if (reminder.status === 'cancelled' || reminder.status === 'completed') {
     return { version: 1, id: reminder.id, threadId: reminder.thread_id, revision: Number(reminder.revision), operation: 'cancel' };
   }
   if (reminder.status !== 'scheduled') return null;
@@ -162,7 +178,7 @@ export async function listRemindersFor(db: Db, args: { ownerUserId: string; incl
 
 export async function listNativeReminderActions(db: Db, args: { ownerUserId: string }): Promise<NativeReminderAction[]> {
   const rows = await db.query<Reminder>(
-    `select * from reminders where owner_user_id=$1 and thread_id is not null and status in ('scheduled','cancelled') order by updated_at,id`,
+    `select * from reminders where owner_user_id=$1 and thread_id is not null and status in ('scheduled','cancelled','completed') order by updated_at,id`,
     [args.ownerUserId],
   );
   return rows.map(nativeReminderAction).filter((action): action is NativeReminderAction => action !== null);
@@ -177,6 +193,99 @@ export async function cancelReminder(db: Db, args: { ownerUserId: string; remind
     );
     if (!row) return null;
     await appendEvent(tx, { actorUserId: args.ownerUserId, actor: 'user', kind: 'reminder.cancelled', subjectType: 'reminder', subjectId: row.id,
+      payload: { revision: Number(row.revision) } });
+    return row;
+  });
+}
+
+/** Create or update the reminder a phone knows by its own identifier.
+ *
+ * Keyed on (owner, source, external id) and backed by a unique index, so the
+ * same item pushed twice — or twice at once — is one row. The owner is part of
+ * the key: another member's identical identifier is a different reminder.
+ *
+ * A reminder that is still scheduled takes the new text and time. One that
+ * already fired is scheduled again only when the phone moved it to a new
+ * future time. One that is done or cancelled is returned as it stands — the
+ * phone reads the state from the answer rather than overwriting it. */
+export async function upsertExternalReminder(
+  db: Db,
+  args: { ownerUserId: string; source: string; externalId: string; title: string; notes?: string | null; dueAt: Date; timezone: string },
+): Promise<{ reminder: Reminder; created: boolean }> {
+  if (!(EXTERNAL_REMINDER_SOURCES as readonly string[]).includes(args.source)) throw new ReminderError('that reminder source is not supported');
+  const source = args.source as ExternalReminderSource;
+  const externalId = args.externalId;
+  if (typeof externalId !== 'string' || !externalId || externalId.length > MAX_REMINDER_EXTERNAL_ID_CHARS || /[\u0000-\u001f\u007f]/.test(externalId)) {
+    throw new ReminderError(`a synced reminder needs an external_id of 1 to ${MAX_REMINDER_EXTERNAL_ID_CHARS} characters`);
+  }
+  const body = args.title.trim();
+  if (!body) throw new ReminderError('a reminder needs something to say');
+  if (body.length > MAX_REMINDER_BODY_CHARS) throw new ReminderError('that reminder is too long to store — keep it under 2000 characters');
+  const notes = args.notes?.trim() ? args.notes.trim() : null;
+  if (notes && notes.length > MAX_REMINDER_NOTES_CHARS) throw new ReminderError('those notes are too long to store — keep them under 4000 characters');
+  const timezone = validateReminderTimezone(args.timezone);
+  const due = normalizedDue(args.dueAt);
+  if (!Number.isFinite(due.getTime())) throw new ReminderError('that is not a time Josi can schedule');
+
+  return transaction(db, async tx => {
+    const find = () => tx.query<Reminder>(
+      `select * from reminders where owner_user_id=$1 and source=$2 and external_id=$3 for update`,
+      [args.ownerUserId, source, externalId]);
+    let [current] = await find();
+    if (!current) {
+      validateDue(due);
+      const [row] = await tx.query<Reminder>(
+        `insert into reminders (owner_user_id,body,notes,due_at,timezone,source,external_id)
+         values ($1,$2,$3,$4,$5,$6,$7)
+         on conflict (owner_user_id,source,external_id) where external_id is not null do nothing returning *`,
+        [args.ownerUserId, body, notes, due.toISOString(), timezone, source, externalId],
+      );
+      if (row) {
+        await enqueue(tx, { kind: REMINDER_JOB_KIND, payload: { reminderId: row.id, revision: Number(row.revision) }, runAt: due });
+        await appendEvent(tx, { actorUserId: args.ownerUserId, actor: 'user', kind: 'reminder.created', subjectType: 'reminder', subjectId: row.id,
+          payload: { dueAt: row.due_at, timezone, revision: Number(row.revision), bodyChars: body.length, source } });
+        return { reminder: row, created: true };
+      }
+      // Lost a race to the same identifier: the winner's row is the reminder.
+      [current] = await find();
+      if (!current) throw new Error('reminder upsert found no row after a conflict');
+    }
+
+    const dueChanged = new Date(current.due_at).getTime() !== due.getTime();
+    const changed = dueChanged || current.body !== body || (current.notes ?? null) !== notes || current.timezone !== timezone;
+    const reschedule = (current.status === 'delivered' || current.status === 'failed') && dueChanged && due.getTime() > Date.now();
+    if (!changed || (current.status !== 'scheduled' && !reschedule)) return { reminder: current, created: false };
+    if (dueChanged) validateDue(due);
+    const [row] = await tx.query<Reminder>(
+      `update reminders set body=$2,notes=$3,due_at=$4,timezone=$5,status='scheduled',delivered_at=null,revision=revision+1
+       where id=$1 returning *`,
+      [current.id, body, notes, due.toISOString(), timezone],
+    );
+    // The earlier queue row names the old revision and is now harmless.
+    await enqueue(tx, { kind: REMINDER_JOB_KIND, payload: { reminderId: row.id, revision: Number(row.revision) }, runAt: due });
+    await appendEvent(tx, { actorUserId: args.ownerUserId, actor: 'user', kind: 'reminder.updated', subjectType: 'reminder', subjectId: row.id,
+      payload: { dueAt: row.due_at, timezone, revision: Number(row.revision), bodyChars: body.length, source } });
+    return { reminder: row, created: false };
+  });
+}
+
+/** Mark a reminder done. Works before or after it fired, and asking twice is
+ * the same as asking once. The revision moves, so a delivery job queued for
+ * the earlier revision finds nothing to deliver. A cancelled reminder stays
+ * cancelled and is returned as it stands. Null means it is not this owner's. */
+export async function completeReminder(db: Db, args: { ownerUserId: string; reminderId: string }): Promise<Reminder | null> {
+  if (!uuid.test(args.reminderId)) return null;
+  return transaction(db, async tx => {
+    const [row] = await tx.query<Reminder>(
+      `update reminders set status='completed',completed_at=now(),revision=revision+1
+       where id=$1 and owner_user_id=$2 and status in ('scheduled','delivered','failed') returning *`,
+      [args.reminderId, args.ownerUserId],
+    );
+    if (!row) {
+      const [settled] = await tx.query<Reminder>(`select * from reminders where id=$1 and owner_user_id=$2`, [args.reminderId, args.ownerUserId]);
+      return settled ?? null;
+    }
+    await appendEvent(tx, { actorUserId: args.ownerUserId, actor: 'user', kind: 'reminder.completed', subjectType: 'reminder', subjectId: row.id,
       payload: { revision: Number(row.revision) } });
     return row;
   });
@@ -210,7 +319,7 @@ export async function deliverReminderPersisted(
 export async function reminderOverview(db: Db, args: { ownerUserId: string; recentDays?: number }): Promise<{ upcoming: Reminder[]; recent: Reminder[] }> {
   const days = Math.min(Math.max(args.recentDays ?? 7, 1), 31);
   const upcoming = await db.query<Reminder>(`select * from reminders where owner_user_id=$1 and status='scheduled' order by due_at asc limit 100`, [args.ownerUserId]);
-  const recent = await db.query<Reminder>(`select * from reminders where owner_user_id=$1 and status<>'scheduled' and coalesce(delivered_at,updated_at,due_at)>now()-make_interval(days=>$2) order by coalesce(delivered_at,updated_at,due_at) desc limit 100`, [args.ownerUserId, days]);
+  const recent = await db.query<Reminder>(`select * from reminders where owner_user_id=$1 and status<>'scheduled' and coalesce(completed_at,delivered_at,updated_at,due_at)>now()-make_interval(days=>$2) order by coalesce(completed_at,delivered_at,updated_at,due_at) desc limit 100`, [args.ownerUserId, days]);
   return { upcoming, recent };
 }
 

@@ -300,6 +300,8 @@ interface DeveloperServiceRow {
   usernameLabel: string | null;
   emailLabel: string | null;
   baseUrlLabel: string | null;
+  /** The whole form, one entry per box. Older servers do not send it. */
+  fields?: DeveloperServiceField[];
   /** Whether an administrator permits ME to connect this. Separate from
    * whether I have. */
   allowed: boolean;
@@ -314,6 +316,27 @@ interface DeveloperServiceRow {
   } | null;
 }
 
+interface DeveloperServiceField {
+  key: string;
+  label: string;
+  secret: boolean;
+  multiline: boolean;
+  help: string;
+}
+
+/** The boxes to show for a service: what the server lists, or, for a server
+ * from before it listed them, the same boxes worked out from its labels. */
+function fieldsOf(row: DeveloperServiceRow): DeveloperServiceField[] {
+  if (row.fields?.length) return row.fields;
+  const plainField = (key: string, label: string): DeveloperServiceField => ({ key, label, secret: false, multiline: false, help: '' });
+  return [
+    ...(row.usernameLabel ? [plainField('username', row.usernameLabel)] : []),
+    ...(row.emailLabel ? [plainField('email', row.emailLabel)] : []),
+    ...(row.baseUrlLabel ? [plainField('baseUrl', row.baseUrlLabel)] : []),
+    { key: 'token', label: row.tokenLabel, secret: true, multiline: false, help: '' },
+  ];
+}
+
 /** My own GitHub, Netlify, Vercel and Supabase.
  *
  * These are mine: my token, my account, and I can disconnect at any time. An
@@ -323,12 +346,12 @@ interface DeveloperServiceRow {
  */
 function DeveloperServices() {
   const [rows, setRows] = useState<DeveloperServiceRow[] | null>(null);
-  const [tokens, setTokens] = useState<Record<string, string>>({});
-  const [details, setDetails] = useState<Record<string, {username?:string;email?:string;baseUrl?:string}>>({});
+  // What has been typed, by service and then by field key.
+  const [values, setValues] = useState<Record<string, Record<string, string>>>({});
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [saved,setSaved]=useState('');
-  useUnsavedChanges(Object.values(tokens).some(Boolean));
+  useUnsavedChanges(Object.values(values).some((entered) => Object.values(entered).some(Boolean)));
 
   const load = useCallback(async () => {
     try {
@@ -346,9 +369,9 @@ function DeveloperServices() {
     setBusy(service);
     setError('');
     try {
-      await api.put(`/connections/developer/${service}`, { token: tokens[service] ?? '', ...(details[service] ?? {}) });
+      await api.put(`/connections/developer/${service}`, { ...(values[service] ?? {}) });
       await load();
-      setTokens((t) => ({ ...t, [service]: '' }));
+      setValues((v) => ({ ...v, [service]: {} }));
       setSaved(`${service} connection saved.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That could not be connected');
@@ -450,29 +473,54 @@ function DeveloperServices() {
               className="mt-2 space-y-2"
               onSubmit={(e) => { e.preventDefault(); void connect(row.service); }}
             >
-              <label className="block text-sm" htmlFor={`tok-${row.service}`}>{row.tokenLabel}</label>
-              {row.usernameLabel ? <><label className="block text-sm" htmlFor={`username-${row.service}`}>{row.usernameLabel}</label><Input id={`username-${row.service}`} autoComplete="username" value={details[row.service]?.username??''} onChange={(e)=>setDetails((d)=>({...d,[row.service]:{...d[row.service],username:e.target.value}}))}/></> : null}
-              {row.emailLabel ? <><label className="block text-sm" htmlFor={`email-${row.service}`}>{row.emailLabel}</label><Input id={`email-${row.service}`} type="email" autoComplete="email" value={details[row.service]?.email??''} onChange={(e)=>setDetails((d)=>({...d,[row.service]:{...d[row.service],email:e.target.value}}))}/></> : null}
-              {row.baseUrlLabel ? <><label className="block text-sm" htmlFor={`url-${row.service}`}>{row.baseUrlLabel}</label><Input id={`url-${row.service}`} type="url" inputMode="url" placeholder="https://your-site.atlassian.net" value={details[row.service]?.baseUrl??''} onChange={(e)=>setDetails((d)=>({...d,[row.service]:{...d[row.service],baseUrl:e.target.value}}))}/></> : null}
-              <Input
-                id={`tok-${row.service}`}
-                type="password"
-                autoComplete="off"
-                autoCapitalize="none"
-                value={tokens[row.service] ?? ''}
-                onChange={(e) => setTokens((t) => ({ ...t, [row.service]: e.target.value }))}
-              />
+              {fieldsOf(row).map((field) => {
+                const id = `dev-${row.service}-${field.key}`;
+                const value = values[row.service]?.[field.key] ?? '';
+                const set = (next: string) => setValues((v) => ({ ...v, [row.service]: { ...v[row.service], [field.key]: next } }));
+                return (
+                  <div key={field.key} className="space-y-1">
+                    <label className="block text-sm" htmlFor={id}>{field.label}</label>
+                    {field.multiline ? (
+                      <textarea
+                        id={id}
+                        rows={6}
+                        className="block w-full min-w-0 rounded-xl border border-border bg-input px-3.5 py-2 font-mono text-base placeholder:text-text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-ring sm:text-sm"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-form-type="other"
+                        autoComplete="off"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        value={value}
+                        onChange={(e) => set(e.target.value)}
+                      />
+                    ) : (
+                      <Input
+                        id={id}
+                        type={field.secret ? 'password' : field.key === 'email' ? 'email' : field.key === 'baseUrl' ? 'url' : 'text'}
+                        autoComplete={field.secret ? 'off' : field.key === 'username' ? 'username' : field.key === 'email' ? 'email' : 'off'}
+                        autoCapitalize="none"
+                        placeholder={field.key === 'baseUrl' ? 'https://your-site.atlassian.net' : undefined}
+                        value={value}
+                        onChange={(e) => set(e.target.value)}
+                      />
+                    )}
+                    {field.help && field.help !== row.tokenHelp ? <p className="text-xs text-muted-foreground">{field.help}</p> : null}
+                  </div>
+                );
+              })}
               <p className="text-xs text-muted-foreground">
                 {row.tokenHelp}{' '}
                 <a className="underline" href={row.tokenUrl} target="_blank" rel="noreferrer noopener">
                   Open {row.label}
                 </a>
               </p>
-              <Button type="submit" disabled={busy === row.service || !(tokens[row.service] ?? '').trim() || (row.usernameLabel ? !(details[row.service]?.username??'').trim() : false) || (row.emailLabel ? !(details[row.service]?.email??'').trim() : false) || (row.baseUrlLabel ? !(details[row.service]?.baseUrl??'').trim() : false)}>
+              <Button type="submit" disabled={busy === row.service || fieldsOf(row).some((field) => !(values[row.service]?.[field.key] ?? '').trim())}>
                 {busy === row.service ? 'Connecting…' : 'Connect'}
               </Button>
               <p className="text-xs text-muted-foreground">
-                Josi checks the token with {row.label} before saving it, so a token that does not
+                Josi checks this with {row.label} before saving it, so a key or token that does not
                 work is never stored as though it did.
               </p>
             </form>

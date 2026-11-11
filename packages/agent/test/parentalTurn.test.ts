@@ -18,7 +18,10 @@ import { testDb, type TestDb } from '../../core/test/helpers.js';
 import { createUser } from '../../auth/src/users.js';
 import { ensureWorkspace } from '../../core/src/workspace.js';
 import { activateEntitlement } from '../../core/src/entitlements.js';
-import { createLink, normalizeWindows, setControls } from '../../core/src/parental.js';
+import { createLink, normalizeBlockedTopics, normalizeWindows, setControls } from '../../core/src/parental.js';
+import { MasterKey } from '../../core/src/masterKey.js';
+import { seal } from '../../core/src/index.js';
+import { testVault } from '../../core/test/helpers.js';
 import { createThread } from '../../core/src/conversations.js';
 import { runAssistantTurn } from '../src/assistantAgent.js';
 
@@ -103,5 +106,67 @@ describe('every channel goes through the same door', () => {
     expect(result.refusal?.reason).toBe('no_model');
     const [minutes] = await db.query<{ n: string }>(`select count(*) as n from child_activity_minutes`);
     expect(Number(minutes.n)).toBe(0);
+  });
+});
+
+// Blocked topics are an INSTRUCTION to the model on the child's own turn. The
+// stub model below returns nothing of interest; what is asserted is the system
+// context that reached it, for the child and for nobody else.
+describe('topics a parent turned off reach the model on the child’s turn only', () => {
+  const key = new MasterKey(Buffer.alloc(32, 43));
+  let lastSystem = '';
+  const captureFetch: typeof fetch = async (_url, init) => {
+    const body = JSON.parse(String((init as RequestInit).body ?? '{}'));
+    const system = (body.messages ?? []).find((m: { role: string }) => m.role === 'system');
+    lastSystem = system?.content ?? body.system ?? '';
+    return new Response(JSON.stringify({
+      choices: [{ message: { content: 'ok' } }], usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const modelTurn = (userId: string) => runAssistantTurn({
+    db, registry: { db, masterKey: key, fetchImpl: captureFetch, resolve: async () => ['203.0.113.10'] },
+    userId, threadId: ids.thread, history: [], inbound: 'tell me about casinos',
+  });
+
+  beforeEach(async () => {
+    lastSystem = '';
+    await testVault(db, key);
+    await db.query(
+      `insert into llm_providers
+         (role, provider, model, api_key_enc, external_acknowledged, activated_at, probed_at,
+          cap_chat, cap_structured_output, cap_tool_calling, cap_context_tokens)
+       values ('primary', 'openai', 'gpt-test', $1, true, now(), now(), true, true, false, 8000)`,
+      [seal(key, { apiKey: 'k' })],
+    );
+  });
+
+  it('tells the model which topics are off, and how to say so', async () => {
+    await setControls(db, {
+      childUserId: ids.child, actorUserId: ids.parent,
+      blockedTopics: normalizeBlockedTopics(['gambling', 'horror\nfilms']),
+    });
+    const result = await modelTurn(ids.child);
+    expect(result.refusal).toBeUndefined();
+    expect(lastSystem).toContain('A PARENT HAS TURNED SOME TOPICS OFF');
+    expect(lastSystem).toContain('- gambling');
+    // A line break inside a topic cannot start a line of its own.
+    expect(lastSystem).toContain('- horror films');
+    expect(lastSystem).toMatch(/a parent has turned that topic off/i);
+    expect(lastSystem).toMatch(/never list, hint at or confirm the other topics/i);
+  });
+
+  it('says nothing of the kind to the parent, or to a child with no topics off', async () => {
+    await setControls(db, {
+      childUserId: ids.child, actorUserId: ids.parent, blockedTopics: normalizeBlockedTopics(['gambling']),
+    });
+    await modelTurn(ids.parent);
+    expect(lastSystem).not.toBe('');
+    expect(lastSystem).not.toContain('TOPICS OFF');
+    expect(lastSystem).not.toContain('gambling');
+
+    await setControls(db, { childUserId: ids.child, actorUserId: ids.parent, blockedTopics: [] });
+    await modelTurn(ids.child);
+    expect(lastSystem).not.toBe('');
+    expect(lastSystem).not.toContain('TOPICS OFF');
   });
 });

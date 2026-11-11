@@ -45,11 +45,13 @@ describe('a fresh database migrates cleanly', () => {
       `select service, mode, note from developer_service_policy order by service`,
     );
     expect(policies.rows).toEqual([
+      { service: 'appstoreconnect', mode: 'not_allowed', note: null },
       { service: 'cloudflare', mode: 'not_allowed', note: null },
       { service: 'dockerhub', mode: 'not_allowed', note: null },
       { service: 'ghcr', mode: 'not_allowed', note: null },
       { service: 'github', mode: 'everyone', note: 'kept enabled' },
       { service: 'gitlab', mode: 'not_allowed', note: null },
+      { service: 'googleplay', mode: 'not_allowed', note: null },
       { service: 'jira', mode: 'not_allowed', note: null },
       { service: 'linear', mode: 'not_allowed', note: null },
       { service: 'neon', mode: 'not_allowed', note: null },
@@ -129,7 +131,7 @@ describe('a fresh database migrates cleanly', () => {
     const modes = await db.query<{ service: string; mode: string }>(
       `select service, mode from developer_service_policy order by service`,
     );
-    expect(modes).toHaveLength(16);
+    expect(modes).toHaveLength(18);
     expect(modes.every((m) => m.mode === 'not_allowed')).toBe(true);
   });
 

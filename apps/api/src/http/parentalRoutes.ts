@@ -26,10 +26,15 @@
 // WHAT COSTS WHAT
 //
 //   read your own family's pages          a session
-//   change a limit or a timetable         a session + the password again
-//                                         (`change_settings` step-up — the
+//   change a limit, a timetable, or the   a session + the password again
+//   blocked topics / blocked apps         (`change_settings` step-up — the
 //                                         threat is the child on the parent's
 //                                         open laptop, and it is a real one)
+//   answer a child's request              a session. Approving adds minutes to
+//                                         TODAY only, capped for the day, in
+//                                         the trail and shown to both people;
+//                                         it changes no standing rule. See
+//                                         `/requests/:requestId/decide`.
 //   create, or end, a relationship        a session + the password + a TOTP
 //                                         code, proved in one request, spent
 //                                         once, within five minutes
@@ -40,9 +45,12 @@
 import { Router, type Request, type Response } from 'express';
 import {
   CHILD_DISCLOSURE, CHILD_DISCLOSURE_LIMITS, MAX_CHILDREN_PER_PARENT, PARENTAL_MODULE,
+  FamilyRequestError, MAX_EXTRA_MINUTES_PER_DAY,
   ScheduleError, activateEntitlement, appendEvent, checkChildAccess, checkStepUp, childrenOf,
-  consumeAuthorityGrant, controllerOf, createLink, endLink, entitlementStatus, getControls,
-  issueAuthorityGrant, listMessages, loadMasterKey, minutesUsedToday, normalizeWindows,
+  consumeAuthorityGrant, controllerOf, createLink, decideFamilyRequest, endLink, entitlementStatus,
+  extraMinutesToday, fileFamilyRequest, getControls,
+  issueAuthorityGrant, listFamilyRequestsForParent, listMessages, listOwnFamilyRequests, loadMasterKey,
+  minutesUsedToday, normalizeBlockedApps, normalizeBlockedTopics, normalizeWindows,
   VaultError, VaultLockedError, parentalAuthority, publisherKey, revokeEntitlement, setControls, usageSummary,
   type Db, type LoadOptions,
 } from '@josi-ce/core';
@@ -86,6 +94,7 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
       if (err instanceof MfaError) return res.status(err.status).json({ error: err.message });
       if (err instanceof RouteError) return res.status(err.status).json({ error: err.message });
       if (err instanceof ScheduleError) return res.status(400).json({ error: err.message });
+      if (err instanceof FamilyRequestError) return res.status(err.status).json({ error: err.message });
       throw err;
     }
   });
@@ -103,7 +112,17 @@ export const PARENTAL_HONESTY = {
     + 'a reply is not counted, because this server cannot see a screen being looked at.',
   admin: 'The person who administers this installation cannot see any of this. They can see '
     + 'that the module is switched on, and nothing about who is looking after whom.',
+  topics: 'Turning a topic off tells Josi not to discuss it with your child. It is an instruction '
+    + 'to the assistant, not a filter: nothing checks the reply afterwards, and a determined child '
+    + 'may get round it. It covers Josi only.',
+  apps: 'The list of blocked apps is only stored here. Josi on this server blocks no app. Your '
+    + 'child’s iPhone applies the list with Apple’s Family Controls, and only if that phone has '
+    + 'been set up to and allowed to.',
 } as const;
+
+/** The version of the object `GET /rules` returns. Raised only when a field
+ * changes meaning or goes away; adding one does not raise it. */
+export const PARENTAL_RULES_VERSION = 1;
 
 // ------------------------------------------------------------ the member side
 
@@ -374,6 +393,10 @@ export function parentalRoutes(ctx: ParentalRoutesCtx): Router {
     const childUserId = await authorizedChild(req);
     await requirePasswordAgain(req);
     const body = (req.body ?? {}) as Record<string, unknown>;
+    // Both spellings: this module's own (camelCase) and the one the phone's
+    // rules object uses.
+    const topics = body.blockedTopics ?? body.blocked_topics;
+    const apps = body.blockedApps ?? body.blocked_apps;
     const controls = await setControls(db, {
       childUserId,
       actorUserId: req.user!.id,
@@ -383,8 +406,107 @@ export function parentalRoutes(ctx: ParentalRoutesCtx): Router {
         : (body.dailyLimitMinutes === null ? null : Number(body.dailyLimitMinutes)),
       scheduleEnabled: body.scheduleEnabled === undefined ? undefined : !!body.scheduleEnabled,
       windows: body.windows === undefined ? undefined : normalizeWindows(body.windows),
+      blockedTopics: topics === undefined ? undefined : normalizeBlockedTopics(topics),
+      blockedApps: apps === undefined ? undefined : normalizeBlockedApps(apps),
     });
     return res.json({ controls: controls ? publicControls(controls) : null });
+  }));
+
+  // -------------------------------------------------- the child's own rules
+  //
+  // What the child's own phone reads. One flat, versioned object, so the app
+  // has one thing to cache and one thing to compare. It is derived from the
+  // same functions the turn uses — `getControls`, `minutesUsedToday`,
+  // `checkChildAccess` — so the phone and the server cannot disagree about
+  // whether Josi is answering.
+  //
+  // Somebody who is not a managed child gets `managed: false` and nothing
+  // else. That is a fact about the caller's OWN account, so it discloses
+  // nothing about anybody's family.
+  r.get('/rules', handle(async (req, res) => {
+    const link = await controllerOf(db, req.user!.id);
+    const controls = link ? await getControls(db, req.user!.id) : null;
+    if (!link || !controls) return res.json({ version: PARENTAL_RULES_VERSION, managed: false });
+    const access = await checkChildAccess(db, { userId: req.user!.id });
+    const [guardian] = await db.query<{ display_name: string | null; username: string }>(
+      `select display_name, username from users where id = $1`, [link.parent_user_id],
+    );
+    const today = { childUserId: req.user!.id, timezone: controls.timezone };
+    return res.json({
+      version: PARENTAL_RULES_VERSION,
+      managed: true,
+      guardian: { name: guardian?.display_name || guardian?.username || 'your parent' },
+      timezone: controls.timezone,
+      daily_limit_minutes: controls.dailyLimitMinutes,
+      minutes_used_today: await minutesUsedToday(db, today),
+      extra_minutes_today: await extraMinutesToday(db, today),
+      schedule_enabled: controls.scheduleEnabled,
+      windows: controls.windows.map((w) => ({
+        weekday: w.weekday, start_minute: w.startMinute, end_minute: w.endMinute,
+      })),
+      blocked_topics: controls.blockedTopics,
+      blocked_apps: controls.blockedApps,
+      access: { allowed: access.allowed, reason: access.reason, opens_again: access.opensAgain ?? null },
+      updated_at: controls.updatedAt,
+    });
+  }));
+
+  // ------------------------------------------------------------------ asking
+  //
+  // A child asks; the linked parent answers. Asking changes nothing.
+  r.post('/requests', handle(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    // Refuses anybody who is not a managed child with a 404: for everyone
+    // else there is nobody to ask.
+    const request = await fileFamilyRequest(db, {
+      childUserId: req.user!.id, kind: body.kind, minutes: body.minutes, note: body.note,
+    });
+    return res.status(201).json({ request: publicRequest(request) });
+  }));
+
+  r.get('/requests', handle(async (req, res) => {
+    if (await controllerOf(db, req.user!.id)) {
+      const own = await listOwnFamilyRequests(db, req.user!.id);
+      return res.json({ role: 'child', requests: own.map((item) => publicRequest(item)) });
+    }
+    const theirs = await listFamilyRequestsForParent(db, req.user!.id);
+    // `none` for somebody linked to nobody, exactly as the overview answers.
+    const role = theirs.length || (await childrenOf(db, req.user!.id)).length ? 'parent' : 'none';
+    return res.json({
+      role,
+      requests: theirs.map((item) => ({
+        ...publicRequest(item), child: { childUserId: item.childUserId, name: item.childName },
+      })),
+    });
+  }));
+
+  // WHAT THIS COSTS, AND WHY IT IS NOT THE PASSWORD AGAIN
+  //
+  // A session, and the relationship. The step-up on `PUT .../controls` exists
+  // because that route rewrites the STANDING rules, and the child on a parent's
+  // open laptop could rewrite them for good. This route cannot do that. The
+  // most it can do is add minutes to today — at most
+  // MAX_EXTRA_MINUTES_PER_DAY across the whole day, gone at the child's
+  // midnight — and only in answer to a request the child had to file from
+  // their own account. It leaves the limit, the timetable, the topics and the
+  // apps exactly as they were, it is written to the trail, and the answer is
+  // shown to the parent in their own list afterwards. A parent answering from
+  // a notification on their phone should not need to type a password to say
+  // "ten more minutes"; a parent who wants MORE than today's ceiling is sent
+  // to the limit, which does cost the password.
+  r.post('/requests/:requestId/decide', handle(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const decided = await decideFamilyRequest(db, {
+      parentUserId: req.user!.id, requestId: param(req, 'requestId'),
+      decision: body.decision, minutes: body.minutes,
+    });
+    // Not theirs and not there are one answer.
+    if (!decided) throw new RouteError(404, 'not found');
+    return res.json({
+      request: publicRequest(decided.request),
+      extraMinutesToday: decided.extraMinutesToday,
+      maxExtraMinutesPerDay: MAX_EXTRA_MINUTES_PER_DAY,
+    });
   }));
 
   // ------------------------------------------------------------ conversations
@@ -464,13 +586,33 @@ export function parentalRoutes(ctx: ParentalRoutesCtx): Router {
 function publicControls(controls: {
   timezone: string; dailyLimitMinutes: number | null; scheduleEnabled: boolean;
   windows: Array<{ weekday: number; startMinute: number; endMinute: number }>; updatedAt: string | null;
+  blockedTopics: string[]; blockedApps: string[];
 }) {
   return {
     timezone: controls.timezone,
     dailyLimitMinutes: controls.dailyLimitMinutes,
     scheduleEnabled: controls.scheduleEnabled,
     windows: controls.windows,
+    blockedTopics: controls.blockedTopics,
+    blockedApps: controls.blockedApps,
     updatedAt: controls.updatedAt,
+  };
+}
+
+/** A request as either of the two people is shown it. */
+function publicRequest(request: {
+  id: string; kind: string; status: string; minutes: number | null; note: string | null;
+  minutesGranted: number | null; createdAt: string; decidedAt: string | null;
+}) {
+  return {
+    id: request.id,
+    kind: request.kind,
+    status: request.status,
+    minutes: request.minutes,
+    note: request.note,
+    minutesGranted: request.minutesGranted,
+    createdAt: request.createdAt,
+    decidedAt: request.decidedAt,
   };
 }
 

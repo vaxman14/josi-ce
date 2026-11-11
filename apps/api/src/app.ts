@@ -34,6 +34,7 @@ import { personaRoutes } from './http/personaRoutes.js';
 import { migrationRoutes } from './http/migrationRoutes.js';
 import { adminLlmRoutes, llmRoutes, startModelWarmup } from './http/llmRoutes.js';
 import { adminAssistantRoutes, assistantRoutes } from './http/assistantRoutes.js';
+import { reminderRoutes } from './http/reminderRoutes.js';
 import { adminTelegramRoutes, mountTelegramWebhook, telegramRoutes } from './http/telegramRoutes.js';
 import { adminExternalChannelRoutes, externalChannelRoutes, mountExternalChannelWebhooks } from './http/externalChannelRoutes.js';
 import { mountCalendarWebhook } from './http/calendarWebhook.js';
@@ -108,6 +109,8 @@ export interface AppConfig {
   emailCodesEnabled?: boolean;
   /** Where "Continue with Apple" goes on the web. Unset hides the button. */
   appleWebSignInUrl?: string | null;
+  /** Apple's push service, injected so tests never contact Apple. */
+  apnsTransport?: import('@josi-ce/core').ApnsTransport;
   /** Apple JWKS HTTP, injected so tests never contact Apple. */
   appleFetch?: typeof fetch;
   /** SMTP, injected by the tests so no suite ever contacts a mail server. */
@@ -284,6 +287,8 @@ export function createApp(db: Db, cfg: AppConfig): Express {
     codexRunner: cfg.codexRunner, connectorFetch: cfg.connectorFetch,
     customApiFetch: cfg.customApiFetch, outboundResolve: cfg.outboundResolve, voiceHelper: voice,
   }));
+  // The phone's reminder sync address; the same router is also under /assistant.
+  api.use('/reminders', reminderRoutes({ db }));
   api.use('/admin/assistant', adminAssistantRoutes({ db }));
   api.use('/admin/llm', adminLlmRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.llmFetch, resolve: cfg.llmResolve,
@@ -340,7 +345,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/admin/live-signin', signIn.admin);
   api.use('/admin/pc-control', pcControlRoutes({db,live,masterKey:cfg.masterKeyCheck,
     windows:cfg.nativeWindowsPermissions ?? (process.platform==='win32' && process.env.JOSI_NATIVE_RUNTIME==='1')}));
-  api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl }));
+  api.use('/admin', adminRoutes({ db, appUrl: cfg.appUrl, masterKey: cfg.masterKeyCheck, apnsTransport: cfg.apnsTransport }));
   // Same mount point, so the super-admin guard above covers it too.
   api.use('/admin', checklistRoutes(db));
   api.use('/mail', mailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));

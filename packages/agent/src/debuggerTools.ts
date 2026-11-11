@@ -96,7 +96,9 @@ async function github(token: string, path: string, fetchImpl: typeof fetch, raw 
 async function sourceToken(db: Db, key: MasterKey | null, userId: string): Promise<string | { ok: false; code: string; message: string }> {
   if (!key) return { ok: false, code: 'vault_locked', message: 'The Vault is locked, so the repository cannot be read right now.' };
   try {
-    return (await loadDeveloperCredentials(db, key, { ownerUserId: userId, service: 'github' })).credentials.token;
+    const token = (await loadDeveloperCredentials(db, key, { ownerUserId: userId, service: 'github' })).credentials.token;
+    if (!token) throw new Error('no token');
+    return token;
   } catch {
     return { ok: false, code: 'no_repository', message: 'No GitHub account is connected, so you cannot read your own source. You can still investigate and repair. Tell the owner that connecting GitHub (Connections, developer services) lets you name the file and lines in a handoff.' };
   }

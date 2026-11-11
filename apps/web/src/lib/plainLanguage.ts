@@ -209,6 +209,7 @@ export const VOCABULARIES: Record<string, Vocabulary> = {
       delivered: 'Delivered',
       cancelled: 'Cancelled',
       failed: 'Did not go out',
+      completed: 'Done',
     },
     detail: {
       failed: 'Josi could not deliver this reminder anywhere. It will not fire again — set a new one.',

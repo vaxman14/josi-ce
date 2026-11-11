@@ -57,6 +57,9 @@ export const LIMITS = {
   /** Authenticated native submissions. Also backed by a hard database cap of
    * 50 queued/running turns per owner. */
   durable_turn: { bucket: 'durable_turn', max: 20, windowSeconds: 60 },
+  /** A phone pushing its reminder list in. Each write is a row and a queued
+   * job; a first sync of a long list is a burst, a loop is not. */
+  reminder_sync: { bucket: 'reminder_sync', max: 300, windowSeconds: 300 },
   /** Link-code redemption attempts from one chat. Tight, because this one is a
    * guessing surface: a 160-bit code is not brute-forcible, but a limit means
    * the attempt is visible in the audit log as a burst rather than a trickle. */

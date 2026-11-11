@@ -187,8 +187,12 @@ export interface Reminder {
   id: string;
   body: string;
   due_at: string;
-  status: 'scheduled' | 'delivered' | 'cancelled' | 'failed';
+  status: 'scheduled' | 'delivered' | 'cancelled' | 'failed' | 'completed';
   delivered_at: string | null;
+  completed_at?: string | null;
+  source?: 'josi' | 'ios';
+  external_id?: string | null;
+  notes?: string | null;
   created_at: string;
 }
 

@@ -64,7 +64,10 @@ export async function prepareCredentialCard(db: Db, kind: CredentialKind, provid
       if (d.baseUrlLabel) fields.push({ key: 'baseUrl', label: d.baseUrlLabel, type: 'text', required: true, placeholder: 'https://' });
       if (d.usernameLabel) fields.push({ key: 'username', label: d.usernameLabel, type: 'text', required: true });
       if (d.emailLabel) fields.push({ key: 'email', label: d.emailLabel, type: 'text', required: true });
-      fields.push({ key: 'token', label: d.tokenLabel, type: 'secret', required: true });
+      // A store key is several named parts. A pasted key file may arrive on one
+      // line from a single-line box; the server accepts it either way.
+      if (d.fields) { fields.length = 0; for (const f of d.fields) fields.push({ key: f.key, label: f.label, type: f.secret ? 'secret' : 'text', required: true }); }
+      else fields.push({ key: 'token', label: d.tokenLabel, type: 'secret', required: true });
       return { scope: 'personal', method: 'PUT', path: `/connections/developer/${provider}`, fixed: {},
         card: { kind, provider, title: `Connect ${d.label}`, intro: `Paste your ${d.label} ${d.tokenLabel.toLowerCase()}. Josi checks it with ${d.label} and keeps it in the Vault; it never appears in chat. ${d.capability}`,
           fields, help: { text: d.tokenHelp, url: d.tokenUrl }, done: `${d.label} is connected.` } };

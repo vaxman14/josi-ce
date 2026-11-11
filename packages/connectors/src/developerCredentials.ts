@@ -1,9 +1,12 @@
 import { appendEvent, deleteVaultSlot, isVaultCredentialReference, openCredentialPayload, storeVaultCredentialPayload,
   VaultError, VaultLockedError, type Db, type MasterKey } from '@josi-ce/core';
 import { requireConnectorVault } from './credentialVault.js';
-import { describeDeveloperService, type DeveloperCheck, type DeveloperService } from './developerServices.js';
+import { describeDeveloperService, type DeveloperCheck, type DeveloperFieldValues, type DeveloperService } from './developerServices.js';
 
-export interface DeveloperCredentials { token: string; username?: string; email?: string; baseUrl?: string }
+/** Everything a connection needs, by field key, sealed as ONE Vault payload.
+ * A token service carries `token` (and its optional username/email/base URL);
+ * a store carries the parts of its signing key. No part is ever a column. */
+export type DeveloperCredentials = DeveloperFieldValues;
 export class DeveloperCredentialError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
@@ -35,9 +38,16 @@ async function requireVault(tx: Db, owner: string): Promise<void> {
   const [box] = await tx.query<{ locked: boolean }>('select locked from vault_boxes where owner_user_id=$1', [owner]);
   if (box?.locked) throw new VaultLockedError('Unlock your Vault box to use this connection.');
 }
-function valid(value: DeveloperCredentials): void {
-  if (!value || typeof value.token !== 'string' || !value.token || Object.entries(value).some(([name, entry]) =>
-    !['token', 'username', 'email', 'baseUrl'].includes(name) || typeof entry !== 'string')) throw new VaultError('The developer credential is invalid');
+const TOKEN_KEYS = ['token', 'username', 'email', 'baseUrl'];
+function valid(service: DeveloperService, value: DeveloperCredentials): void {
+  const declared = describeDeveloperService(service)?.fields;
+  // A token service must have its token; a store must have every part of its
+  // key. Either way nothing outside the service's own fields may ride along.
+  const allowed = declared ? declared.map(f => f.key as string) : TOKEN_KEYS;
+  const required = declared ? allowed : ['token'];
+  const entries = value && typeof value === 'object' ? Object.entries(value) : [];
+  if (!entries.length || entries.some(([name, entry]) => !allowed.includes(name) || typeof entry !== 'string')
+    || required.some(name => !(value as Record<string, unknown>)[name])) throw new VaultError('The developer credential is invalid');
 }
 
 /** Check before testing a newly submitted credential; save checks again after
@@ -49,7 +59,7 @@ export async function checkDeveloperCredentialAccess(db: Db, owner: string, serv
 export async function saveDeveloperConnection(db: Db, key: MasterKey, args: {
   ownerUserId: string; service: DeveloperService; credentials: DeveloperCredentials; accountLabel: string | null;
 }): Promise<void> {
-  valid(args.credentials);
+  valid(args.service, args.credentials);
   await withDeveloperServiceTransaction(db, args.service, async tx => {
     await requirePermission(tx, args.ownerUserId, args.service); await requireVault(tx, args.ownerUserId);
     const reference = await storeVaultCredentialPayload(tx, key, { ownerUserId: args.ownerUserId, kind: 'api_key', service: `developer.${args.service}`, slot: 'token',
@@ -71,7 +81,7 @@ export async function loadDeveloperCredentials(db: Db, key: MasterKey, args: {
     if (!row?.credentials_enc || row.status === 'revoked' || (args.requireActive !== false && row.status !== 'active'))
       throw new DeveloperCredentialError(404, 'That provider is not connected and active for this account.');
     const credentials = await openCredentialPayload<DeveloperCredentials>(tx, key, { ownerUserId: args.ownerUserId, service: `developer.${args.service}`, slot: 'token', stored: row.credentials_enc });
-    valid(credentials);
+    valid(args.service, credentials);
     let reference = row.credentials_enc;
     if (!isVaultCredentialReference(reference)) {
       reference = await storeVaultCredentialPayload(tx, key, { ownerUserId: args.ownerUserId, kind: 'api_key', service: `developer.${args.service}`, slot: 'token',

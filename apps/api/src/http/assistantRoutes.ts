@@ -25,7 +25,7 @@ import {
   setUserApprovalLevel, getApprovalLevel, taskMetrics, taskActivity, transition, verifyStepUp,
   canWrite, checkStepUp, enqueue, recordExchange, reminderOverview, cancelReminder, updateReminder,
   checkChildAccess, encodeTurnCursor, listNativeReminderActions,
-  json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, fcmStoredToken, ReminderError, consume, LIMITS,
+  json, submitDurableTurn, listDurableTurns, listTaskRunsFor, upsertMobileDevice, revokeMobileDevice, MobileError, waitForTurnReply, SPOKEN_HOLDING_LINE, fcmStoredToken, apnsStoredToken, DEFAULT_APPLE_BUNDLE_ID, ReminderError, consume, LIMITS,
   type ApprovalLevel, type Db, type TaskState,
   listWorkGoals, ownedWorkGoal, workGoalEvents, workPlanHistory, workChannelProgress, controlWorkGoal, setWorkLimits, editWorkMemory,
   changeWorkOutcome, workOutcomeHistory, retireWorkStep, WorkGoalError,
@@ -44,6 +44,7 @@ import {
 import { settleInterruptedMedia, transcribeAttachmentLater } from './mediaTranscription.js';
 import type { VoiceHelper } from './voiceBoxRoutes.js';
 import { asyncRoute, param } from './async.js';
+import { reminderRoutes } from './reminderRoutes.js';
 import { accessorOf, requireAuth, requireOwnership, requireSuperAdmin } from './authz.js';
 import { workProgressStream } from './workProgressStream.js';
 
@@ -363,6 +364,8 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     const duplicate=clientMessageId?!!(await db.query(`select 1 from assistant_turns where owner_user_id=$1 and thread_id=$2 and client_message_id=$3`,[req.user!.id,threadId,clientMessageId])).length:false;
     if(!duplicate){const rate=await consume(db,{limit:LIMITS.durable_turn,subject:`durable_turn:${req.user!.id}`});if(!rate.ok){res.set('Retry-After',String(rate.retryAfterSeconds));throw new RouteError(429,'Too many turns were submitted. Reconcile existing work before retrying.');}}
     const attachmentIds=Array.isArray(req.body?.attachment_receipts)?req.body.attachment_receipts.map((x:unknown)=>str(x,80)):[];
+    if(req.body?.reply_style!==undefined&&req.body.reply_style!==null&&req.body.reply_style!=='spoken_short')throw new MobileError('invalid_reply_style','reply_style can only be "spoken_short".');
+    const replyStyle=req.body?.reply_style==='spoken_short'?'spoken_short' as const:null;
     const accepted=await submitDurableTurn(db,{
       ownerUserId:req.user!.id,sessionId:req.user!.session_id,threadId,
       clientMessageId,
@@ -370,12 +373,23 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       replyToMessageId:str(req.body?.reply_to_message_id,80)||null,
       attachmentIds,
       attemptOf:str(req.body?.attempt_of,80)||null,
+      replyStyle,
     });
+    // Siri and Shortcuts have to speak within seconds. Hold the answer open for
+    // a moment: either the short reply is ready, or the caller gets a line to
+    // say now and the reply follows as a notification.
+    const waitSeconds=replyStyle?Math.max(0,Math.min(20,Number.isFinite(Number(req.body?.wait_seconds))?Number(req.body.wait_seconds):8)):0;
+    const waited=waitSeconds>0?await waitForTurnReply(db,{ownerUserId:req.user!.id,turnId:accepted.turn.id,seconds:waitSeconds}):null;
+    const spoken=!replyStyle?undefined:waited?.status==='completed'?{text:waited.text,final:true,message_id:waited.messageId}
+      :waited?.status==='failed'?{text:"I couldn't finish that. Open Josi to try again.",final:true,failed:true}
+      :{text:SPOKEN_HOLDING_LINE,final:false};
+    // Already said out loud: do not also send it as a notification.
+    if(spoken?.final)await db.query(`update push_deliveries set status='suppressed',lease_token=null,last_error_code='spoken_inline' where owner_user_id=$1 and event_key=$2 and status in('queued','retry')`,[req.user!.id,'turn:'+accepted.turn.id]);
     const attachmentReceipts=attachmentIds.length?await db.query<{id:string;filename:string;content_type:string;analysis_status:string;analysis_code:string|null}>(`select id,filename,content_type,analysis_status,analysis_code from chat_attachments where id=any($1::uuid[]) and owner_user_id=$2 and thread_id=$3 order by id`,[attachmentIds,req.user!.id,threadId]):[];
     res.set('Cache-Control','no-store');
     res.set('Location',`/api/assistant/threads/${threadId}/turns`);
     const lifecycleState=mobileLifecycleState(accepted.turn.status);
-    return res.status(202).json({turn:{id:accepted.turn.id,job_id:accepted.turn.id,status:accepted.turn.status,lifecycle_state:lifecycleState,thread_id:threadId,client_message_id:accepted.turn.client_message_id,attempt_of:accepted.turn.attempt_of,attachment_receipts:attachmentReceipts.map(a=>({id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}})),error:accepted.turn.status==='failed'?{code:accepted.turn.error_code,retryable:accepted.turn.error_retryable}:null},duplicate:accepted.duplicate,telemetry:{state:lifecycleState,turn_id:accepted.turn.id,thread_id:threadId}});
+    return res.status(202).json({turn:{id:accepted.turn.id,job_id:accepted.turn.id,status:accepted.turn.status,lifecycle_state:lifecycleState,thread_id:threadId,client_message_id:accepted.turn.client_message_id,attempt_of:accepted.turn.attempt_of,attachment_receipts:attachmentReceipts.map(a=>({id:a.id,filename:a.filename,contentType:a.content_type,analysis:{status:a.analysis_status,code:a.analysis_code}})),error:accepted.turn.status==='failed'?{code:accepted.turn.error_code,retryable:accepted.turn.error_retryable}:null},duplicate:accepted.duplicate,...(spoken?{spoken}:{}),telemetry:{state:lifecycleState,turn_id:accepted.turn.id,thread_id:threadId}});
   }));
 
   r.get('/threads/:id/turns',requireOwnership({db},{type:'thread',need:'owner'}),handle(async(req,res)=>{
@@ -428,7 +442,10 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
     const device=await upsertMobileDevice(db,key,req.user!.id,{
       deviceIdentity:str(req.body?.device_identity,200),platform:req.body?.platform,
       // Android sends its Firebase token and project instead of an Expo token.
-      expoToken:typeof req.body?.fcm_token==='string'&&typeof req.body?.fcm_project==='string'?fcmStoredToken(req.body.fcm_project,req.body.fcm_token)
+      // The iPhone sends its Apple push address, the environment its build talks to, and its bundle id.
+      expoToken:typeof req.body?.apns_token==='string'?apnsStoredToken(req.body?.apns_environment==='sandbox'?'sandbox':'production',
+          typeof req.body?.apns_topic==='string'&&req.body.apns_topic?req.body.apns_topic:DEFAULT_APPLE_BUNDLE_ID,req.body.apns_token.trim())
+        :typeof req.body?.fcm_token==='string'&&typeof req.body?.fcm_project==='string'?fcmStoredToken(req.body.fcm_project,req.body.fcm_token)
         :typeof req.body?.expo_token==='string'?req.body.expo_token:'',appState:req.body?.app_state,
       privacyLocked:req.body?.privacy_locked===true,categories:req.body?.categories,
       quietStart:str(req.body?.quiet_start,8)||null,quietEnd:str(req.body?.quiet_end,8)||null,
@@ -789,6 +806,10 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       return res.json({ reminder: cancelled });
     }),
   );
+
+  // Phone reminder sync (create-or-update by external id, mark done). The same
+  // router answers at /api/reminders; see reminderRoutes.ts.
+  r.use('/reminders', reminderRoutes({ db }));
 
   // -------------------------------------------------------- approvals
   r.get(

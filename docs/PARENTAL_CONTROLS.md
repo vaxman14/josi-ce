@@ -8,7 +8,9 @@
 
 A paid module. It lets **one named adult** look after **one named child
 account** on this installation: read their conversations with Josi, set the
-hours Josi will answer, set a daily limit, and see how much it is being used.
+hours Josi will answer, set a daily limit, turn topics off, answer the child
+when they ask for more time, and see how much Josi is being used. One adult may
+look after up to twelve accounts; each managed account has exactly one adult.
 
 It is off on every installation until somebody activates a licence, and it
 grants nothing to anybody except through an explicit relationship between two
@@ -32,8 +34,31 @@ is be believed.
   installation activates the licence and gains nothing by it. They cannot see
   who is looking after whom, cannot read a child's conversations, cannot change
   anybody's hours, and there is no route that would let them.
-* **There is no device enforcement planned, promised or stubbed.** No screen in
-  the product implies one is coming.
+* **This server enforces nothing on a device.** It cannot lock a phone or block
+  an app, and no route here does. The one thing that touches a device is the
+  list of blocked apps, and the server's whole part in that is to store the
+  list and hand it to the child's own iPhone. Whether anything is then blocked
+  is up to that phone, Apple's Family Controls, and the permission somebody
+  gave it. See "Who enforces what" below.
+* **A blocked topic is not a content filter.** It is an instruction to the
+  assistant. Nothing reads Josi's reply afterwards to check it was followed,
+  and a determined child may talk their way round it.
+* **There are no spending limits.** Nothing on this server spends money on a
+  child's behalf, so there is nothing a spending limit could honestly stop. It
+  is not built and no screen or route offers it.
+* **There is no second parent and there are no invitations.** One managed
+  account has one adult. A second guardian, shared authority, or inviting
+  another adult to a family is not built.
+
+## Who enforces what
+
+| Rule | Enforced by | How far to trust it |
+| --- | --- | --- |
+| Hours Josi answers | This server, at the start of every turn on every channel | As far as Josi goes. It says nothing about the device. |
+| Daily limit, and extra minutes for today | This server, same place | Same. A minute is one in which a message was sent. |
+| Blocked topics | The assistant, because it is told to | An instruction, not a filter. No reply is checked. |
+| Blocked apps | **The child's iPhone**, with Apple's Family Controls | The server only stores and returns the list. If the phone is not set up, was not given permission, or is not an iPhone, nothing is blocked. The server cannot tell which. |
+| Spending | Nobody | Not built. |
 
 ## The three things that grant anything
 
@@ -56,11 +81,22 @@ Being the super admin does not.
 | Act | Cost |
 | --- | --- |
 | Read your own family's pages | a signed-in session |
-| Change a daily limit or a timetable | the session, plus the password again (`change_settings` step-up) |
+| Change a daily limit, a timetable, the blocked topics or the blocked apps | the session, plus the password again (`change_settings` step-up) |
+| Answer a child's request (approve or deny) | a signed-in session of the linked adult |
 | Create a managed account, or end a relationship | the session, plus the password **and** a code from an authenticator, in one request |
 
 The password-again on a limit change is not ceremony. The realistic attacker on
 this feature is the child on the parent's unlocked laptop.
+
+Answering a request does **not** ask for the password again, and that is a
+choice with a cost. The same child on the same unlocked laptop could approve
+their own request. What that buys them is bounded: extra minutes for **today
+only**, at most 240 across the whole day, gone at their own midnight, and only
+in answer to a request they filed from their own account. The standing limit,
+the timetable, the topics and the apps cannot be changed that way, the answer
+is written to the audit log, and it stays in the adult's request list for a
+fortnight. A parent who wants to give more than the day's ceiling is told to
+change the daily limit, which does cost the password.
 
 ## What the parent sees
 
@@ -68,6 +104,9 @@ this feature is the child on the parent's unlocked laptop.
   that arrived over Telegram or another connected channel.
 * Minutes used today, and a summary of the last fortnight by day.
 * Their timetable and their limit, and controls to change both.
+* The topics turned off and the apps listed for the phone to block.
+* What the child has asked for — more time, or access — with the note the child
+  wrote, and the answer given.
 
 Opening a conversation is written to the audit log **and shown to the child**.
 
@@ -81,6 +120,13 @@ A page of their own that says, in plain words:
   sign in as them;
 * every time the adult looked, with what they looked at and when;
 * what today's limit is, how much is left, and when Josi answers next.
+
+The child is also told that topics can be turned off, that a list of apps can be
+handed to their phone, and that their requests and the notes on them are seen by
+the adult. The child's own phone can read the full list of blocked topics and
+blocked apps through the rules route below: the lists are not secret from the
+child's account. What Josi is told is narrower — in conversation it names only
+the topic that was asked about.
 
 Supervision somebody can see is a different thing from monitoring, and the
 product takes the difference seriously enough to build the page.
@@ -102,12 +148,67 @@ and the module is entitled. In that state:
 
 Ending a relationship removes the timetable, the limit **and the record of when
 the account was being used** — that record was collected to enforce a rule that
-no longer exists and to answer a question nobody may now ask. The child's
-conversations are their own and are never touched.
+no longer exists and to answer a question nobody may now ask. The blocked
+topics, the blocked apps, any extra minutes and every request the child filed go
+with it. The child's conversations are their own and are never touched.
 
 If the licence lapses or is revoked, the module goes inert **in both
 directions**: the parent stops being able to see anything, and the child stops
 being held to a timetable that nobody with authority can see or change.
+
+## Blocked topics and blocked apps
+
+Both are set by the adult through the same controls route as the hours and the
+limit, with the same password step-up, and both are recorded in the audit log by
+field name only.
+
+* **Blocked topics** — up to 20, each 1 to 60 characters of plain text. On the
+  child's own turn, and nobody else's, the assistant's instructions say that a
+  parent has turned these topics off, that it does not discuss them, that it
+  says so plainly when asked, and that it does not list the other topics. That
+  is the entire mechanism. It is a model instruction: it is not a filter on
+  what Josi says, it is not checked afterwards, and it covers Josi only.
+* **Blocked apps** — up to 100 app bundle identifiers such as
+  `com.example.game`, checked for shape and nothing else. **The server stores
+  and returns them and does nothing more.** The child's iPhone reads the list
+  and applies it with Apple's Family Controls, if the phone was set up to and
+  given permission. Nothing comes back to the server to say it worked.
+
+## The rules the child's phone reads
+
+`GET /api/parental/rules`, with the child's own session, returns one versioned
+object: who the guardian is, the timezone, the daily limit, minutes used and
+extra minutes today, the timetable, the blocked topics and apps, and whether
+Josi is answering right now. It is built from the same functions the turn uses,
+so the phone and the server cannot disagree. An account that is not a managed
+child gets `{"version": 1, "managed": false}` and nothing else. Like every
+route here it is 404 without the licence.
+
+## Asking for more time, or for access
+
+A managed child can ask (`POST /api/parental/requests`): for more time today,
+optionally saying how many minutes (5 to 240), or for access to something, with
+a note of up to 300 characters. Asking changes nothing.
+
+* One open request per child per kind, and six requests an hour.
+* More time can only be asked for when a daily limit is set. Without one there
+  is nothing for extra minutes to add to, and the route says so.
+* Only the linked adult can answer (`POST /api/parental/requests/:id/decide`).
+  Everybody else — another parent, the super admin, the child — gets 404, the
+  same answer as for a request that does not exist.
+* **Approving more time** adds minutes to the child's current local day and no
+  other: the amount asked for, or a different amount the adult chooses, or 15
+  if neither said. At most 240 extra minutes in one day, across all approvals.
+* **Extra minutes extend the daily limit. They do not open a closed
+  timetable.** Outside the agreed hours Josi still does not answer, however
+  many extra minutes there are.
+* **Approving access unlocks nothing on the server.** There is nothing here to
+  unlock. The answer is recorded and the child's phone is told; what the phone
+  does with it is the phone's business.
+* When a child asks, a notification is queued for the adult's phones; when the
+  adult answers, one is queued for the child's. The text is the child's name
+  and the kind of request — never the note. A phone can switch the `family`
+  notification category off.
 
 ## Accounts
 
@@ -129,12 +230,14 @@ In the ordinary audit log, as metadata and never as content:
 `parental.authority_granted`, `parental.authority_failed`,
 `parental.link_created`, `parental.link_ended`, `parental.controls_updated`,
 `parental.conversations_listed`, `parental.conversation_read`,
-`parental.usage_viewed`.
+`parental.usage_viewed`, `parental.request_filed`, `parental.request_decided`.
 
 Payloads carry ids, counts, factor names and the *names* of fields that
 changed — never their values, never a licence token, never a word of a
 conversation. A schedule is a fact about a household, so even the hours stay out
-of the trail the installation's administrator reads.
+of the trail the installation's administrator reads. The same goes for the
+blocked topics, the blocked apps, the minutes asked for or given, and the note
+on a request: the trail says that something was asked and how it was answered.
 
 ## The licence
 
@@ -159,9 +262,9 @@ machine keeps the row and loses the entitlement.
 
 | Piece | File |
 | --- | --- |
-| Schema | `packages/db/migrations/0039_parental_controls.sql` |
+| Schema | `packages/db/migrations/0039_parental_controls.sql`, `0130_family_requests_and_rules.sql` |
 | Licences | `packages/core/src/entitlements.ts` |
-| Authority, timetable, minutes | `packages/core/src/parental.ts` |
+| Authority, timetable, minutes, topics, requests | `packages/core/src/parental.ts` |
 | Routes (member and admin) | `apps/api/src/http/parentalRoutes.ts` |
 | Enforcement on every channel | `packages/agent/src/assistantAgent.ts` |
 | Family page | `apps/web/src/pages/Family.tsx` |

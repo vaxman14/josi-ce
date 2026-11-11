@@ -26,7 +26,7 @@ import { ComputerControl } from '@josi-ce/core';
 // description of work that never happened.
 import { randomUUID } from 'node:crypto';
 import {
-  appendEvent, checkChildAccess, checkStepUp,
+  appendEvent, blockedTopicsInstruction, checkChildAccess, checkStepUp,
   advanceWorkRepeat, isActionDecision, listTemplates, listWorkGoals, pinnedWorkGoals, recordChildActivity, resolveConversationalAction,
   beginWorkConversation, releaseWorkConversation, requireWorkContinuation, runWorkIntent,
   formatWorkContext, workMemoryVersion, requireCurrentWorkMemory, WorkMemoryChangedError,
@@ -161,6 +161,8 @@ export interface TurnArgs {
    * to have already said so honestly, rather than this loop inventing a
    * description from bytes the model never saw. */
   images?: ChatImage[];
+  /** Set when the reply will be read aloud (Siri, Shortcuts, CarPlay). */
+  replyStyle?: 'spoken_short' | null;
   recall?: RecallLookup;
   /** Fetch used for connected-provider calls (Gmail, Graph…). Injected by the
    * tests; unset in production, where the real fetch is used. Deliberately
@@ -269,6 +271,12 @@ function systemPrompt(args: {
     'Never ask for, repeat, or accept a password in conversation. If a tool requires secure reauthentication, direct the person to the protected reauthentication control in Settings and do not attempt the action again on your own.',
   ].filter(Boolean).join(' ');
 }
+
+/** For a reply that is spoken, not read. */
+export const SPOKEN_SHORT_PROMPT = `THIS REPLY WILL BE READ ALOUD by a voice assistant, to someone who may be driving.
+Answer in one or two short sentences of plain spoken words. No lists, no headings, no links, no markdown, no emoji, and do not spell out addresses or codes unless asked.
+Say the answer first. If there is more than fits, give the most important part and end with "The rest is in Josi."
+Be quick: use a tool only when the answer needs it. If something needs an approval, say that it is waiting in Josi.`;
 
 export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult> {
   if (args.workGoalId) {
@@ -559,6 +567,10 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     + (signInTools.length ? `\n\n${SIGN_IN_PROMPT}` : '')
     + (sendFileTools.length ? `\n\n${SEND_FILE_PROMPT}` : '')
     + (debuggerTools.length ? `\n\n${DEBUGGER_PROMPT}` : '')
+    + (args.replyStyle === 'spoken_short' ? `\n\n${SPOKEN_SHORT_PROMPT}` : '')
+    // Parental Controls: topics a parent turned off for this managed child.
+    // An instruction to the model, not a filter on what it says.
+    + (childAccess.blockedTopics?.length ? `\n\n${blockedTopicsInstruction(childAccess.blockedTopics)}` : '')
     + (capabilities.toolCalling ? `\n\n${SETUP_STATUS_PROMPT}\n\n${CREDENTIAL_CARD_PROMPT}\n\n${CONNECTOR_REQUEST_PROMPT}\n\n${MY_WORLD_PROMPT}\n\n${SETTINGS_CHANGE_PROMPT}`
       // Honest about the gap: without tool calling nothing can act, and the
       // owner needs to hear which model to change, not a generic refusal.
