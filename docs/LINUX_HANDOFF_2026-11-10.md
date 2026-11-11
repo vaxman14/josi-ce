@@ -324,6 +324,32 @@ unpublished draft, `v1.2.8-beta.17` (9 files); the beta.16 draft is deleted. Gat
   Play need a fixed callback (a hosted relay page, or each install registers its own app); Vercel
   and Neon are not open; Render, Docker Hub, npm and App Store Connect are key only.
 
+## beta.18 (2026-11-10, 23:55 PST)
+
+Commits `d26d228` (parental always on) and `04fe89e` (custom MCP, lookup fix). Built on claw
+(build-20.log). Upgrade from beta.17 passed all three e2e scripts on the Ubuntu and Debian VMs.
+Claw's LAN installer serves beta.18. GitHub has one unpublished draft, `v1.2.8-beta.18` (9 files);
+the beta.17 draft is deleted. Gate is still on beta.14.
+
+- Parental controls are always on: `includedModules` in `packages/core/src/entitlements.ts`. The
+  owner may make it paid again; that is removing the module from that list. Licence code unchanged.
+- Custom MCP (owner's choices: each person their own, remote https only, none/token/header/OAuth,
+  read-only tools run and everything else waits on the Approvals page). Migration 0133,
+  `packages/connectors/src/mcp*.ts`, `packages/agent/src/mcpTools.ts`,
+  `apps/api/src/http/mcpRoutes.ts`, `docs/CUSTOM_MCP.md`. Built by a subagent, reviewed here.
+- Found by trying real servers: `pinnedLookup` (customApiRequest.ts). The socket lookup answered
+  Node's `all: true` question with one address, so every real outbound request from Custom APIs,
+  workflows and MCP failed with "Invalid IP address". The suites inject fetch and never saw it.
+- Tried for real from this Mac: connect and list tools on two public MCP servers with no sign-in;
+  sign-in discovery on Supabase, Stripe, Notion, Linear and Netlify MCP (all offer registration).
+- NOT tried: a full browser sign-in to an MCP server, a tool call that needs approval against a real
+  server, the web screens in a browser, a real Custom API call after the lookup fix.
+- Open questions for the owner: a managed child account can add MCP servers when the policy is
+  "everyone"; MCP approvals are on the Approvals page (no card in chat); the iPhone gets an approval
+  push whose id is an MCP pending id.
+- `vmtest.sh` waits: `pgrep -f "[v]mtest.sh"` matches a stale idle bash (pid 2634591) on claw, so
+  wait on the "== ALL DONE" line in the log instead.
+
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
 (text files she writes); one new draft release when this lands; login terminal may run
