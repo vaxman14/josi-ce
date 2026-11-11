@@ -298,6 +298,32 @@ Windows and the Mac inherit it when they merge this branch's packages.
   nothing was tried against real Apple or Google keys; every server needs Roman's own Apple push
   key to notify the Josi iPhone app, so other people's servers cannot notify it yet.
 
+## beta.17 (2026-11-10, 22:37 PST)
+
+Commits `cfe8bc9` and `c6c37cd`. Built on claw (build-19.log). Upgrade from beta.16 passed all three
+e2e scripts on the Ubuntu VM and the Debian VM. Claw's LAN installer serves beta.17. GitHub has one
+unpublished draft, `v1.2.8-beta.17` (9 files); the beta.16 draft is deleted. Gate is still on beta.14.
+
+- Parental controls round 2 (section 8 of the iPhone note): `device` object, setup window,
+  `device-events`, `device-activity`, `family_requests` tool. Migration 0131. The web Family and
+  Parental controls pages are the real ones now (flags on, "Coming Soon" stubs removed).
+- `scripts/linux/build-release.sh` stamps `publisher/licence-verification-key.b64` before `tsc` and
+  puts `buildStamp.ts` back afterwards. Before this a Linux build refused every licence.
+- Several accounts per developer service: `developer_connections.account_key` and `nickname`
+  (migration 0132), Vault slot `token` for the first account and `token.<key>` for the rest.
+  `loadDeveloperCredentials` refuses with the list of accounts when several exist and none is named;
+  the debugger passes `first: true`.
+- Stripe is a service. Google Play: `packageName` optional (comma list), apps listed from the Play
+  Developer Reporting API when it is enabled. Supabase is named by organization.
+- Not decided: how a customer gets the parental controls licence (included, sold, or always on).
+- Not tried against the real services: Stripe, Google Play app list, anything Apple.
+- Custom MCP connections are being built next (owner's choices: each person their own, remote only,
+  token or OAuth, read-only tools run, everything else asks). Migration 0133. Not in beta.17.
+- OAuth for the developer services was researched, not built. Device flow makes GitHub and GitLab
+  easy; Railway and Linear are simple; Supabase, Notion, Netlify, Sentry, Jira, Cloudflare and Google
+  Play need a fixed callback (a hosted relay page, or each install registers its own app); Vercel
+  and Neon are not open; Render, Docker Hub, npm and App Store Connect are key only.
+
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
 (text files she writes); one new draft release when this lands; login terminal may run
