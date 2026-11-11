@@ -425,6 +425,25 @@ package did not start on a Pi 4); beta.22 is the one.
   Raspberry Pi OS (only Debian 13), the Arch arm64 package, the Docker image.
 - The Pi was left with a clean beta.22 install for the owner to set up.
 
+## beta.22 Docker images, amd64 and arm64 (2026-11-11, 15:00 PST)
+
+Built on claw from the two beta.22 packages, one Dockerfile (`--platform linux/amd64` and `linux/arm64`):
+`josi:1.2.8-beta.22-amd64` and `josi:1.2.8-beta.22-arm64`. Packed in `~/josi-linux/lan` as
+`josi-docker-1.2.8-beta.22-<arch>.tar.gz`; the starter `http://10.10.1.3:18099/docker` picks by `uname -m`.
+Build folder `~/josi-linux/dockerbuild22`, scripts `~/josi-linux/dbuild22.sh` and `dsmoke22.sh`.
+
+- amd64: started on claw, all services up, setup link printed. The e2e scripts were not rerun on beta.22.
+- arm64: the image builds, is `aarch64`, and has `/usr/bin/chromium`. It was NOT proven to run. Under
+  emulation on claw systemd starts, but every Josi service fails with `status=226/NAMESPACE` (systemd's
+  sandboxing does not work under qemu) and the journal is empty. That is the emulator, not a finding
+  about ARM. It needs one start on a real ARM machine with Docker (the Pi has none; ask Roman).
+- Bug found and fixed in the Dockerfile: the container is privileged, and its `systemd-binfmt.service`
+  cleared the HOST's binfmt list, which switched off ARM emulation on claw the moment an amd64 Josi
+  container started. The service and the binfmt mounts are now masked in the image. Images built before
+  this (the running `josi-docker` beta.20 container on port 18095) still do it: restarting that container
+  clears emulation on claw again; bring it back with `docker run --privileged --rm tonistiigi/binfmt --install arm64`.
+- The GitHub draft does not carry the Docker images.
+
 ## In beta.19 (was: after beta.18)
 
 - Managed child accounts cannot add or use MCP servers unless the owner turns on

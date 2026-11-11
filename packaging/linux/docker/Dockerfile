@@ -46,7 +46,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends /tmp/josi_*_${T
 
 COPY josi-firstboot.sh /usr/local/sbin/josi-firstboot
 COPY josi-firstboot.service /etc/systemd/system/josi-firstboot.service
-RUN chmod 0755 /usr/local/sbin/josi-firstboot && systemctl enable josi-firstboot.service
+# The container is privileged, so its systemd would reach the host's kernel
+# settings. Its binfmt service clears the host's list of program formats
+# (which switches off ARM emulation and the like on the host), so it is off.
+RUN chmod 0755 /usr/local/sbin/josi-firstboot && systemctl enable josi-firstboot.service \
+    && systemctl mask systemd-binfmt.service proc-sys-fs-binfmt_misc.automount proc-sys-fs-binfmt_misc.mount
 
 # Data survives the container: the database and settings, Josi's browser and
 # her PC identity, the Josi user's files.
