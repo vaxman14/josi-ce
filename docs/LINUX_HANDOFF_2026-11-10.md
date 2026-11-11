@@ -236,6 +236,31 @@ Windows and the Mac inherit it when they merge this branch's packages.
 - Still open from Roman's run: the installer's doubled ghost (LINUX_FIX_LIST.md); the web
   card says "Not now", Josi's text says "Approve or Deny".
 
+## beta.13 (2026-11-10 late): more from Roman's use of gate
+- **An expired approval left nothing to press** (`8fbb68a`). Approvals last 15 minutes
+  (`prepareAction`, ttl 900). Asked for the card again later, `draft_email` answered
+  "already prepared and waiting" for a request that had expired: no card on the stage, no
+  button on Approvals or the task, while Josi said "use the control below". The same draft
+  is now prepared afresh (old state `expired`, old task cancelled, new approval). Test in
+  `packages/agent/test/actionState.test.ts`. Still true: when an approval expires the
+  stage card just disappears and Josi's last message still points at it; and 15 minutes
+  may be short for a person. Roman has not decided either.
+- **Installer screen under sudo-rs** (`efcaba8`): the terminal the person types in stayed
+  in its normal mode (echo, line at a time), so every answer was printed twice and moved
+  the screen a row more than counted: old questions stayed, the header ghost was left
+  behind, the progress ghost was drawn through it. That terminal is now set to pass keys
+  straight on, unechoed, while the questions are asked (`quiet_outer`), and restored after
+  them and at exit. Checked on gate at 99x30 with a do-nothing copy of the installer and
+  a small terminal model: clean at every prompt and at the end, terminal mode restored.
+- **The ghost thinks** (asked for by Roman: a thought bubble, sarcastic, different every
+  time): `Q_ASK`, `Q_UPD`, `Q_0`..`Q_5`, `Q_DONE`, `Q_FAIL` in the installer; `think` picks
+  one at random that fits the width, never the same twice running, a new one per step and
+  every seven seconds. Only with the ghost (UTF-8, 72+ columns, 24+ rows).
+- Built from `efcaba8`; Ubuntu 24.04 VM upgraded beta.12 -> beta.13, three e2e scripts PASS.
+  claw's LAN address serves beta.13.
+- Two idle `sudo bash` installer processes from my earlier typing tests (started
+  23:18 UTC) are still on gate; I was not permitted to stop them. They are harmless.
+
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
 (text files she writes); one new draft release when this lands; login terminal may run
