@@ -159,7 +159,7 @@ await step('7 a persistent terminal', async () => {
 });
 await step('8 windows and a screenshot of Josi\'s Chrome', async () => {
   const list = unwrap(await settled('desktop_list_windows', { pc_id: pcId }));
-  const chrome = (list.windows ?? []).find(w => /chrome/i.test(w.application));
+  const chrome = (list.windows ?? []).find(w => /chrom(e|ium)/i.test(w.application));
   assert(chrome, 'no Chrome window: ' + JSON.stringify(list).slice(0, 300));
   const shot = unwrap(await settled('desktop_screenshot', { window_id: chrome.windowId, application: chrome.application, pc_id: pcId }));
   assert(shot.kind === 'desktop_screenshot' && shot.width > 0, 'screenshot: ' + JSON.stringify(shot).slice(0, 300));
