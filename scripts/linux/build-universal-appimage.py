@@ -16,7 +16,9 @@ from package_common import BASE, CACHE, OUT, RELEASE_BASE_URL, REPO, VERSION, di
 APPDIR = BASE / 'universal-appimage/AppDir'
 TOOLS = Path(os.environ.get('JOSI_LINUX_APPIMAGE_TOOLS', str(CACHE.parent / 'linux-appimage-tools')))
 BASE_URL = RELEASE_BASE_URL + '/'
-PACKAGES = package_names()
+# The graphical installer is built for x86_64 only; arm64 machines (Raspberry
+# Pi and the like) use the one-command installer.
+PACKAGES = package_names(arch='x86_64')
 
 
 def main() -> None:

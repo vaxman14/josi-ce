@@ -1,6 +1,7 @@
 JOSI CE SERVER - NATIVE LINUX ACCEPTANCE
 
-For x86_64 machines running Arch, Debian 12+/Ubuntu 22.04+, or RHEL 9+/Fedora.
+For x86_64 and arm64 machines running Arch, Debian 12+/Ubuntu 22.04+, or
+RHEL 9+/Fedora. On a Raspberry Pi 4 or 5: the 64-bit Raspberry Pi OS.
 The packages are not signed with a distribution key; the one-command installer
 verifies each package by SHA-256.
 

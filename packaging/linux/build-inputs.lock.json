@@ -8,7 +8,8 @@
   "linuxBuildImage": {"distribution": "Debian 12", "image": "debian:12-slim", "digest": "sha256:f3034a6ec3c1205360777c4aae76234998866ad18806ae62b63a3f84ccad782b", "aptSnapshot": "20261001T000000Z", "glibc": "2.36"},
   "python": {
     "version": "3.12.15+20261009",
-    "x86_64": {"url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261009/cpython-3.12.15%2B20261009-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz", "sha256": "ffa8f85f1b56e88b687f08d743d817015524b86a9365fd921243132b80f1a36d"}
+    "x86_64": {"url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261009/cpython-3.12.15%2B20261009-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz", "sha256": "ffa8f85f1b56e88b687f08d743d817015524b86a9365fd921243132b80f1a36d"},
+    "aarch64": {"url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261009/cpython-3.12.15%2B20261009-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz", "sha256": "2e1ba0e7f22e01c534caebf7f09e7820322bc0d055271d3434af671e8400f96f"}
   },
   "caddy": {
     "version": "2.11.7",

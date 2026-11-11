@@ -9,11 +9,17 @@ import os
 from pathlib import Path
 import shutil
 
+import target
+
 
 REPO = Path(__file__).resolve().parents[2]
 BASE = Path(os.environ.get('JOSI_LINUX_BUILD_BASE', '/home/roman/JosiDrive/BuildTemp/josi-ce-native-linux-20261010'))
 CACHE = Path(os.environ.get('JOSI_LINUX_BUILD_CACHE', '/home/roman/JosiDrive/Caches/codex-linux-native-20261010'))
-OUT = BASE / 'artifacts'
+# Every architecture writes its packages to one artifacts folder, so the
+# one-command installer can name all of them; the work folders stay apart.
+OUT = Path(os.environ.get('JOSI_LINUX_ARTIFACTS') or BASE / 'artifacts')
+ARCH = target.architecture()
+BUILD_IMAGE = target.name('image', target.host())
 RUNTIME = BASE / 'stage/runtime'
 VERSION = os.environ.get('JOSI_LINUX_VERSION', '1.0.0')
 SOURCE_DATE_EPOCH = '1735689600'
@@ -25,12 +31,12 @@ RELEASE_BASE_URL = os.environ.get('JOSI_INSTALLER_BASE_URL',
     'https://github.com/vaxman14/josi-ce/releases/download/' + RELEASE_TAG).rstrip('/')
 
 
-def package_names(version: str = VERSION) -> dict:
+def package_names(version: str = VERSION, arch: str = ARCH) -> dict:
     """The file name of each native package for a version, by distribution family."""
     return {
-        'arch': f'josi-ce-server-setup-{version.replace("-", "_")}-1-x86_64.pkg.tar.zst',
-        'debian': f'josi-ce-server-setup_{version}_amd64.deb',
-        'rpm': f'josi-ce-server-setup-{version}.x86_64.rpm',
+        'arch': f'josi-ce-server-setup-{version.replace("-", "_")}-1-{arch}.pkg.tar.zst',
+        'debian': f'josi-ce-server-setup_{version}_{target.name("deb", arch)}.deb',
+        'rpm': f'josi-ce-server-setup-{version}.{arch}.rpm',
     }
 
 

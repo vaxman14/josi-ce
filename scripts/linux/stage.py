@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 
+import target
+
 REPO=Path(__file__).resolve().parents[2]
 BASE=Path(os.environ.get('JOSI_LINUX_BUILD_BASE','/home/roman/JosiDrive/BuildTemp/josi-ce-native-linux-20261010'))
 CACHE=Path(os.environ.get('JOSI_LINUX_BUILD_CACHE','/home/roman/JosiDrive/Caches/codex-linux-native-20261010'))
@@ -24,12 +26,15 @@ def extract(archive,target,strip=False):
     subprocess.run(command,check=True)
 
 def main():
-    architecture={'x86_64':'x86_64','aarch64':'aarch64'}[platform.machine()]
+    architecture=target.architecture()
     if RUNTIME.exists():shutil.rmtree(RUNTIME)
     app=RUNTIME/'app';app.mkdir(parents=True,exist_ok=True)
     for path in [REPO/'package.json',REPO/'package-lock.json',*REPO.glob('packages/*/package.json'),*REPO.glob('apps/*/package.json')]:copy(path,app/path.relative_to(REPO))
     env={**os.environ,'npm_config_cache':str(CACHE/'npm')}
-    if not (app/'node_modules').exists():subprocess.run(['npm','ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund'],cwd=app,env=env,check=True)
+    # For another architecture npm is told which prebuilt native modules to
+    # take; inventory.py then refuses any binary that is not the target's.
+    foreign=['--os=linux','--cpu='+target.name('node'),'--libc=glibc'] if target.emulated() else []
+    if not (app/'node_modules').exists():subprocess.run(['npm','ci','--omit=dev','--ignore-scripts','--no-audit','--no-fund',*foreign],cwd=app,env=env,check=True)
     metadata=json.loads((app/'package.json').read_text());metadata.update(name='josi-ce-native-runtime',version=VERSION,type='module')
     (app/'package.json').write_text(json.dumps(metadata,indent=2)+'\n')
     for path in [*REPO.glob('packages/*/dist'),*REPO.glob('apps/*/dist'),REPO/'packages/db/migrate.mjs',REPO/'packages/db/migrations']:
@@ -40,12 +45,12 @@ def main():
         copy(REPO/'services/voice-box'/name,app/'services/voice-box'/name)
     if sys.argv[1:]==['--code-only']:return
     locks=json.loads((REPO/'packaging/linux/build-inputs.lock.json').read_text())
-    node_name='node-v24.15.0-linux-'+('x64' if architecture=='x86_64' else 'arm64')+'.tar.xz'
+    node_name='node-v'+locks['node']['version']+'-linux-'+target.name('node')+'.tar.xz'
     for name in ('node','caddy'):
         if (RUNTIME/name).exists():shutil.rmtree(RUNTIME/name)
     extract(CACHE/node_name,RUNTIME/'node',True)
     copy(BASE/'prefix/portable/postgresql',RUNTIME/'postgresql');copy(BASE/'prefix/python',RUNTIME/'python')
-    caddy_name='caddy-'+('amd64' if architecture=='x86_64' else 'arm64')+'.tar.gz'
+    caddy_name='caddy-'+target.name('go')+'.tar.gz'
     extract(CACHE/caddy_name,RUNTIME/'caddy')
     for item in json.loads((REPO/'services/voice-box/models.lock.json').read_text())['files']:
         copy(CACHE/'models'/item['path'].replace('/','__'),RUNTIME/'voice-models'/item['path'])

@@ -10,16 +10,20 @@ REPO=Path(__file__).resolve().parents[2]
 BASE=Path(os.environ.get('JOSI_LINUX_BUILD_BASE','/home/roman/JosiDrive/BuildTemp/josi-ce-native-linux-20261010'))
 CACHE=Path(os.environ.get('JOSI_LINUX_BUILD_CACHE','/home/roman/JosiDrive/Caches/codex-linux-native-20261010'))
 PYTHON=BASE/'prefix/python/bin/python3'
+JOBS=os.environ.get('JOSI_LINUX_BUILD_JOBS') or str(min(os.cpu_count() or 4,8))
 SOURCE=BASE/'native-build';SYSROOT=BASE/'openblas-root';CT2=BASE/'prefix/ctranslate2'
 
 def run(arguments,**kwargs):
-    env={**os.environ,'TMPDIR':str(BASE/'tmp'),'PIP_CACHE_DIR':str(CACHE/'pip'),'CMAKE_BUILD_PARALLEL_LEVEL':str(min(os.cpu_count() or 4,8)),**kwargs.pop('env',{})}
+    env={**os.environ,'TMPDIR':str(BASE/'tmp'),'PIP_CACHE_DIR':str(CACHE/'pip'),'CMAKE_BUILD_PARALLEL_LEVEL':JOBS,**kwargs.pop('env',{})}
     subprocess.run([str(value) for value in arguments],env=env,check=True,**kwargs)
 
 def main():
-    if os.uname().machine!='x86_64':raise ValueError('This acceptance build currently has an x86_64 Python/OpenBLAS lock')
+    # Runs with the target's own Python (inside the build image), so the
+    # machine it reports is the architecture being built.
+    machine=os.uname().machine;triplet=Path('/usr/lib')/(machine+'-linux-gnu')
     if not PYTHON.exists():raise ValueError('Run build-base.sh python first')
     portable=os.environ.get('JOSI_PORTABLE_BUILD')=='1'
+    if machine!='x86_64' and not portable:raise ValueError('Outside the Debian build image only x86_64 has an OpenBLAS lock')
     if not portable and not SYSROOT.exists():
         SYSROOT.mkdir(parents=True);run(['bsdtar','-xf',CACHE/'openblas-0.3.34-1-x86_64.pkg.tar.zst','-C',SYSROOT])
     if SOURCE.exists():shutil.rmtree(SOURCE)
@@ -37,7 +41,7 @@ def main():
          '-DWITH_MKL=OFF','-DWITH_DNNL=OFF','-DWITH_CUDA=OFF','-DWITH_OPENBLAS=ON','-DWITH_RUY=ON',
          '-DRUY_BUILD_TESTS=OFF','-DRUY_BUILD_BENCHMARKS=OFF','-DOPENMP_RUNTIME=COMP'])
     run(cmake)
-    run(['cmake','--build',build,'--parallel',str(min(os.cpu_count() or 4,8))]);run(['cmake','--install',build])
+    run(['cmake','--build',build,'--parallel',JOBS]);run(['cmake','--install',build])
     wheels=BASE/'wheels';wheels.mkdir(exist_ok=True)
     run([PYTHON,'-m','pip','wheel','--no-deps','--no-build-isolation','--wheel-dir',wheels,SOURCE/'ctranslate2/python'],
         env={**os.environ,'CC':'gcc','CXX':'g++','LDSHARED':'gcc -shared','CTRANSLATE2_ROOT':str(CT2),'TMPDIR':str(BASE/'tmp'),'PIP_CACHE_DIR':str(CACHE/'pip')})
@@ -46,11 +50,13 @@ def main():
     wheel=next(wheels.glob('ctranslate2-*.whl'));run([PYTHON,'-m','pip','install','--force-reinstall','--no-deps',wheel])
     run([PYTHON,REPO/'services/voice-box/patch_whisper.py'])
     library=BASE/'prefix/python/lib/libopenblas.so.0';library.parent.mkdir(parents=True,exist_ok=True)
-    openblas=Path('/usr/lib/x86_64-linux-gnu/openblas-pthread/libopenblas.so.0') if portable else SYSROOT/'usr/lib/libopenblas.so.0'
+    openblas=triplet/'openblas-pthread/libopenblas.so.0' if portable else SYSROOT/'usr/lib/libopenblas.so.0'
     shutil.copy2(openblas,library)
     if portable:
+        # libquadmath exists on x86 only; arm64 libgfortran does not use it.
         for name in ('libgfortran.so.5','libquadmath.so.0','libgomp.so.1'):
-            shutil.copy2(Path('/usr/lib/x86_64-linux-gnu')/name,library.parent/name)
+            if name=='libquadmath.so.0' and machine!='x86_64':continue
+            shutil.copy2(triplet/name,library.parent/name)
     for shared in (CT2/'lib').glob('libctranslate2.so*'):shutil.copy2(shared,library.parent/shared.name)
     run([PYTHON,'-m','pip','check'])
     run([PYTHON,'-c','import ctranslate2,numpy,onnxruntime; print(ctranslate2.__version__,numpy.__version__,onnxruntime.__version__)'],

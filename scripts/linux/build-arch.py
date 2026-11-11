@@ -1,9 +1,9 @@
-"""Build an unsigned Blade/Arch x86_64 acceptance package without installing it."""
+"""Build an unsigned Arch acceptance package without installing it."""
 import json
 import shutil
 import subprocess
 
-from package_common import BASE, OUT, SOURCE_DATE_EPOCH, VERSION, populate_root, record_checksum
+from package_common import ARCH, BASE, OUT, SOURCE_DATE_EPOCH, VERSION, package_names, populate_root, record_checksum
 
 
 def main() -> None:
@@ -17,12 +17,12 @@ def main() -> None:
         "pkgdesc = Native offline Josi CE Server runtime and CLI installer\n"
         "url = https://github.com/vaxman14/josi-ce\n"
         f"builddate = {SOURCE_DATE_EPOCH}\npackager = SOCAL RECEPTIONIST LLC\n"
-        f"size = {size}\narch = x86_64\nlicense = AGPL-3.0-or-later\n"
+        f"size = {size}\narch = {ARCH}\nlicense = AGPL-3.0-or-later\n"
         "depend = python\ndepend = systemd\ndepend = rsync\ndepend = acl\n"
         "depend = iproute2\ndepend = gcc-libs\n"
     )
     (root / '.PKGINFO').write_text(metadata)
-    package = OUT / f'josi-ce-server-setup-{package_version}-x86_64.pkg.tar.zst'
+    package = OUT / package_names()['arch']
     package.unlink(missing_ok=True)
     subprocess.run([
         'tar', '--sort=name', '--owner=0', '--group=0', '--numeric-owner',
@@ -38,7 +38,7 @@ def main() -> None:
         subprocess.run(['pacman', '-Qp', package], check=True, stdout=subprocess.DEVNULL)
     digest = record_checksum(package)
     print(json.dumps({'package': str(package), 'bytes': package.stat().st_size,
-        'sha256': digest, 'signed': False, 'target': 'Blade/Arch x86_64'}))
+        'sha256': digest, 'signed': False, 'target': 'Arch ' + ARCH}))
 
 
 if __name__ == '__main__':

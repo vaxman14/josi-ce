@@ -8,11 +8,13 @@ import re
 import subprocess
 import sys
 
+import target
+
 def digest(path):
     with path.open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
 
 def main(root):
-    architecture={'x86_64':'x86_64','aarch64':'aarch64'}[platform.machine()]
+    architecture=target.architecture()
     files=[];native=[]
     for path in sorted(root.rglob('*')):
         relative=path.relative_to(root).as_posix()
@@ -27,7 +29,7 @@ def main(root):
         with path.open('rb') as stream:magic=stream.read(4)
         if magic==b'\x7fELF':
             machine=subprocess.check_output(['readelf','-h',path],text=True)
-            expected='Advanced Micro Devices X86-64' if architecture=='x86_64' else 'AArch64'
+            expected=target.name('elf')
             if 'Machine:' not in machine or expected not in machine:raise ValueError('Foreign ELF architecture: '+relative)
             dynamic=subprocess.run(['readelf','-d',path],capture_output=True,text=True,check=True).stdout
             needed=re.findall(r'\(NEEDED\).*?\[(.*?)\]',dynamic)

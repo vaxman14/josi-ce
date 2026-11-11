@@ -7,6 +7,8 @@ import sys
 import urllib.request
 import urllib.parse
 
+import target
+
 REPO=Path(__file__).resolve().parents[2]
 CACHE=Path(os.environ.get('JOSI_LINUX_BUILD_CACHE','/home/roman/JosiDrive/Caches/codex-linux-native-20261010'))
 
@@ -24,15 +26,13 @@ def fetch(url,target,expected,size=None):
     temporary.rename(target)
 
 def main():
-    architecture={'x86_64':'x86_64','aarch64':'aarch64'}[__import__('platform').machine()]
+    architecture=target.architecture()
     base=json.loads((REPO/'packaging/linux/build-inputs.lock.json').read_text())
     for name in ('node','python','caddy'):
-        if architecture not in base[name]:
-            if name=='python':continue
-            raise ValueError('Architecture missing from lock: '+name)
+        if architecture not in base[name]:raise ValueError('Architecture missing from lock: '+name)
         item=base[name][architecture]
         filename=Path(urllib.parse.urlparse(item['url']).path).name
-        if name=='caddy':filename='caddy-'+('amd64' if architecture=='x86_64' else 'arm64')+'.tar.gz'
+        if name=='caddy':filename='caddy-'+target.name('go')+'.tar.gz'
         fetch(item['url'],CACHE/filename,item['sha256'])
     item=base['postgresql'];fetch(item['url'],CACHE/Path(item['url']).name,item['sha256'])
     if architecture in base['openblas']:
