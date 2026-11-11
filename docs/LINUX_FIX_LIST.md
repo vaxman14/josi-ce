@@ -169,4 +169,10 @@ beta.11 to beta.14 on gate as a user. Details for each are in the entries above.
 8. **A typed-answers run in the VM tests.** The e2e runs use `--yes` and missed both the
    lost keystrokes and the screen drift. Linux.
 9. **An Admin screen for the sending account** (pick or change it after setup). Shared.
-The built-in debugger Roman asked for is planned separately: `docs/JOSI_DEBUGGER_PLAN.md`.
+10. **Old versions are never removed.** Every upgrade leaves the previous program under
+    `/var/lib/josi/versions/<version>` (1.9 GB each). After a day of betas the Ubuntu test
+    VM had eleven of them and its disk filled; the beta.15 install then failed half-way
+    with "No space left on device" and only said "apt could not install the Josi package".
+    Keep the running version and one to roll back to, remove the rest after a good start,
+    and have the installer check free space first and say so in plain words. Linux.
+The built-in debugger Roman asked for is planned and its first step built: `docs/JOSI_DEBUGGER_PLAN.md`.
