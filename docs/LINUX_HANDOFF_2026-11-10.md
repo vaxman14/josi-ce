@@ -360,6 +360,19 @@ beta.18 draft is deleted. Gate was on beta.16 when last looked.
   `/var/lib/josi/versions` (fix list: "old versions pile up"). Cleared beta.4 to beta.15 by hand on
   that VM; it then passed. The Debian VM is at 47%. Gate has 1.8T free.
 
+## beta.20 (2026-11-11, 02:20 PST)
+
+Commit `d5ceb8b`: the Connections page is a search box. Connected things show collapsed; the rest
+appear when their name is typed or "Show all services" is pressed. Looked at in Chrome against the
+Ubuntu VM (vite on localhost:8080 proxied to the VM, signed in with the VM's e2e account).
+LAN installer and the one GitHub draft are beta.20. Both VMs pass all three e2e scripts.
+
+- The first VM run looked like a failure: `vmtest.sh` was started twice per VM about 27 seconds
+  apart and the two runs collided ("another Josi install or update is still running", then
+  ECONNREFUSED while the service restarted). Cause not found; leftover wait loops from earlier
+  builds were still alive on claw and were killed. A single clean run passed. Before starting
+  vmtest, check `ps -eo pid,cmd | grep "[v]mtest"` is empty, and wait on "== ALL DONE" in the log.
+
 ## In beta.19 (was: after beta.18)
 
 - Managed child accounts cannot add or use MCP servers unless the owner turns on
