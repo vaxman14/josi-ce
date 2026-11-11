@@ -261,6 +261,27 @@ Windows and the Mac inherit it when they merge this branch's packages.
 - Two idle `sudo bash` installer processes from my earlier typing tests (started
   23:18 UTC) are still on gate; I was not permitted to stop them. They are harmless.
 
+## beta.14 (2026-11-10, 16:50 PST): the expired approval, properly this time
+- beta.13's fix was not enough on gate. Gate's own records (times UTC): approval created
+  23:34, expired 23:49; the action state stayed `prepared` but `presented_turn_id` was
+  null, because ANY later outbound message clears it (`conversations.ts` line 100). So
+  "send it now" found no presented candidate, was not an approval phrase either, and went
+  to the model, which answered "use the Approve control on the card above" with no tool
+  call and no card anywhere.
+- Now (`c640489`, `packages/core/src/actionState.ts`): the newest request in the
+  conversation (within a day), if expired, is prepared again when the person agrees in
+  words that name the act (send, approve) or answer the message that showed it. New task,
+  new approval, new card; nothing is sent on the stale yes; a bare yes after an unrelated
+  message stays ordinary talk. More phrases count as yes ("send it now", "go ahead and
+  send it", "yes, send it", "approve it"), from one list (`isActionDecision`) shared with
+  the durable-turn check in assistantAgent.ts, which had its own stale copy. The system
+  prompt tells the model never to point at a card from memory and to call the draft tool
+  again instead.
+- Built from `c640489`; Ubuntu VM upgraded beta.13 -> beta.14, three e2e scripts PASS;
+  claw serves beta.14; GitHub draft swapped to beta.14.
+- Reading gate's database: user `josi`, db `josi`, 127.0.0.1:15432, password file under
+  `/var/lib/josi/data/secrets/*/database-password` (root). Query status columns only.
+
 ## Owner decisions (2026-11-10)
 Linux server is a send-file target (into Downloads); Josi sends files when asked
 (text files she writes); one new draft release when this lands; login terminal may run
