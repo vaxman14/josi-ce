@@ -171,6 +171,8 @@ Step 2 is the one that would have caught today's goal problem without anyone ask
 ## What to build, in order
 
 1. The case file collector and its redaction, with tests built from today's four cases.
+   Alongside it, reading her own source through the linked repository at the build's
+   commit (decision 1).
 2. The report format and the five causes; the tool offered only to the owner, only with
    the switch on.
 3. The repair list above, each with preview, undo and audit.
@@ -194,10 +196,19 @@ Replay today's cases from gate and check her report names the right cause:
 
 ## Decisions for Roman
 
-1. **How does she see her own source?** Without it the handoff says "the part that
-   handles approvals"; with it, the file and function. Options: ship a small index of her
-   source with each build (names and locations, no code); or let the owner connect the
-   repository, which she can already do for developer services. I'd ship the index.
+1. **How does she see her own source? DECIDED (Roman, 2026-11-10): connect the
+   repository.** The owner links the Josi repository as a developer service; she reads the
+   real source at the commit her build stamp names, read-only. What follows from that:
+   - The handoff can quote the file, function and lines, and say which commit it read.
+   - On a server with no repository linked she still investigates and repairs; the
+     handoff says "the part that handles approvals" and tells the owner linking the
+     repository would sharpen it.
+   - Read-only is enough for step one. Writing (a branch, a pull request) belongs to
+     step 3 and is a separate permission then.
+   - The repository is private, so its contents are treated like any connected account:
+     quoted to the owner and into the handoff, never to other members.
+   - To check before building: that the developer-service connection for GitHub can read
+     a private repository at a given commit, and what it costs in requests.
 2. **Which stronger model, and who pays?** A second model slot the owner fills, used only
    for "look deeper". Or simply switching the main model for a while.
 3. **May a records-only repair run on a spoken yes, or always on a card?** I'd allow the
