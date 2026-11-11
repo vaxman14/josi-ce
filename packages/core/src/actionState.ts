@@ -115,7 +115,7 @@ export function isActionDecision(text:string):boolean{const t=text.trim();return
 /** An approval lasts fifteen minutes. When the person agrees after that, the
  * yes is not spent on the stale request and nothing is sent: the same exact
  * action is prepared again, with a new request to approve. */
-async function prepareAgain(db:Db,old:AssistantActionState){
+export async function prepareActionAgain(db:Db,old:AssistantActionState){
   if(!old.approval_id)return null;
   const [approval]=await db.query<Approval>(`select * from approvals where id=$1`,[old.approval_id]);
   if(!approval)return null;
@@ -240,7 +240,7 @@ export async function resolveConversationalAction(db:Db,args:{ownerUserId:string
     if(stale){
       if(NO.test(text))return candidates.length&&candidates[0].id===stale.id?{handled:true,reply:`That request had already expired. The ${stale.domain==='email'?'email was not sent':'calendar was not changed'}.`,action:stale}:{handled:false};
       const about=(!!lastOutbound&&stale.presented_turn_id===lastOutbound.id)||NAMES_THE_ACT.test(text);
-      const again=about?await prepareAgain(db,stale):null;
+      const again=about?await prepareActionAgain(db,stale):null;
       if(!again)return {handled:false};
       return {handled:true,action:again.action,task:again.task,
         prepared:{approval_id:again.approval.id,summary:again.approval.summary,action:again.approval.action,action_class:again.approval.action_class,expires_at:again.approval.expires_at},

@@ -42,6 +42,7 @@ import { executeMyWorldTool, MY_WORLD_TOOL_NAMES } from './myWorldTools.js';
 import { executePcDesktopTool, PC_DESKTOP_TOOL_NAMES } from './pcDesktopTools.js';
 import { executeSignInTool, SIGN_IN_TOOL_NAMES } from './signInTools.js';
 import { executeSendFileTool, SEND_FILE_TOOL_NAMES } from './sendFileTools.js';
+import { executeDebuggerTool, DEBUGGER_TOOL_NAMES } from './debuggerTools.js';
 
 async function actionSummary(db:Db,userId:string,domain:string,operation:string,slots:Record<string,unknown>):Promise<string>{
   if(domain==='email')return `Send email\nTo: ${String(slots.recipient)}${Array.isArray(slots.cc) && slots.cc.length ? `\nCc: ${slots.cc.join(', ')}` : ''}\nSubject: ${String(slots.subject)}\nBody: ${String(slots.body??slots.body_brief)}`;
@@ -104,6 +105,7 @@ export async function executeAssistantTool(
   if (PC_DESKTOP_TOOL_NAMES.has(name)) return executePcDesktopTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input, ctx.workGoalId);
   if (SIGN_IN_TOOL_NAMES.has(name)) return executeSignInTool(db, userId, name, input, ctx.threadId);
   if (SEND_FILE_TOOL_NAMES.has(name)) return executeSendFileTool(db, userId, name, input);
+  if (DEBUGGER_TOOL_NAMES.has(name)) return executeDebuggerTool(db, userId, ctx.threadId, ctx.connectors?.masterKey() ?? null, name, input, ctx.connectors?.fetchImpl ?? fetch);
   if (MEMORY_TOOL_NAMES.has(name)) return executeMemoryTool(db, userId, ctx.threadId, name, input);
   if (SETUP_STATUS_TOOL_NAMES.has(name)) return executeSetupStatusTool(db, userId, name, input);
   if (CREDENTIAL_CARD_TOOL_NAMES.has(name)) return executeCredentialCardTool(db, userId, name, input, ctx.threadId);

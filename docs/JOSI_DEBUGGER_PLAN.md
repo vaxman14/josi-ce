@@ -3,6 +3,42 @@
 Asked for by Roman on 2026-11-10, after an afternoon of finding problems on gate by hand.
 This is a plan. Nothing here is built.
 
+## Status (2026-11-10, evening): step one is built, in beta.15
+
+Roman said "go build" after connecting GitHub on gate. Built, behind the switch:
+
+- **The case file** (`packages/core/src/debugger.ts`, `collectDebugCase`): messages, turns
+  and what their tools returned, requests and approvals, tasks, goals and their open
+  question, goal events, audit trail, stuck jobs, accounts. Redacted (`debugText`).
+  Findings it names by itself: `request_expired_unanswered`, `pointed_at_missing_card`,
+  `goal_waiting_on_finished_work`, `goal_idle_nothing_scheduled`, `turn_failed`,
+  `request_failed`, `account_unhealthy`, `background_jobs_stuck`.
+- **Repairs** (`proposeDebugRepair`, `runDebugRepair`): `prepare_request_again`,
+  `goal_continue` (the owner's own "add instructions" path, with the fact filled in),
+  `run_reconcile`. Proposed first, carried out only after a newer message from the person.
+- **The tools** (`packages/agent/src/debuggerTools.ts`): `debug_investigate`,
+  `debug_propose_repair`, `debug_run_repair`, `debug_find_source`, `debug_read_source`,
+  `debug_write_handoff`, and what she is told (`DEBUGGER_PROMPT`: the report headings,
+  the five causes, ask before repairing, never touch the running program, offer a
+  stronger model or a handoff).
+- **Her own source**: read-only through the owner's GitHub connection, repository
+  `vaxman14/josi-ce`, branch by platform (`linux/josi-server` on Linux), overridable with
+  `JOSI_SOURCE_REPO` and `JOSI_SOURCE_REF`. Not yet pinned to the exact commit of the
+  build: the build stamp has no commit. To do.
+- **The switch**: `DEBUGGER_BUILT_IN` in `packages/core/src/debugger.ts`. It is `true`
+  for the betas. **Set it to `false` before release.** `JOSI_DEBUGGER=0` or `=1` on the
+  server overrides it. Owner only; not offered in a goal's background runs.
+- Records: migration 0125 (`debug_cases`, `debug_repairs`); audit events `debug.*`.
+- Tests: `packages/core/test/debugger.test.ts` (today's cases from gate replayed),
+  `packages/agent/test/debuggerTools.test.ts`.
+
+Not built yet: a second model slot for "look deeper" (today she can only offer to switch
+the main model, which the owner does with the existing card); the page of past
+investigations; the remaining five decisions below, where the defaults I recommended are
+in force until Roman says otherwise.
+
+Not yet tried with a real model on gate. The first real "what went wrong?" is the test.
+
 ## What Roman asked for
 
 - A debugger built into Josi, hidden before release.
