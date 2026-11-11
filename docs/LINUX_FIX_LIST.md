@@ -127,3 +127,14 @@ with no link to the goal's step); `work-goals.reconcile` in the worker; how a go
 `continuation_ready_at` when its next step is "wait for a reply"; whether anything reads
 mail without being asked. Not investigated beyond gate's status columns. Roman: a real
 problem, do not fix now.
+
+**Josi reports a reply and moves on before the person can answer (Roman, gate, 2026-11-10).**
+Told to check the reply and continue, she said what the reply was and, in the next
+message, showed the calendar card. The stage shows only her newest message, so the news
+about the reply was on screen for a moment and then replaced by the card; Roman had no
+chance to react to the reply itself. Nothing was created without approval (the card
+waits), and the goal did say "create the meeting if he confirms", so this is about pace
+and what stays visible, not about permission. Options to put to Roman: keep the reply's
+gist on the card ("Roman confirmed: ...") so the reason for the card is on screen with it;
+or stop after reporting a reply and ask before preparing the next step. Shared code
+(goal continuation and the web stage), not Linux. Not fixed.
