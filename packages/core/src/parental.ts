@@ -61,8 +61,27 @@ export interface ChildControls {
   /** App bundle identifiers. Stored and returned; the child's phone is what
    * enforces them, this server does not. */
   blockedApps: string[];
+  /** Rules for the whole iPhone. Stored and returned; the child's phone is
+   * what enforces them, this server does not. */
+  device: DeviceRules;
   updatedAt: string | null;
 }
+
+/** Whole-iPhone rules. Minutes are past the child's local midnight; a bedtime
+ * may run past midnight, so its start can be later than its end. */
+export interface DeviceRules {
+  dailyLimitMinutes: number | null;
+  bedtime: { startMinute: number; endMinute: number } | null;
+  webFilter: boolean;
+  maxAppRating: number | null;
+  blockAppInstalls: boolean;
+  /** Set only while a setup window is open. Read-only to everybody: it is
+   * opened by `openDeviceSetup` and by nothing else. */
+  setupOpenUntil: string | null;
+}
+
+export const APP_RATINGS = [4, 9, 12, 17] as const;
+export const DEVICE_SETUP_WINDOW_SECONDS = 10 * 60;
 
 export interface ScheduleWindow {
   weekday: number;
@@ -186,6 +205,8 @@ export async function endLink(
   // longer read it.
   await db.query(`delete from child_extra_minutes where child_user_id = $1`, [args.childUserId]);
   await db.query(`delete from family_requests where child_user_id = $1`, [args.childUserId]);
+  // And what their phone reported, for the same reason.
+  await db.query(`delete from child_device_events where child_user_id = $1`, [args.childUserId]);
   await appendEvent(db, {
     actorUserId: args.actorUserId,
     actor: 'user',
@@ -247,9 +268,14 @@ export async function getControls(db: Db, childUserId: string): Promise<ChildCon
   const rows = await db.query<{
     child_user_id: string; timezone: string; daily_limit_minutes: number | null;
     schedule_enabled: boolean; updated_at: string; blocked_topics: unknown; blocked_apps: unknown;
+    device_daily_limit_minutes: number | null; device_bedtime_start: number | null;
+    device_bedtime_end: number | null; device_web_filter: boolean; device_max_app_rating: number | null;
+    device_block_app_installs: boolean; device_setup_open_until: string | Date | null;
   }>(
     `select child_user_id, timezone, daily_limit_minutes, schedule_enabled, updated_at,
-            blocked_topics, blocked_apps
+            blocked_topics, blocked_apps, device_daily_limit_minutes, device_bedtime_start,
+            device_bedtime_end, device_web_filter, device_max_app_rating, device_block_app_installs,
+            device_setup_open_until
      from child_controls where child_user_id = $1`,
     [childUserId],
   );
@@ -269,8 +295,78 @@ export async function getControls(db: Db, childUserId: string): Promise<ChildCon
     })),
     blockedTopics: storedList(rows[0].blocked_topics),
     blockedApps: storedList(rows[0].blocked_apps),
+    device: {
+      dailyLimitMinutes: rows[0].device_daily_limit_minutes === null ? null : Number(rows[0].device_daily_limit_minutes),
+      bedtime: rows[0].device_bedtime_start === null || rows[0].device_bedtime_end === null
+        ? null
+        : { startMinute: Number(rows[0].device_bedtime_start), endMinute: Number(rows[0].device_bedtime_end) },
+      webFilter: !!rows[0].device_web_filter,
+      maxAppRating: rows[0].device_max_app_rating === null ? null : Number(rows[0].device_max_app_rating),
+      blockAppInstalls: !!rows[0].device_block_app_installs,
+      setupOpenUntil: openUntil(rows[0].device_setup_open_until),
+    },
     updatedAt: rows[0].updated_at,
   };
+}
+
+/** A setup window as an ISO time while it is still open, otherwise null: a
+ * window that has closed is not a fact anybody needs. */
+function openUntil(value: string | Date | null): string | null {
+  if (!value) return null;
+  const until = new Date(value);
+  return Number.isFinite(until.getTime()) && until.getTime() > Date.now() ? until.toISOString() : null;
+}
+
+/** The whole-iPhone rules a parent sent, checked. Only the keys that are
+ * present are returned, so a parent changing the bedtime does not have to send
+ * the rest. Takes the phone's spelling (snake_case) and this module's own.
+ * `setup_open_until` is read-only and ignored here. */
+export function normalizeDeviceRules(input: unknown): Partial<Omit<DeviceRules, 'setupOpenUntil'>> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new ScheduleError('the iPhone rules have to be an object');
+  }
+  const body = input as Record<string, unknown>;
+  const pick = (snake: string, camel: string): unknown => (body[snake] !== undefined ? body[snake] : body[camel]);
+  const flag = (value: unknown, what: string): boolean => {
+    if (typeof value !== 'boolean') throw new ScheduleError(`${what} is either on or off`);
+    return value;
+  };
+  const out: Partial<Omit<DeviceRules, 'setupOpenUntil'>> = {};
+
+  const limit = pick('daily_limit_minutes', 'dailyLimitMinutes');
+  if (limit !== undefined) {
+    if (limit !== null && (!Number.isInteger(limit) || (limit as number) < 5 || (limit as number) > 1440)) {
+      throw new ScheduleError('an iPhone daily limit has to be between 5 minutes and 24 hours, or nothing at all');
+    }
+    out.dailyLimitMinutes = limit as number | null;
+  }
+  const bedtime = body.bedtime;
+  if (bedtime !== undefined) {
+    if (bedtime === null) out.bedtime = null;
+    else {
+      const b = (typeof bedtime === 'object' ? bedtime : {}) as Record<string, unknown>;
+      const start = b.start_minute !== undefined ? b.start_minute : b.startMinute;
+      const end = b.end_minute !== undefined ? b.end_minute : b.endMinute;
+      const ok = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 1439;
+      if (!ok(start) || !ok(end)) {
+        throw new ScheduleError('a bedtime needs a start and an end, each in minutes past midnight');
+      }
+      if (start === end) throw new ScheduleError('a bedtime has to start and end at different times');
+      out.bedtime = { startMinute: start, endMinute: end };
+    }
+  }
+  const filter = pick('web_filter', 'webFilter');
+  if (filter !== undefined) out.webFilter = flag(filter, 'the website filter');
+  const rating = pick('max_app_rating', 'maxAppRating');
+  if (rating !== undefined) {
+    if (rating !== null && !(APP_RATINGS as readonly unknown[]).includes(rating)) {
+      throw new ScheduleError('an app age rating is 4, 9, 12 or 17, or nothing at all');
+    }
+    out.maxAppRating = rating as number | null;
+  }
+  const installs = pick('block_app_installs', 'blockAppInstalls');
+  if (installs !== undefined) out.blockAppInstalls = flag(installs, 'blocking new apps');
+  return out;
 }
 
 /** A jsonb array of strings, however the driver handed it back. */
@@ -387,6 +483,8 @@ export async function setControls(
     /** Already through `normalizeBlockedTopics` / `normalizeBlockedApps`. */
     blockedTopics?: string[];
     blockedApps?: string[];
+    /** Already through `normalizeDeviceRules`. Only the keys present change. */
+    device?: Partial<Omit<DeviceRules, 'setupOpenUntil'>>;
   },
 ): Promise<ChildControls | null> {
   const limit = args.dailyLimitMinutes;
@@ -416,6 +514,23 @@ export async function setControls(
       json(args.blockedApps ?? []),
     ],
   );
+  const device = args.device && Object.keys(args.device).length ? args.device : null;
+  if (device) {
+    const current = (await getControls(db, args.childUserId))?.device;
+    if (current) {
+      const next = { ...current, ...device };
+      await db.query(
+        `update child_controls set
+           device_daily_limit_minutes = $2, device_bedtime_start = $3, device_bedtime_end = $4,
+           device_web_filter = $5, device_max_app_rating = $6, device_block_app_installs = $7
+         where child_user_id = $1`,
+        [
+          args.childUserId, next.dailyLimitMinutes, next.bedtime?.startMinute ?? null,
+          next.bedtime?.endMinute ?? null, next.webFilter, next.maxAppRating, next.blockAppInstalls,
+        ],
+      );
+    }
+  }
   if (args.windows) {
     await db.query(`delete from child_schedule_windows where child_user_id = $1`, [args.childUserId]);
     for (const w of args.windows) {
@@ -442,6 +557,7 @@ export async function setControls(
         args.windows ? 'schedule' : null,
         args.blockedTopics !== undefined ? 'blockedTopics' : null,
         args.blockedApps !== undefined ? 'blockedApps' : null,
+        device ? 'device' : null,
       ].filter(Boolean),
     },
   });
@@ -766,7 +882,9 @@ async function displayName(db: Db, userId: string, fallback: string): Promise<st
  * never the child's note, which is for the two of them and not a lock screen. */
 async function queueFamilyPush(
   db: Db,
-  args: { toUserId: string; requestId: string; state: string; body: string },
+  /** `requestId` is what the phone opens (`data.id`): a request, or for phone
+   * events the child's own id. `eventKey` overrides the once-only key. */
+  args: { toUserId: string; requestId: string; state: string; body: string; eventKey?: string },
 ): Promise<void> {
   await db.query(
     `insert into push_deliveries (owner_user_id, device_id, event_key, category, route_type, route_id, title, body)
@@ -775,7 +893,7 @@ async function queueFamilyPush(
      where d.owner_user_id = $1 and d.revoked_at is null
        and coalesce((d.categories->>'family')::boolean, true)
      on conflict (device_id, event_key) do nothing`,
-    [args.toUserId, `family:${args.requestId}:${args.state}`, args.requestId, args.body],
+    [args.toUserId, args.eventKey ?? `family:${args.requestId}:${args.state}`, args.requestId, args.body],
   );
 }
 
@@ -802,7 +920,7 @@ export async function fileFamilyRequest(
       }
     }
     const controls = await getControls(db, args.childUserId);
-    if (!controls || controls.dailyLimitMinutes === null) {
+    if (!controls || (controls.dailyLimitMinutes === null && controls.device.dailyLimitMinutes === null)) {
       // Honest rather than obliging: with no daily limit there is nothing for
       // extra minutes to extend, and a parent pressing Approve would be told
       // they had done something when they had not.
@@ -969,6 +1087,150 @@ export async function decideFamilyRequest(
   };
 }
 
+// ------------------------------------------------------------ the iPhone
+//
+// The parent opens a short window in which the child's phone lets the counted
+// apps be changed; the phone reports totals and moments. Nothing here is
+// enforced by this server.
+
+/** Open the setup window on one child's phone, as the linked parent. Returns
+ * null when this person is not that child's parent. */
+export async function openDeviceSetup(
+  db: Db,
+  args: { parentUserId: string; childUserId: string },
+): Promise<{ openUntil: string } | null> {
+  if (!(await parentalAuthority(db, args))) return null;
+  const [row] = await db.query<{ until: string | Date }>(
+    `update child_controls set device_setup_open_until = now() + make_interval(secs => $2)
+     where child_user_id = $1 returning device_setup_open_until as until`,
+    [args.childUserId, DEVICE_SETUP_WINDOW_SECONDS],
+  );
+  if (!row) return null;
+  const openUntil = new Date(row.until).toISOString();
+  await appendEvent(db, {
+    actorUserId: args.parentUserId, actor: 'user', kind: 'parental.device_setup_opened',
+    subjectType: 'user', subjectId: args.childUserId, payload: { child: args.childUserId },
+  });
+  await queueFamilyPush(db, {
+    toUserId: args.childUserId, requestId: args.childUserId, state: 'setup',
+    eventKey: `family:setup:${args.childUserId}:${openUntil}`,
+    body: 'Your parent opened iPhone setup for ten minutes.',
+  });
+  return { openUntil };
+}
+
+export const DEVICE_EVENT_KINDS = [
+  'phone_minutes', 'limit_reached', 'bedtime_started', 'bedtime_ended', 'asked_more_time',
+] as const;
+export type DeviceEventKind = (typeof DEVICE_EVENT_KINDS)[number];
+export interface DeviceEvent { kind: DeviceEventKind; minutes: number | null; at: string }
+
+export const MAX_DEVICE_EVENTS_PER_POST = 100;
+/** How often one phone may report. A phone reports every half hour of use and
+ * at a few moments a day; this is far above that and below a loop. */
+export const DEVICE_EVENT_LIMIT: Limit = { bucket: 'device_events', max: 120, windowSeconds: 3600 };
+
+/** Record what a managed child's phone says happened. A repeat of the same
+ * (kind, minutes, at) is skipped. The parent is told once when a limit is
+ * reached. Throws 404 for anybody who is not a managed child. */
+export async function recordDeviceEvents(
+  db: Db,
+  args: { childUserId: string; events: unknown; now?: Date },
+): Promise<{ accepted: number; duplicates: number }> {
+  if (!(await parentalModuleLive(db))) throw new FamilyRequestError(404, 'not found');
+  const link = await controllerOf(db, args.childUserId);
+  if (!link) throw new FamilyRequestError(404, 'not found');
+  if (!Array.isArray(args.events)) throw new FamilyRequestError(400, 'Send a list of events.');
+  if (args.events.length > MAX_DEVICE_EVENTS_PER_POST) {
+    throw new FamilyRequestError(400, `Send at most ${MAX_DEVICE_EVENTS_PER_POST} events at a time.`);
+  }
+  const now = (args.now ?? new Date()).getTime();
+  const parsed: Array<{ kind: DeviceEventKind; minutes: number | null; at: string }> = [];
+  for (const raw of args.events) {
+    const item = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    if (!(DEVICE_EVENT_KINDS as readonly unknown[]).includes(item.kind)) {
+      throw new FamilyRequestError(400, 'An event has a kind this server does not know.');
+    }
+    let minutes: number | null = null;
+    if (item.minutes !== undefined && item.minutes !== null) {
+      if (!Number.isInteger(item.minutes) || (item.minutes as number) < 0 || (item.minutes as number) > 1440) {
+        throw new FamilyRequestError(400, 'Minutes are a whole number between 0 and 1440.');
+      }
+      minutes = item.minutes as number;
+    }
+    if (item.kind === 'phone_minutes' && minutes === null) {
+      throw new FamilyRequestError(400, 'A phone_minutes event needs the minutes.');
+    }
+    const at = typeof item.at === 'string' ? new Date(item.at).getTime() : NaN;
+    if (!Number.isFinite(at)) throw new FamilyRequestError(400, 'An event needs the time it happened.');
+    // Old or from the future: not an error the phone can fix by retrying, so
+    // it is dropped rather than refused.
+    if (at > now + 10 * 60_000 || at < now - 7 * 86_400_000) continue;
+    parsed.push({ kind: item.kind as DeviceEventKind, minutes, at: new Date(at).toISOString() });
+  }
+  if (parsed.length) {
+    const verdict = await consume(db, { limit: DEVICE_EVENT_LIMIT, subject: args.childUserId });
+    if (!verdict.ok) throw new FamilyRequestError(429, 'This phone is reporting too often. Try again later.');
+  }
+  let accepted = 0;
+  let limitReached: string | null = null;
+  for (const event of parsed) {
+    const rows = await db.query<{ id: string }>(
+      `insert into child_device_events (child_user_id, kind, minutes, at) values ($1, $2, $3, $4)
+       on conflict do nothing returning id`,
+      [args.childUserId, event.kind, event.minutes, event.at],
+    );
+    if (!rows.length) continue;
+    accepted += 1;
+    if (event.kind === 'limit_reached') limitReached = event.at;
+  }
+  if (limitReached) {
+    const controls = await getControls(db, args.childUserId);
+    const day = localWeekPosition(new Date(limitReached), controls?.timezone ?? 'UTC').dayKey;
+    const extra = await extraMinutesToday(db, { childUserId: args.childUserId, timezone: controls?.timezone ?? 'UTC' });
+    const name = await displayName(db, args.childUserId, 'Your child');
+    // Once per day per amount of extra time: reaching the limit again after
+    // being given more is news, a retry is not.
+    await queueFamilyPush(db, {
+      toUserId: link.parent_user_id, requestId: args.childUserId, state: 'limit',
+      eventKey: `family:limit:${args.childUserId}:${day}:${extra}`,
+      body: `${name} has reached today's iPhone limit.`,
+    });
+  }
+  return { accepted, duplicates: parsed.length - accepted };
+}
+
+/** What the child's phone reported, for the parent: today's total and the
+ * events of today and yesterday (the child's own days), newest first. */
+export async function deviceActivity(
+  db: Db,
+  args: { childUserId: string; now?: Date },
+): Promise<{ timezone: string; today: { phone_minutes: number }; events: DeviceEvent[] }> {
+  const controls = await getControls(db, args.childUserId);
+  const tz = safeTimezone(controls?.timezone ?? 'UTC');
+  const now = (args.now ?? new Date()).toISOString();
+  const rows = await db.query<{ kind: DeviceEventKind; minutes: number | null; at: string | Date; today: boolean }>(
+    `select kind, minutes, at,
+            (at at time zone $2::text)::date = ($3::timestamptz at time zone $2::text)::date as today
+     from child_device_events
+     where child_user_id = $1
+       and (at at time zone $2::text)::date >= ($3::timestamptz at time zone $2::text)::date - 1
+     order by at desc limit 300`,
+    [args.childUserId, tz, now],
+  );
+  let total = 0;
+  for (const r of rows) {
+    if (r.today && r.kind === 'phone_minutes' && r.minutes !== null) total = Math.max(total, Number(r.minutes));
+  }
+  return {
+    timezone: tz,
+    today: { phone_minutes: total },
+    events: rows.map((r) => ({
+      kind: r.kind, minutes: r.minutes === null ? null : Number(r.minutes), at: new Date(r.at).toISOString(),
+    })),
+  };
+}
+
 // ------------------------------------------------- proving it is really them
 
 /** Issue a grant. The CALLER has already checked a password and a TOTP code —
@@ -1031,10 +1293,14 @@ export const CHILD_DISCLOSURE = [
   'They can turn off topics, so that Josi will not discuss them with you.',
   'They can choose apps for your phone to block, if your phone is set up to follow that list.',
   'They see it when you ask for more time or for access, including the note you write.',
+  'If your iPhone is set up for it, they can set a daily limit and a bedtime for the whole phone, '
+    + 'filter websites, limit apps by age rating and stop new apps being installed.',
+  'If your iPhone is set up for it, they see how long you used it each day, and when a limit or bedtime started.',
 ] as const;
 
 export const CHILD_DISCLOSURE_LIMITS = [
   'They cannot see your password, and they cannot sign in as you.',
-  'They cannot read anything outside Josi — not your phone, your browser, your other apps or your other accounts.',
+  'They cannot read anything outside Josi — not your messages, your browser, your other apps or your other accounts.',
+  'They cannot see through Josi which apps or websites you used. Your iPhone reports total time only.',
   'You can see, on this page, every time they opened one of your conversations.',
 ] as const;

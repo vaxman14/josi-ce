@@ -19,6 +19,7 @@ export * from './improvementEngine.js';
 export * from './pcPermissionSettings.js';
 export * from './settingsChangeTools.js';
 export * from './setupStatusTools.js';
+export * from './familyTools.js';
 export * from './credentialCardTools.js';
 export * from './connectorRequestTools.js';
 export * from './myWorldTools.js';

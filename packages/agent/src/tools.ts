@@ -23,6 +23,7 @@ import { PC_DESKTOP_TOOLS } from './pcDesktopTools.js';
 import { SIGN_IN_TOOLS } from './signInTools.js';
 import { SEND_FILE_TOOLS } from './sendFileTools.js';
 import { DEBUGGER_TOOLS } from './debuggerTools.js';
+import { FAMILY_TOOLS } from './familyTools.js';
 import { COMPUTER_TOOLS } from './computerControlTools.js';
 
 /** Everything the assistant can do that changes something.
@@ -251,6 +252,7 @@ export const ALL_TOOLS: ToolSpec[] = [
   ...SIGN_IN_TOOLS,
   ...SEND_FILE_TOOLS,
   ...DEBUGGER_TOOLS,
+  ...FAMILY_TOOLS,
   ...COMPUTER_TOOLS,
 ];
 

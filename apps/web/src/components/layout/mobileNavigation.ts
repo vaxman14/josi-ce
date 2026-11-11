@@ -41,7 +41,7 @@ export const ALL_WORKSPACE_MENU: MenuItem[] = [
   { to: '/app/channels', label: 'Channels', icon: 'hash', section: 'channels' },
   { to: '/app/settings', label: 'Settings', icon: 'gear' },
   { to: '/app/apps', label: 'Apps', icon: 'grid', section: 'apps' },
-  { to: '/app/family', label: 'Family', icon: 'family', soon: true, section: 'family' },
+  { to: '/app/family', label: 'Family', icon: 'family', section: 'family' },
   // Extra:
   { to: '/app/devices', label: 'Devices', icon: 'phone' },
 ];
@@ -66,7 +66,7 @@ export const ALL_ADMIN_MENU: MenuItem[] = [
   { to: '/admin/integrations', label: 'Integrations', icon: 'grid', section: 'integrations' },
   { to: '/admin/custom-apis', label: 'Custom APIs', icon: 'code', section: 'custom-apis' },
   { to: '/admin/network', label: 'Network & address', icon: 'globe' },
-  { to: '/admin/parental-controls', label: 'Parental controls', icon: 'kid', soon: true, section: 'parental' },
+  { to: '/admin/parental-controls', label: 'Parental controls', icon: 'kid', section: 'parental' },
   { to: '/admin/workspace', label: 'Workspace', icon: 'desktop', section: 'workspace' },
   // Extras:
   { to: '/admin/pc-control', label: 'PC control permissions', icon: 'desktop', section: 'pc-control' },

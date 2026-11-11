@@ -48,7 +48,8 @@ import {
   FamilyRequestError, MAX_EXTRA_MINUTES_PER_DAY,
   ScheduleError, activateEntitlement, appendEvent, checkChildAccess, checkStepUp, childrenOf,
   consumeAuthorityGrant, controllerOf, createLink, decideFamilyRequest, endLink, entitlementStatus,
-  extraMinutesToday, fileFamilyRequest, getControls,
+  extraMinutesToday, fileFamilyRequest, getControls, deviceActivity, normalizeDeviceRules, openDeviceSetup,
+  recordDeviceEvents, type DeviceRules,
   issueAuthorityGrant, listFamilyRequestsForParent, listMessages, listOwnFamilyRequests, loadMasterKey,
   minutesUsedToday, normalizeBlockedApps, normalizeBlockedTopics, normalizeWindows,
   VaultError, VaultLockedError, parentalAuthority, publisherKey, revokeEntitlement, setControls, usageSummary,
@@ -105,9 +106,14 @@ const handle = (fn: (req: Request, res: Response) => Promise<unknown>) =>
 export const PARENTAL_HONESTY = {
   scope: 'These controls cover time spent talking to Josi here — the web app and any '
     + 'messaging channel connected to this account. They are enforced on this server.',
-  notDevice: 'They are not device controls. Josi cannot lock a phone, close another app, '
-    + 'filter the web, or see anything that happens outside Josi. Nothing here should be '
-    + 'relied on as the only limit on a child’s device.',
+  notDevice: 'On this server they are not device controls. The server cannot lock a phone, close '
+    + 'another app, filter the web, or see anything that happens outside Josi. Nothing here '
+    + 'should be relied on as the only limit on a child’s device.',
+  phone: 'The iPhone rules (a daily limit for the phone, bedtime, the website filter, the app age '
+    + 'rating and blocking new apps) are only stored here. Your child’s iPhone applies them with '
+    + 'Apple’s Screen Time, and only if the Josi app on that phone has been set up to and allowed '
+    + 'to. What the phone reports back is total time and moments such as a limit being reached, '
+    + 'never which apps or websites were used.',
   minutes: 'A minute is counted when your child sends something to Josi. Time spent reading '
     + 'a reply is not counted, because this server cannot see a screen being looked at.',
   admin: 'The person who administers this installation cannot see any of this. They can see '
@@ -386,7 +392,11 @@ export function parentalRoutes(ctx: ParentalRoutesCtx): Router {
   r.get('/children/:childUserId/controls', handle(async (req, res) => {
     const childUserId = await authorizedChild(req);
     const controls = await getControls(db, childUserId);
-    return res.json({ controls: controls ? publicControls(controls) : null, honesty: PARENTAL_HONESTY });
+    return res.json({
+      controls: controls ? publicControls(controls) : null,
+      device: controls ? publicDevice(controls.device) : null,
+      honesty: PARENTAL_HONESTY,
+    });
   }));
 
   r.put('/children/:childUserId/controls', handle(async (req, res) => {
@@ -408,8 +418,12 @@ export function parentalRoutes(ctx: ParentalRoutesCtx): Router {
       windows: body.windows === undefined ? undefined : normalizeWindows(body.windows),
       blockedTopics: topics === undefined ? undefined : normalizeBlockedTopics(topics),
       blockedApps: apps === undefined ? undefined : normalizeBlockedApps(apps),
+      device: body.device === undefined ? undefined : normalizeDeviceRules(body.device),
     });
-    return res.json({ controls: controls ? publicControls(controls) : null });
+    return res.json({
+      controls: controls ? publicControls(controls) : null,
+      device: controls ? publicDevice(controls.device) : null,
+    });
   }));
 
   // -------------------------------------------------- the child's own rules
@@ -446,6 +460,7 @@ export function parentalRoutes(ctx: ParentalRoutesCtx): Router {
       })),
       blocked_topics: controls.blockedTopics,
       blocked_apps: controls.blockedApps,
+      device: publicDevice(controls.device),
       access: { allowed: access.allowed, reason: access.reason, opens_again: access.opensAgain ?? null },
       updated_at: controls.updatedAt,
     });
@@ -507,6 +522,36 @@ export function parentalRoutes(ctx: ParentalRoutesCtx): Router {
       extraMinutesToday: decided.extraMinutesToday,
       maxExtraMinutesPerDay: MAX_EXTRA_MINUTES_PER_DAY,
     });
+  }));
+
+  // --------------------------------------------------------------- the iPhone
+  //
+  // A session and the relationship, like answering a request, and for the same
+  // reason: this changes no standing rule. It opens ten minutes in which the
+  // child's phone lets the counted apps be changed, it is written to the trail,
+  // and the child sees it on their own Family page.
+  r.post('/children/:childUserId/device-setup', handle(async (req, res) => {
+    const childUserId = await authorizedChild(req);
+    const opened = await openDeviceSetup(db, { parentUserId: req.user!.id, childUserId });
+    if (!opened) throw new RouteError(404, 'not found');
+    return res.json({ open_until: opened.openUntil });
+  }));
+
+  // The child's own phone reporting. 404 for anybody who is not a managed child.
+  r.post('/device-events', handle(async (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const result = await recordDeviceEvents(db, { childUserId: req.user!.id, events: body.events });
+    return res.json({ ok: true, accepted: result.accepted, duplicates: result.duplicates });
+  }));
+
+  r.get('/children/:childUserId/device-activity', handle(async (req, res) => {
+    const childUserId = await authorizedChild(req);
+    const activity = await deviceActivity(db, { childUserId });
+    await appendEvent(db, {
+      actorUserId: req.user!.id, actor: 'user', kind: 'parental.device_activity_viewed',
+      subjectType: 'user', subjectId: childUserId, payload: { child: childUserId },
+    });
+    return res.json({ ...activity, honesty: PARENTAL_HONESTY });
   }));
 
   // ------------------------------------------------------------ conversations
@@ -596,6 +641,21 @@ function publicControls(controls: {
     blockedTopics: controls.blockedTopics,
     blockedApps: controls.blockedApps,
     updatedAt: controls.updatedAt,
+  };
+}
+
+/** The whole-iPhone rules, in the spelling the phone uses, the same on every
+ * route that carries them. */
+function publicDevice(device: DeviceRules) {
+  return {
+    daily_limit_minutes: device.dailyLimitMinutes,
+    bedtime: device.bedtime
+      ? { start_minute: device.bedtime.startMinute, end_minute: device.bedtime.endMinute }
+      : null,
+    web_filter: device.webFilter,
+    max_app_rating: device.maxAppRating,
+    block_app_installs: device.blockAppInstalls,
+    setup_open_until: device.setupOpenUntil,
   };
 }
 

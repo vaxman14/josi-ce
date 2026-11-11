@@ -21,8 +21,8 @@ export const Flags = {
   Integrations: true,
   Storage: false,
   WorkspaceAdmin: false,
-  Family: false,
-  ParentalControls: false,
+  Family: true,
+  ParentalControls: true,
   /** Sections the beta menu leaves out and no other flag covers. */
   ExtraSections: false,
 } as const;

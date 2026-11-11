@@ -23,18 +23,18 @@ describe('the one menu', () => {
 
   it('shows what the Windows lean beta shows (Flags.cs), plus Conversations, Devices and Master Vault', () => {
     expect(labels(WORKSPACE_MENU)).toEqual([
-      'My World', 'Tasks', 'Approvals', 'Conversations', 'Calendar', 'Contacts', 'Connections', 'Vault', 'Settings', 'Devices',
+      'My World', 'Tasks', 'Approvals', 'Conversations', 'Calendar', 'Contacts', 'Connections', 'Vault', 'Settings', 'Family', 'Devices',
     ]);
     expect(labels(ADMIN_MENU)).toEqual([
       'Overview', 'System checkup', 'People', 'Model', 'Connectors', 'Backups', 'Master Vault', 'Integrations', 'Custom APIs',
-      'Network & address', 'PC control permissions', 'Automation & Cardinal Rules',
+      'Network & address', 'Parental controls', 'PC control permissions', 'Automation & Cardinal Rules',
     ]);
   });
 
   it('mirrors the Flags.cs values', () => {
     expect(Flags).toEqual({
       Relay: false, Talk: false, Workflows: false, LocalWorkspace: true, Channels: false, Apps: false, VoiceBox: false, Policy: false,
-      Integrations: true, Storage: false, WorkspaceAdmin: false, Family: false, ParentalControls: false, ExtraSections: false,
+      Integrations: true, Storage: false, WorkspaceAdmin: false, Family: true, ParentalControls: true, ExtraSections: false,
     });
     expect(shows('pc-control')).toBe(true);
     expect(shows('channels')).toBe(false);
@@ -48,7 +48,7 @@ describe('the one menu', () => {
   });
 
   it('marks what is coming soon and which tiles carry a count', () => {
-    expect([...ALL_WORKSPACE_MENU, ...ALL_ADMIN_MENU].filter(item => item.soon).map(item => item.label)).toEqual(['Family', 'Parental controls']);
+    expect([...ALL_WORKSPACE_MENU, ...ALL_ADMIN_MENU].filter(item => item.soon).map(item => item.label)).toEqual([]);
     expect(WORKSPACE_MENU.filter(item => item.badge).map(item => item.label)).toEqual(['Tasks', 'Approvals']);
   });
 

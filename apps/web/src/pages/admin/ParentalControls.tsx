@@ -58,20 +58,6 @@ const STATE_LABEL: Record<LicenceState, string> = {
 };
 
 export function AdminParentalControls() {
-  return (
-    <div className="page" aria-disabled="true">
-      <h1 className="page-title">Parental controls <Badge tone="muted">Coming Soon</Badge></h1>
-      <Card className="opacity-75">
-        <CardTitle>Disabled while we redesign it</CardTitle>
-        <p className="text-sm text-muted-foreground">No supervision, schedules, limits, monitoring, or child-safety enforcement are available or active in this build.</p>
-        <p className="mt-2 text-sm text-muted-foreground">The planned feature will let parents or guardians create and manage child profiles, set age-appropriate access rules and schedules, review relevant Josi activity, and receive useful usage and safety information. Parental authority will remain separate from ordinary administration.</p>
-        <p className="mt-2 text-sm text-muted-foreground">Tell us what you need at <a className="underline" href="mailto:roman@socalreceptionist.com">roman@socalreceptionist.com</a>.</p>
-      </Card>
-    </div>
-  );
-}
-
-function AdminParentalControlsImplementation() {
   const [view, setView] = useState<LicenceView | null>(null);
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);

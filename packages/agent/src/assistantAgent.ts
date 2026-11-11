@@ -53,6 +53,7 @@ import { pcDesktopToolAvailability, PC_DESKTOP_PROMPT } from './pcDesktopTools.j
 import { signInToolAvailability, SIGN_IN_PROMPT } from './signInTools.js';
 import { sendFileToolAvailability, SEND_FILE_PROMPT } from './sendFileTools.js';
 import { debuggerToolAvailability, DEBUGGER_PROMPT } from './debuggerTools.js';
+import { familyToolAvailability, FAMILY_PROMPT } from './familyTools.js';
 import { loadGuidance, announceProposals } from './improvementEngine.js';
 import {
   ARTIFACT_CLAIM_GUARD_FALLBACK, ARTIFACT_CLAIM_GUARD_REPROMPT,
@@ -504,6 +505,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   const sendFileTools = capabilities.toolCalling ? await sendFileToolAvailability(db, userId) : [];
   // The built-in debugger: the owner's, in their own chat, never in a goal's background run.
   const debuggerTools = capabilities.toolCalling && !args.workGoalId ? await debuggerToolAvailability(db, userId, args.threadId) : [];
+  const familyTools = capabilities.toolCalling ? await familyToolAvailability(db, userId) : [];
   // `approve_task` is only meaningful when this owner already has a generic
   // task waiting on them. Offering it on an ordinary request lets a model
   // confuse "please create this calendar event" with approval of an unrelated
@@ -518,7 +520,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     && (t.def.name !== 'approve_task' || !!approvableTask)
     && (!t.requiresCapability || writeCapabilities.has(t.requiresCapability)));
   let tools = capabilities.toolCalling
-    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools, ...pcBrowserTools, ...pcDesktopTools, ...signInTools, ...sendFileTools, ...debuggerTools, ...computerTools].map((t) => t.def)
+    ? [...availableTaskTools, ...data.specs, ...customApis.specs, ...workflowTools, ...developerIntegrationTools, ...automationTools, ...pcBrowserTools, ...pcDesktopTools, ...signInTools, ...sendFileTools, ...debuggerTools, ...familyTools, ...computerTools].map((t) => t.def)
     : undefined;
   // On a PC where Josi's own PC Control is live, the browser and the desktop
   // are reached through those tools. The automation-workspace tools describe
@@ -567,6 +569,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     + (signInTools.length ? `\n\n${SIGN_IN_PROMPT}` : '')
     + (sendFileTools.length ? `\n\n${SEND_FILE_PROMPT}` : '')
     + (debuggerTools.length ? `\n\n${DEBUGGER_PROMPT}` : '')
+    + (familyTools.length ? `\n\n${FAMILY_PROMPT}` : '')
     + (args.replyStyle === 'spoken_short' ? `\n\n${SPOKEN_SHORT_PROMPT}` : '')
     // Parental Controls: topics a parent turned off for this managed child.
     // An instruction to the model, not a filter on what it says.

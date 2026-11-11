@@ -16,7 +16,7 @@ import { api, ApiError } from '@/lib/api';
 import { Badge, Button, Card, CardTitle, Copyable, Empty, ErrorNote, Input, Working } from '@/components/ui';
 import { plain, plainDetail } from '@/lib/plainLanguage';
 
-interface Honesty { scope: string; notDevice: string; minutes: string; admin: string }
+interface Honesty { scope: string; notDevice: string; minutes: string; admin: string; phone?: string }
 interface Window { weekday: number; startMinute: number; endMinute: number }
 interface Controls {
   timezone: string;
@@ -62,24 +62,6 @@ const minutesOf = (value: string): number => {
 };
 
 export function Family() {
-  return <FamilyComingSoon />;
-}
-
-function FamilyComingSoon() {
-  return (
-    <div className="page" aria-disabled="true">
-      <h1 className="page-title">Family <Badge tone="muted">Coming Soon</Badge></h1>
-      <Card className="opacity-75">
-        <CardTitle>Parental Controls are being redesigned</CardTitle>
-        <p className="text-sm text-muted-foreground">No supervision, schedules, limits, monitoring, or child-safety enforcement are active here today.</p>
-        <p className="mt-2 text-sm text-muted-foreground">The future feature is intended to let parents or guardians create and manage child profiles, set age-appropriate access rules and schedules, review relevant Josi activity, and receive useful usage and safety information while keeping parental authority separate from ordinary administration.</p>
-        <p className="mt-2 text-sm text-muted-foreground">Suggest features at <a className="underline" href="mailto:roman@socalreceptionist.com">roman@socalreceptionist.com</a>.</p>
-      </Card>
-    </div>
-  );
-}
-
-function FamilyImplementation() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [absent, setAbsent] = useState(false);
   const [error, setError] = useState('');
@@ -134,9 +116,9 @@ function BetaWarning() {
     <div role="alert" className="rounded-md border border-warning/60 bg-warning/10 p-3 text-sm">
       <p className="font-semibold text-warning">BETA — do not rely on these controls for a child&rsquo;s safety.</p>
       <p className="mt-1 text-warning/90">
-        This feature is experimental and may fail, be delayed, or behave unexpectedly. It controls only access to Josi;
-        it cannot supervise a device, block other apps or websites, provide emergency monitoring, or replace active adult supervision
-        and device-level parental controls. Verify important restrictions yourself.
+        This feature is experimental and may fail, be delayed, or behave unexpectedly. This page controls only access to Josi.
+        Rules for a whole iPhone are set in the Josi iPhone app and applied by that phone, not by this server.
+        Nothing here provides emergency monitoring or replaces active adult supervision. Verify important restrictions yourself.
       </p>
     </div>
   );
@@ -218,6 +200,9 @@ function describeAccess(kind: string): string {
     case 'parental.conversations_listed': return 'Looked at the list of your conversations';
     case 'parental.usage_viewed': return 'Looked at how much you have used Josi';
     case 'parental.controls_updated': return 'Changed your hours or your daily limit';
+    case 'parental.device_setup_opened': return 'Opened iPhone setup for ten minutes';
+    case 'parental.device_activity_viewed': return 'Looked at how much you have used your iPhone';
+    case 'parental.request_decided': return 'Answered something you asked for';
     case 'parental.link_created': return 'Set this account up';
     case 'parental.link_ended': return 'Stopped looking after this account';
     default: return kind;
@@ -256,6 +241,7 @@ function HonestyCard({ honesty }: { honesty: Honesty }) {
       <p className="text-sm text-muted-foreground">{honesty.scope}</p>
       <p className="mt-2 text-sm text-muted-foreground">{honesty.notDevice}</p>
       <p className="mt-2 text-sm text-muted-foreground">{honesty.minutes}</p>
+      {honesty.phone ? <p className="mt-2 text-sm text-muted-foreground">{honesty.phone}</p> : null}
       <p className="mt-2 text-sm text-muted-foreground">{honesty.admin}</p>
     </Card>
   );

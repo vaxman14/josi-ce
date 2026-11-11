@@ -49,17 +49,16 @@ describe('compact settings disclosures', () => {
     expect(admin).toContain('exists only after you set');
   });
 
-  it('shows parental controls only as an honest disabled coming-soon teaser', () => {
+  it('shows the real Family and Parental controls pages, with the beta warning', () => {
     const menu = read('apps/web/src/components/layout/mobileNavigation.ts');
-    const shell = read('apps/web/src/components/layout/Shell.tsx');
     const admin = read('apps/web/src/pages/admin/ParentalControls.tsx');
     const family = read('apps/web/src/pages/Family.tsx');
-    expect(menu).toMatch(/label: 'Family'.*soon: true/);
-    expect(menu).toMatch(/label: 'Parental controls'.*soon: true/);
-    expect(shell).toContain('Coming soon');
-    expect(admin).toContain('No supervision, schedules, limits, monitoring, or child-safety enforcement');
-    expect(family).toContain('No supervision, schedules, limits, monitoring, or child-safety enforcement');
-    expect(admin).toContain('roman@socalreceptionist.com');
+    expect(menu).not.toMatch(/label: 'Family'.*soon: true/);
+    expect(menu).not.toMatch(/label: 'Parental controls'.*soon: true/);
+    expect(family).toContain("api.get<Overview>('/parental/overview')");
+    expect(family).toContain('do not rely on these controls for a child');
+    expect(family).not.toContain('Coming Soon');
+    expect(admin).not.toContain('Coming Soon');
   });
 
   it('makes every developer service an accessible disclosure', () => {

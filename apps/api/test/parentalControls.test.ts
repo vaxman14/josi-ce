@@ -40,6 +40,7 @@ import { testDb, testVault, type TestDb } from '../../../packages/core/test/help
 import { createUser, ensureWorkspace } from './fixtures.js';
 import { createApp } from '../src/app.js';
 import { MasterKey } from '@josi-ce/core';
+import { executeFamilyTool, familyToolAvailability } from '../../../packages/agent/src/familyTools.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'josi-ce-parental-'));
 const keyPath = join(dir, 'master.key');
@@ -723,7 +724,7 @@ describe('the phone reads its rules, and a child can ask', () => {
     const res = await call('/api/parental/rules', { jar: cookies.child });
     expect(res.status).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual([
-      'access', 'blocked_apps', 'blocked_topics', 'daily_limit_minutes', 'extra_minutes_today',
+      'access', 'blocked_apps', 'blocked_topics', 'daily_limit_minutes', 'device', 'extra_minutes_today',
       'guardian', 'managed', 'minutes_used_today', 'schedule_enabled', 'timezone', 'updated_at',
       'version', 'windows',
     ]);
@@ -1030,6 +1031,201 @@ describe('the phone reads its rules, and a child can ask', () => {
   });
 });
 
+// ------------------------------------------------------------ 6c. the iPhone
+
+describe('whole-iPhone rules are stored for the phone, and the phone reports back', () => {
+  const DEVICE = {
+    daily_limit_minutes: 120, bedtime: { start_minute: 1260, end_minute: 420 },
+    web_filter: true, max_app_rating: 12, block_app_installs: true,
+  };
+  let confirmed = '';
+  const pushesFor = (userId: string) => db.query<{
+    event_key: string; category: string; route_type: string; route_id: string; body: string;
+  }>(
+    `select event_key, category, route_type, route_id, body from push_deliveries where owner_user_id = $1`,
+    [userId],
+  );
+  const put = (body: unknown, jar = confirmed) =>
+    call(`/api/parental/children/${ids.child}/controls`, { method: 'PUT', jar, body });
+
+  beforeAll(async () => {
+    confirmed = await signIn('pcparent', PW.parent);
+    expect((await call('/api/assistant/step-up', {
+      method: 'POST', jar: confirmed, body: { password: PW.parent },
+    })).status).toBe(200);
+  });
+
+  it('starts with nothing set, in the same shape for the child and the parent', async () => {
+    const empty = {
+      daily_limit_minutes: null, bedtime: null, web_filter: false, max_app_rating: null,
+      block_app_installs: false, setup_open_until: null,
+    };
+    expect((await call('/api/parental/rules', { jar: cookies.child })).body.device).toEqual(empty);
+    expect((await call(`/api/parental/children/${ids.child}/controls`, { jar: cookies.parent })).body.device).toEqual(empty);
+  });
+
+  it('asks for the password again, and refuses rules that make no sense', async () => {
+    const fresh = await signIn('pcparent', PW.parent);
+    expect((await put({ device: DEVICE }, fresh)).status).toBe(401);
+    for (const who of ['child', 'stranger', 'admin'] as const) {
+      expect((await put({ device: DEVICE }, cookies[who])).status, who).toBe(404);
+    }
+    for (const bad of [
+      { daily_limit_minutes: 2 }, { daily_limit_minutes: 2000 }, { max_app_rating: 13 },
+      { bedtime: { start_minute: 600, end_minute: 600 } }, { bedtime: { start_minute: 1500, end_minute: 10 } },
+      { bedtime: { start_minute: 600 } }, { web_filter: 'yes' }, { block_app_installs: 1 },
+    ]) {
+      expect((await put({ device: bad })).status, JSON.stringify(bad)).toBe(400);
+    }
+    expect((await put({ device: 'on' })).status).toBe(400);
+    expect((await call('/api/parental/rules', { jar: cookies.child })).body.device.daily_limit_minutes).toBeNull();
+  });
+
+  it('saves them, changes only what was sent, and never lets the window be written', async () => {
+    const saved = await put({ device: { ...DEVICE, setup_open_until: '2099-01-01T00:00:00Z' } });
+    expect(saved.status).toBe(200);
+    expect(saved.body.device).toEqual({ ...DEVICE, setup_open_until: null });
+    // The Josi rules were not touched.
+    expect(saved.body.controls.dailyLimitMinutes).toBe(5);
+
+    const partial = await put({ device: { bedtime: null, max_app_rating: null } });
+    expect(partial.body.device).toEqual({
+      ...DEVICE, bedtime: null, max_app_rating: null, setup_open_until: null,
+    });
+    expect((await call('/api/parental/rules', { jar: cookies.child })).body.device).toEqual(partial.body.device);
+  });
+
+  it('opens a ten-minute setup window for the linked parent only, and tells the child’s phone', async () => {
+    for (const who of ['child', 'stranger', 'admin'] as const) {
+      const res = await call(`/api/parental/children/${ids.child}/device-setup`, { method: 'POST', jar: cookies[who] });
+      expect(res.status, who).toBe(404);
+    }
+    const before = (await pushesFor(ids.child)).length;
+    const opened = await call(`/api/parental/children/${ids.child}/device-setup`, { method: 'POST', jar: cookies.parent });
+    expect(opened.status).toBe(200);
+    const left = new Date(opened.body.open_until).getTime() - Date.now();
+    expect(left).toBeGreaterThan(9 * 60_000);
+    expect(left).toBeLessThanOrEqual(10 * 60_000 + 5_000);
+    const rules = await call('/api/parental/rules', { jar: cookies.child });
+    expect(rules.body.device.setup_open_until).toBe(opened.body.open_until);
+
+    const pushes = await pushesFor(ids.child);
+    expect(pushes).toHaveLength(before + 1);
+    expect(pushes.find((p) => p.event_key.startsWith('family:setup:'))).toMatchObject({
+      category: 'family', route_type: 'family', route_id: ids.child,
+    });
+    // And the child can see that it happened.
+    const overview = await call('/api/parental/overview', { jar: cookies.child });
+    expect(overview.body.child.activity.map((a: any) => a.kind)).toContain('parental.device_setup_opened');
+  });
+
+  it('takes what the child’s phone reports, once, and from nobody else', async () => {
+    const now = Date.now();
+    const at = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
+    const events = [
+      { kind: 'phone_minutes', minutes: 30, at: at(3) },
+      { kind: 'phone_minutes', minutes: 60, at: at(2) },
+      { kind: 'limit_reached', at: at(1) },
+    ];
+    const post = (body: unknown, jar = cookies.child) => call('/api/parental/device-events', { method: 'POST', jar, body });
+    for (const who of ['parent', 'stranger', 'admin'] as const) {
+      expect((await post({ events }, cookies[who])).status, who).toBe(404);
+    }
+    expect((await post({ events: 'none' })).status).toBe(400);
+    expect((await post({ events: [{ kind: 'opened_app', at: at(1) }] })).status).toBe(400);
+    expect((await post({ events: [{ kind: 'phone_minutes', at: at(1) }] })).status).toBe(400);
+    expect((await post({ events: [{ kind: 'limit_reached' }] })).status).toBe(400);
+
+    const before = (await pushesFor(ids.parent)).length;
+    const first = await post({ events });
+    expect(first.status).toBe(200);
+    expect(first.body).toEqual({ ok: true, accepted: 3, duplicates: 0 });
+    // A retry is the same three events.
+    expect((await post({ events })).body).toEqual({ ok: true, accepted: 0, duplicates: 3 });
+    // Something from long ago or from the future is dropped, not refused.
+    expect((await post({ events: [
+      { kind: 'bedtime_started', at: new Date(now - 30 * 86_400_000).toISOString() },
+      { kind: 'bedtime_started', at: new Date(now + 86_400_000).toISOString() },
+    ] })).body).toEqual({ ok: true, accepted: 0, duplicates: 0 });
+
+    // The parent hears about the limit once.
+    const pushes = await pushesFor(ids.parent);
+    expect(pushes).toHaveLength(before + 1);
+    expect(pushes.find((p) => p.event_key.startsWith('family:limit:'))).toMatchObject({
+      category: 'family', route_type: 'family', route_id: ids.child,
+      body: 'Kid One has reached today\'s iPhone limit.',
+    });
+  });
+
+  it('shows the linked parent the total and the events, newest first', async () => {
+    for (const who of ['child', 'stranger', 'admin'] as const) {
+      const res = await call(`/api/parental/children/${ids.child}/device-activity`, { jar: cookies[who] });
+      expect(res.status, who).toBe(404);
+    }
+    const res = await call(`/api/parental/children/${ids.child}/device-activity`, { jar: cookies.parent });
+    expect(res.status).toBe(200);
+    expect(res.body.events.map((e: any) => e.kind)).toEqual(['limit_reached', 'phone_minutes', 'phone_minutes']);
+    expect(res.body.events[1]).toMatchObject({ kind: 'phone_minutes', minutes: 60 });
+    // Just after the child's midnight the three events are yesterday's.
+    expect([0, 60]).toContain(res.body.today.phone_minutes);
+    expect(res.body.honesty.phone).toMatch(/never which apps or websites/i);
+  });
+});
+
+// ------------------------------------------------- 6d. answering by asking Josi
+
+describe('a parent can answer a request by asking Josi', () => {
+  const file = async (kind: string, minutes: number | null) => {
+    const [row] = await db.query<{ id: string }>(
+      `insert into family_requests (child_user_id, kind, minutes, note) values ($1, $2, $3, 'please') returning id`,
+      [ids.child, kind, minutes],
+    );
+    return row.id;
+  };
+
+  it('is offered to somebody who looks after a child, and to nobody else', async () => {
+    expect((await familyToolAvailability(db, ids.parent)).map((t) => t.def.name)).toEqual(['family_requests']);
+    // `stranger` looks after a child of their own in this suite, so is not listed here.
+    for (const who of ['child', 'admin'] as const) {
+      expect(await familyToolAvailability(db, ids[who]), who).toEqual([]);
+    }
+  });
+
+  it('lists what is open and answers it, through the same rules as the button', async () => {
+    await db.query(`delete from child_extra_minutes where child_user_id = $1`, [ids.child]);
+    const time = await file('more_time', 30);
+    const access = await file('access', null);
+
+    const listed = await executeFamilyTool(db, ids.parent, 'family_requests', { action: 'list' }) as any;
+    expect(listed.open.map((r: any) => r.request_id).sort()).toEqual([time, access].sort());
+    expect(listed.open.find((r: any) => r.request_id === time)).toMatchObject({
+      child: 'Kid One', kind: 'more_time', minutes_asked: 30,
+    });
+    // Somebody else sees nothing, and cannot answer what is not theirs.
+    expect(((await executeFamilyTool(db, ids.stranger, 'family_requests', { action: 'list' })) as any).open).toEqual([]);
+    expect(await executeFamilyTool(db, ids.admin, 'family_requests', {
+      action: 'answer', request_id: time, decision: 'approve',
+    })).toMatchObject({ ok: false, code: 'not_found' });
+
+    const given = await executeFamilyTool(db, ids.parent, 'family_requests', {
+      action: 'answer', request_id: time, decision: 'approve', minutes: 45,
+    }) as any;
+    expect(given).toMatchObject({ ok: true, status: 'approved', minutes_given: 45, extra_minutes_today: 45 });
+    expect((await call('/api/parental/rules', { jar: cookies.child })).body.extra_minutes_today).toBe(45);
+
+    expect(await executeFamilyTool(db, ids.parent, 'family_requests', {
+      action: 'answer', request_id: access, decision: 'deny',
+    })).toMatchObject({ ok: true, status: 'denied', minutes_given: null });
+    // Answered once is answered.
+    expect(await executeFamilyTool(db, ids.parent, 'family_requests', {
+      action: 'answer', request_id: time, decision: 'deny',
+    })).toMatchObject({ ok: false, code: 'refused' });
+    expect(await executeFamilyTool(db, ids.parent, 'family_requests', {
+      action: 'answer', request_id: time, decision: 'maybe',
+    })).toMatchObject({ ok: false, code: 'bad_decision' });
+  });
+});
+
 // --------------------------------------------------------------- 7. the trail
 
 describe('the trail records the acts and never the words', () => {
@@ -1042,6 +1238,7 @@ describe('the trail records the acts and never the words', () => {
       'parental.link_created', 'parental.controls_updated',
       'parental.conversations_listed', 'parental.conversation_read', 'parental.usage_viewed',
       'parental.request_filed', 'parental.request_decided',
+      'parental.device_setup_opened', 'parental.device_activity_viewed',
     ]) {
       expect(kinds, kind).toContain(kind);
     }

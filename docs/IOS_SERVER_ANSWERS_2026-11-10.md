@@ -116,3 +116,62 @@ Every route is a 404 until the server's owner activates the parental controls li
 
 Not built: family groups with a second parent, invites, spending limits. Today one parent creates
 each child account (up to 12); a child has one parent.
+
+## 8. Parental controls round 2: built in Linux 1.2.8-beta.17
+
+Answers to section 8 of the iPhone note. Still 404 until the licence is active.
+
+### 8a. The `device` object: built
+
+Exactly the keys asked for, snake_case, on all three routes:
+
+```json
+"device": { "daily_limit_minutes": 120, "bedtime": {"start_minute": 1260, "end_minute": 420},
+            "web_filter": true, "max_app_rating": 12, "block_app_installs": false, "setup_open_until": null }
+```
+
+- `GET /api/parental/rules` carries it inside the rules object. It is always present for a managed
+  child; with nothing set it is all `null` / `false`.
+- `GET /api/parental/children/:id/controls` answers `{controls, device, honesty}`: `device` sits
+  **beside** `controls`, not inside it.
+- `PUT /api/parental/children/:id/controls` takes `{"device": {...}}` and answers `{controls, device}`.
+  Same password re-check (401 until `POST /api/assistant/step-up`). Only the keys you send change;
+  `setup_open_until` in the body is ignored. A bad value is a 400 with a plain reason.
+- `daily_limit_minutes` is 5 to 1440 or null. `bedtime` minutes are 0 to 1439 and must differ.
+- `setup_open_until` is an ISO time only while the window is open, otherwise null.
+- More time: nothing new. The phone adds `extra_minutes_today` to the iPhone limit itself. A child
+  can now ask for more time when only the iPhone limit is set (it used to need a Josi limit).
+
+### 8b. Setup window: built
+
+`POST /api/parental/children/:id/device-setup` (the linked parent, a session, no password) →
+`200 {"open_until": "<iso>"}`, ten minutes from now. Calling it again restarts the ten minutes.
+The child's phone gets a `family` push with `data.id` = **the child's own user id** (there is no
+request). It is in the trail and on the child's web Family page.
+
+### 8c. Activity: built
+
+- `POST /api/parental/device-events` (child only; 404 for anybody else), up to 100 events →
+  `200 {"ok": true, "accepted": 2, "duplicates": 1}`. Unknown `kind`, a `phone_minutes` without
+  `minutes`, or a missing `at` is a 400 for the whole post. Events older than 7 days or more than
+  10 minutes in the future are dropped silently. More than 120 posts an hour is a 429.
+- `GET /api/parental/children/:id/device-activity` (parent) →
+  `{"timezone": "…", "today": {"phone_minutes": 60}, "events": [{"kind", "minutes", "at"}], "honesty": {…}}`.
+  Newest first, today and yesterday in the child's timezone. `today.phone_minutes` is the largest
+  `phone_minutes` total reported today.
+- On `limit_reached` the parent gets one `family` push; `data.id` is the child's user id. It is sent
+  again the same day only if extra time was given in between.
+
+### 8d. Turned on
+
+The web Family page and the Admin "Parental controls" page are now shown. How a customer gets the
+licence is still the owner's decision.
+
+### 8e. Asking Josi: built
+
+The parent's assistant has a `family_requests` tool (list, approve, deny). Nothing to do on the phone.
+
+### Family push ids, all three cases
+
+`data.route = "family"` and `data.id` is: the request id (a child asked, or a parent answered), or
+the child's user id (setup window opened, iPhone limit reached). Refresh rules and requests on any of them.

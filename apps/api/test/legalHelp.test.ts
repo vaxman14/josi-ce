@@ -32,16 +32,14 @@ describe('public help and legal coverage', () => {
     }
   });
 
-  it('labels every Family entry and both management pages as Coming Soon', () => {
+  it('shows Family and Parental controls as real pages that say what they do not do', () => {
     const menu = read('apps/web/src/components/layout/mobileNavigation.ts');
-    expect(menu).toMatch(/label: 'Family'.*soon: true/);
-    expect(menu).toMatch(/label: 'Parental controls'.*soon: true/);
-    expect(shell).toContain('Coming soon');
-    for (const surface of [family, parental]) {
-      expect(surface).toContain('Coming Soon');
-      expect(surface).toMatch(/No supervision, schedules, limits, monitoring, or child-safety enforcement/i);
-      expect(surface).toContain('roman@socalreceptionist.com');
-    }
+    expect(menu).not.toMatch(/label: 'Family'.*soon: true/);
+    expect(menu).not.toMatch(/label: 'Parental controls'.*soon: true/);
+    expect(family).not.toContain('Coming Soon');
+    expect(parental).not.toContain('Coming Soon');
+    // The page still says, in words, that it is not the only safeguard.
+    expect(family).toMatch(/replaces active adult supervision|do not rely on these controls/i);
   });
 
   it('documents every current product capability and external data path', () => {

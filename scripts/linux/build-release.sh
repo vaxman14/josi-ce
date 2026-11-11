@@ -48,7 +48,19 @@ fi
 if [ "$code" = 1 ]; then
   step 'Server and web build'
   npm ci --no-audit --no-fund
+  # The publisher's licence verification key, as the Windows build stamps it
+  # (scripts/windows/Build-Application.mjs). Without it this build refuses
+  # every licence, so a paid module could never be switched on. A public key:
+  # it verifies licences and cannot sign one. The source file is put back
+  # afterwards so the checkout stays clean.
+  stamp=packages/core/src/buildStamp.ts
+  cp "$stamp" "$stamp.unstamped"
+  trap 'mv -f "$repo/$stamp.unstamped" "$repo/$stamp" 2>/dev/null || true' EXIT
+  node scripts/stamp-edition.mjs --licence-key "$(tr -d '[:space:]' < publisher/licence-verification-key.b64)"
   npx tsc -b
+  mv -f "$stamp.unstamped" "$stamp"
+  trap - EXIT
+  grep -q 'BUILD_LICENCE_PUBLIC_KEY = "' packages/core/dist/buildStamp.js || fail 'the licence key was not stamped into the build'
   npm --prefix apps/web run build
 fi
 

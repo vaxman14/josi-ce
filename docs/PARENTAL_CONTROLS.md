@@ -210,6 +210,53 @@ a note of up to 300 characters. Asking changes nothing.
   and the kind of request — never the note. A phone can switch the `family`
   notification category off.
 
+## The whole iPhone
+
+Added in 1.2.8-beta.17, for the Josi iPhone app.
+
+**This server enforces none of it.** The rules are stored and returned. The
+child's iPhone applies them with Apple's Screen Time, and only if the Josi app
+on that phone has been set up to and allowed to.
+
+- `device` object, same snake_case keys everywhere: `daily_limit_minutes`,
+  `bedtime {start_minute, end_minute}` (may run past midnight), `web_filter`,
+  `max_app_rating` (4, 9, 12, 17 or null), `block_app_installs`, and the
+  read-only `setup_open_until`.
+- It is in `GET /api/parental/rules` and `GET /api/parental/children/:id/controls`,
+  and `PUT /api/parental/children/:id/controls` accepts it. Changing it costs
+  the password again, like every standing rule. Only the keys sent change.
+- Extra minutes a parent approves count for the iPhone limit too: the phone
+  reads the same `extra_minutes_today`. A child may ask for more time when
+  either limit (Josi or iPhone) is set.
+- `POST /api/parental/children/:id/device-setup` (linked parent, a session):
+  opens ten minutes in which the child's phone lets the counted apps be
+  changed. It changes no standing rule, is written to the trail
+  (`parental.device_setup_opened`), is shown on the child's Family page, and
+  the child's phone gets a `family` push.
+- `POST /api/parental/device-events` (the managed child only):
+  `{events: [{kind, minutes?, at}]}`, kinds `phone_minutes`, `limit_reached`,
+  `bedtime_started`, `bedtime_ended`, `asked_more_time`. A repeat of the same
+  `(kind, minutes, at)` is skipped. Events older than 7 days or in the future
+  are dropped. The parent gets one `family` push when a limit is reached.
+- `GET /api/parental/children/:id/device-activity` (linked parent):
+  `{timezone, today: {phone_minutes}, events}`, today and yesterday in the
+  child's own days, newest first. Looking is written to the trail
+  (`parental.device_activity_viewed`).
+
+What the phone reports is the phone's word: totals and moments, never an app
+or a website (Apple does not let those leave the phone). A phone that is off
+or signed out reports nothing. When the relationship ends, the reports are
+deleted with the rest.
+
+## Answering by asking Josi
+
+A parent with at least one child is offered one tool in conversation,
+`family_requests`: list what is open, approve or deny one. It calls
+`decideFamilyRequest`, the same function the button uses, so the relationship
+is the only authority, the 240-minute day ceiling holds, and the answer is in
+the trail. It cannot change a limit, a bedtime or any other standing rule, and
+it cannot add time without a request the child filed.
+
 ## Accounts
 
 A parent creates a managed account from their Family page; it is a new account
