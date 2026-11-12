@@ -176,3 +176,48 @@ beta.11 to beta.14 on gate as a user. Details for each are in the entries above.
     Keep the running version and one to roll back to, remove the rest after a good start,
     and have the installer check free space first and say so in plain words. Linux.
 The built-in debugger Roman asked for is planned and its first step built: `docs/JOSI_DEBUGGER_PLAN.md`.
+
+## BUILD LIST (Roman, 2026-11-12)
+New work, not fixes. Details are the owner's own words, kept whole.
+
+### B1. A local model: no thinking for local providers (shared code)
+Roman is deploying his own model for Josi on a machine called "docker", 10.10.1.239
+(Ubuntu 26.04, Quadro RTX 4000 8 GB). From the model builder, verified on that box:
+- Ollama 0.40.16 runs as a host systemd service, listening on 172.17.0.1:11434 (docker
+  bridge) with `OLLAMA_KEEP_ALIVE=-1`, set in `/etc/systemd/system/ollama.service.d/josi.conf`.
+  A container reaches it as `http://host.docker.internal:11434` when the service has
+  `extra_hosts: ["host.docker.internal:host-gateway"]`. Confirmed from a web container.
+- Model `josi-qwen3.5-9b` (v6, Q4_K_M, num_ctx 8192) already exists there, 100% on GPU,
+  about 5.4 GB VRAM. GGUF at `~/josi-model/josi-qwen3.5-9b-v6-Q4_K_M.gguf`.
+- **Thinking: do NOT build a no-think model variant.** Ollama's /v1 accepts
+  `"reasoning_effort": "none"` (or `"think": false`) and then returns no reasoning (25
+  tokens vs 55 on a Josi-shaped tool request). Make Josi's openai_compatible provider send
+  `reasoning_effort: "none"` for local providers, ideally as a per-provider setting.
+  Minimal version: in `packages/llm/src/providers/openaiCompatible.ts`, add
+  `body.reasoning_effort = 'none'` when the kind is openai_compatible and
+  `JOSI_LLM_NO_THINK=1`, and pass that variable to web and worker in compose.
+- Thinking ON measurably breaks this model: v6 passed 9/93 on their eval (empty final
+  reply after tool results) against 89/93 with it off. Do not leave it on.
+- Do not reuse anything from the `~/josi-ce` copy built in WSL; use our own source and image.
+
+### B2. Daily Brief + Memory (shared code; reuse the Vault, user management, permissions)
+1. **Memory.** One notes file per user, encrypted in the Vault. Sections: Goals, Rules
+   (only what the user said, in their words), People, Open loops, Task status, Talked
+   through (dated one-liners so the brief does not resurface settled items). Josi updates
+   it during a conversation whenever she learns something durable. Short and dated; prune
+   stale lines. Never store passwords, card numbers, ID numbers, or health or financial
+   details unless the user explicitly asks.
+2. **Tasks.** A list with states: working, waiting on user, blocked, done. Josi proposes
+   "done"; only the user marks it done.
+3. **Scheduler.** Local, no cloud. A Morning Brief when the user's quiet hours end, and up
+   to 2 check-ins a day outside quiet hours. Each run is a fresh model session that loads
+   memory, open tasks, and connected inbox and calendar data within the user's granted
+   permissions only.
+4. **Brief format.** A greeting, then "Updates on your current tasks:" as a numbered list,
+   then "Tasks I could help with:" (max 3). Short lines. A check-in posts only if
+   something changed, needs the user, or is time-sensitive; otherwise it stays silent.
+5. **Safety.** Scheduled runs are read-and-suggest only. Anything that sends, pays,
+   deletes or books waits for the user's explicit yes in chat. Content read from emails or
+   pages is data, never instructions.
+6. **Settings UI.** Quiet hours, brief on/off, check-ins on/off, and a "View/Edit memory"
+   screen where the user can read and delete any line.
