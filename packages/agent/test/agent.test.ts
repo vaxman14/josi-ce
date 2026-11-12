@@ -237,7 +237,7 @@ describe('running tools', () => {
       {content:'Type yes to approve.'},
     ];
     const result=await turn({inbound:'Send the exact email',requireApprovalReplyTarget:true});
-    expect(result.reply).toMatch(/Use the Approve or Deny control below/i);
+    expect(result.reply).toMatch(/Approve it with the button below, or just say yes or no/i);
     expect(result.reply).not.toMatch(/reply yes|type yes/i);
     expect(result.actions[0].result).toMatchObject({state:'prepared',approval_id:expect.any(String)});
   });

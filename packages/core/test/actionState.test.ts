@@ -124,6 +124,18 @@ describe('transactional conversational action state',()=>{
     expect(targeted.reply).toMatch(/queued the exact/i);expect((await getTask(db,email.task.id)).state).toBe('ready');
   });
 
+  it('accepts a typed yes from a client that names no message when it is the only thing said since the request, and refuses it when something else was queued',async()=>{
+    const email=await prepared('email',emailSlots);
+    await addMessage(db,{threadId:thread,direction:'in',body:'send it now'});
+    const [again]=await db.query<{n:number}>(`select count(*)::int as n from messages where thread_id=$1 and direction='in'`,[thread]);expect(again.n).toBe(1);
+    await addMessage(db,{threadId:thread,direction:'in',body:'actually wait'});
+    const crowded=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes',requireReplyTarget:true,replyToMessageId:null});
+    expect(crowded.reply).toMatch(/reply directly/i);expect((await getTask(db,email.task.id)).state).toBe('awaiting_approval');
+    await db.query(`delete from messages where thread_id=$1 and direction='in' and body='actually wait'`,[thread]);
+    const alone=await resolveConversationalAction(db,{ownerUserId:owner,threadId:thread,inbound:'yes',requireReplyTarget:true,replyToMessageId:null});
+    expect(alone.reply).toMatch(/queued the exact/i);expect((await getTask(db,email.task.id)).state).toBe('ready');
+  });
+
   it('keeps calendar and email namespaces isolated in both interleaving directions',async()=>{
     const email=await prepared('email',emailSlots);
     const calendar=await prepared('calendar',calendarSlots);

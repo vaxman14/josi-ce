@@ -221,7 +221,7 @@ export async function expirePreparedActionApprovals(db:Db):Promise<number>{
         try{
           const {addMessage}=await import('./conversations.js');
           await addMessage(tx,{threadId:action.thread_id,direction:'out',
-            body:`The approval for that ${noun} expired, so nothing was ${action.domain==='email'?'sent':'changed'}. Say "yes, ${action.domain==='email'?'send it':'do it'}" and I will prepare it again for you to approve.`,
+            body:`The approval for that ${noun} expired, so nothing was ${action.domain==='email'?'sent':'changed'}. Say "yes, ${action.domain==='email'?'send it':'approve it'}" and I will prepare it again for you to approve.`,
             meta:{approval_expired:action.id}});
         }catch{/* the thread may be gone */}
       }
@@ -237,7 +237,7 @@ export async function resolveConversationalAction(db:Db,args:{ownerUserId:string
     // (the answer to a question Josi asked): it goes to the model like any
     // other message and approves nothing.
     let candidates=await latestPresented(db,{ownerUserId:args.ownerUserId,threadId:args.threadId,status:'prepared'});
-    const [lastOutbound]=await db.query<{id:string}>(`select id from messages where thread_id=$1 and direction='out' order by created_at desc limit 1`,[args.threadId]);
+    const [lastOutbound]=await db.query<{id:string;created_at:string}>(`select id,created_at from messages where thread_id=$1 and direction='out' order by created_at desc limit 1`,[args.threadId]);
     // A request that ran out is not "still waiting further up", and its card is
     // gone from every screen. A yes that is plainly about it (it answers the
     // message that showed it, or it names the act) brings the same request
@@ -259,12 +259,24 @@ export async function resolveConversationalAction(db:Db,args:{ownerUserId:string
         reply:`That request expired before it was approved, so nothing was sent. Here it is again:\n\n${again.approval.summary}\n\nApprove it below, or say yes.`};
     }
     if(!candidates.length)return {handled:false};
-    if(!lastOutbound||candidates[0].presented_turn_id!==lastOutbound.id)return {handled:true,reply:'That did not approve anything. A request is still waiting for your approval further up; use Approve or Deny on it.'};
+    if(!lastOutbound||candidates[0].presented_turn_id!==lastOutbound.id)return {handled:true,reply:'That did not approve anything. A request is still waiting for your approval further up; use the button on it, or answer that message with yes or no.'};
     // Durable clients can queue multiple turns before any reply exists. For
     // them, arrival order is not consent: yes/no must explicitly reply to the
     // exact assistant message that presented the action. Legacy synchronous
     // channels retain their immediately-preceding-turn rule above.
-    if(args.requireReplyTarget&&args.replyToMessageId!==lastOutbound.id)return {handled:true,reply:'Reply directly to the approval request so I can apply that answer to the action you reviewed.'};
+    // A client that does not say which message it answers (the Windows, Mac and
+    // iPhone apps do not yet) is still unambiguous when this yes is the only
+    // thing the person has said since the request was shown: nothing else
+    // could be queued in between. A client that names a different message is
+    // refused as before.
+    if(args.requireReplyTarget&&args.replyToMessageId!==lastOutbound.id){
+      let alone=false;
+      if(args.replyToMessageId==null){
+        const [since]=await db.query<{n:number}>(`select count(*)::int as n from messages where thread_id=$1 and direction='in' and created_at>$2`,[args.threadId,lastOutbound.created_at]);
+        alone=since?.n===1;
+      }
+      if(!alone)return {handled:true,reply:'Reply directly to the approval request so I can apply that answer to the action you reviewed.'};
+    }
     const latestTurn=candidates[0].presented_turn_id;
     const sameTurn=candidates.filter(c=>c.presented_turn_id===latestTurn);
     if(sameTurn.length!==1)return {handled:true,reply:'That answer is ambiguous because more than one action was prepared together. Name the email or calendar action you mean.'};

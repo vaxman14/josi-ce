@@ -1024,7 +1024,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       const prepared=actions.map(action=>action.result).filter((result):result is {state:string;summary:string}=>
         !!result&&typeof result==='object'&&(result as {state?:unknown}).state==='prepared'&&typeof (result as {summary?:unknown}).summary==='string');
       if(prepared.length===1)reply=args.requireApprovalReplyTarget
-        ? `${prepared[0].summary}\n\nUse the Approve or Deny control below for this exact action.`
+        ? `${prepared[0].summary}\n\nApprove it with the button below, or just say yes or no, for this exact action.`
         : `${prepared[0].summary}\n\nApprove this exact action? Reply yes or no.`;
       else if(prepared.length>1)reply='More than one consequential action was prepared together. Name which one you want to review; a bare yes will not approve either.';
       else {
