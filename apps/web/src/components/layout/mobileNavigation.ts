@@ -26,6 +26,7 @@ export interface MenuItem {
 
 export const ALL_WORKSPACE_MENU: MenuItem[] = [
   { to: '/app/my-world', label: 'My World', icon: 'world' },
+  { to: '/app/brief', label: 'Daily brief', icon: 'star' },
   { to: '/app/tasks', label: 'Tasks', icon: 'tasks', badge: 'tasks' },
   { to: '/app/approvals', label: 'Approvals', icon: 'shield', badge: 'approvals' },
   { to: '/app/conversations', label: 'Conversations', icon: 'conversations' },

@@ -49,6 +49,7 @@ import { Devices } from '@/pages/Devices';
 import { api } from '@/lib/api';
 import { shows } from '@/lib/flags';
 import { MyWorld } from '@/pages/MyWorld';
+import { Brief } from '@/pages/Brief';
 
 /** Routing is convenience, not security.
  *
@@ -158,6 +159,7 @@ export function App() {
       <Route path="/app" element={<RequireAuth><Shell /></RequireAuth>}>
         <Route index element={<Talk />} />
         <Route path="my-world" element={<MyWorld />} />
+        <Route path="brief" element={<Brief />} />
         <Route path="talk" element={<TalkRedirect />} />
         <Route path="tasks" element={<Tasks />} />
         <Route path="approvals" element={<Approvals />} />
