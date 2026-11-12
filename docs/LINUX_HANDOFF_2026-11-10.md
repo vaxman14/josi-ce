@@ -433,10 +433,14 @@ Built on claw from the two beta.22 packages, one Dockerfile (`--platform linux/a
 Build folder `~/josi-linux/dockerbuild22`, scripts `~/josi-linux/dbuild22.sh` and `dsmoke22.sh`.
 
 - amd64: started on claw, all services up, setup link printed. The e2e scripts were not rerun on beta.22.
-- arm64: the image builds, is `aarch64`, and has `/usr/bin/chromium`. It was NOT proven to run. Under
-  emulation on claw systemd starts, but every Josi service fails with `status=226/NAMESPACE` (systemd's
-  sandboxing does not work under qemu) and the journal is empty. That is the emulator, not a finding
-  about ARM. It needs one start on a real ARM machine with Docker (the Pi has none; ask Roman).
+- arm64: proven on the Raspberry Pi (2026-11-11, 16:20 PST). Docker there is Debian's own
+  (`docker.io` plus `docker-cli`; without recommends the command is a separate package). The starter
+  downloaded and loaded the image (about 9 minutes on the SD card) and every service came up.
+  e2e inside the container: `e2e-pc` 9/9, `e2e-signin` 5/5, `e2e-fake` 4/5. The one miss is the known
+  Codex-on-ARM tools problem (same as the native package), not a Docker matter. The native Josi on
+  port 8080 kept running throughout. A clean container `josi-docker` is left on the Pi at port 8090
+  (volumes `josi-docker-*`). Under emulation on claw the same image cannot start its services
+  (`status=226/NAMESPACE`, systemd sandboxing under qemu); ignore that.
 - Bug found and fixed in the Dockerfile: the container is privileged, and its `systemd-binfmt.service`
   cleared the HOST's binfmt list, which switched off ARM emulation on claw the moment an amd64 Josi
   container started. The service and the binfmt mounts are now masked in the image. Images built before
