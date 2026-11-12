@@ -738,6 +738,31 @@ export async function setWorkLimits(db: Db, args: { ownerUserId: string; goalId:
   });
 }
 
+/** A request that expired was prepared again as a NEW task. The goal step that
+ * waited on the old task now waits on the new one, and the question the goal
+ * shows names the request that is actually open, never one that is gone. */
+export async function relinkWorkGoalTask(db: Db, args: { ownerUserId: string; threadId: string; oldTaskId: string; newTaskId: string }): Promise<number> {
+  return transaction(db, async tx => {
+    const rows = await tx.query<GoalRow>(`select * from work_goals where owner_user_id=$1 and thread_id=$2
+      and state not in ('completed','cancelled') for update`, [args.ownerUserId, args.threadId]);
+    let moved = 0;
+    for (const row of rows) {
+      const step = row.steps.find(value => value.taskId === args.oldTaskId);
+      if (!step || !workStepUnfinished(step)) continue;
+      step.taskId = args.newTaskId;
+      if (step.state === 'blocked' || row.state === 'needs_instruction') {
+        step.state = 'blocked'; step.blockedUntil = null;
+        step.blockedReason = `“${step.title}” is waiting for your approval. The first request expired, so it was prepared again.`;
+        row.state = 'needs_instruction'; row.activity = 'Waiting for your approval';
+        row.continuation = { kind: 'question', questionId: randomUUID(), text: step.blockedReason };
+      }
+      await save(tx, row, 'step.relinked', 'The request was prepared again; this step follows the new one');
+      moved++;
+    }
+    return moved;
+  });
+}
+
 /** Reconcile receipts, then schedule a bounded model continuation. Scheduling
  * grants no effect permission and never retries an uncertain dispatch. */
 export async function reconcileWorkGoals(db: Db, options: { continueReady?: boolean } = {}): Promise<number> {
@@ -746,7 +771,9 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
       g.updated_at < now()-interval '5 minutes' as stale,
       g.continuation_ready_at <= now() as continuation_due,
       case when g.continuation->>'kind'='wait' then (g.continuation->>'wakeAt')::timestamptz <= now() else false end as wake_due
-      from work_goals g where g.state in ('planning','working','waiting')
+      from work_goals g where (g.state in ('planning','working','waiting')
+        or (g.state='needs_instruction' and g.continuation->>'kind'='question'
+          and exists(select 1 from jsonb_array_elements(g.steps) s where s->>'taskId' is not null and s->>'state'<>'verified')))
       and not exists(select 1 from assistant_turns t where t.thread_id=g.thread_id
         and t.status in ('queued','running'))
       order by g.reconciled_at,g.id for update of g skip locked limit 100`);
@@ -754,6 +781,7 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
     for (const row of rows) {
       await tx.query(`update work_goals set reconciled_at=now() where id=$1`, [row.id]);
       let updated = false, failed: WorkGoalStep | null = null;
+      const wasWaiting = row.state === 'needs_instruction';
       const activeSteps = new Set<string>();
       for (const step of row.steps) {
         if (step.state === 'blocked' && !step.taskId && step.blockedUntil && Date.parse(step.blockedUntil) <= Date.now()) {
@@ -771,6 +799,18 @@ export async function reconcileWorkGoals(db: Db, options: { continueReady?: bool
             step.state = 'blocked'; step.blockedReason = `“${step.title}” did not finish. Its original task must be reconciled before another attempt.`; updated = true;
           }
         } else if (['attempting', 'ready', 'held'].includes(task.state)) activeSteps.add(step.id);
+      }
+      // A goal that asked the person a question (often: approve this email) while
+      // its own request was still open notices when that request has been
+      // carried out, and goes on by itself. Nothing else wakes a question.
+      if (wasWaiting) {
+        if (!updated || failed) continue;
+        row.state = 'working';
+        row.activity = 'The request you approved was carried out; continuing';
+        const following = readyWorkSteps(row.steps, activeSteps)[0];
+        row.continuation = following ? { kind: 'action', stepId: following.id } : null;
+        row.continuation_due = true; row.continuation_ready_at = new Date().toISOString();
+        await tx.query('update work_goals set continuation_ready_at=now() where id=$1', [row.id]);
       }
       const ready = readyWorkSteps(row.steps, activeSteps);
       const needsPlan = needsPlanReview(row);

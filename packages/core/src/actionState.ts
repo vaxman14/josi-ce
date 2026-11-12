@@ -125,6 +125,8 @@ export async function prepareActionAgain(db:Db,old:AssistantActionState){
   if(previous.state==='awaiting_approval')await transition(db,previous.id,'cancelled',{actor:'user',actorUserId:old.owner_user_id});
   const task=await createTask(db,{ownerUserId:old.owner_user_id,templateKey:previous.template_key,slots:previous.slots,threadId:old.thread_id});
   const state=await attachCollectingAction(db,{ownerUserId:old.owner_user_id,threadId:old.thread_id,domain:old.domain,operation:old.operation,taskId:task.id});
+  // A goal that was waiting on the old request follows the new one.
+  try{const {relinkWorkGoalTask}=await import('./workGoals.js');await relinkWorkGoalTask(db,{ownerUserId:old.owner_user_id,threadId:old.thread_id,oldTaskId:previous.id,newTaskId:task.id});}catch{/* the request itself is still prepared */}
   const out=await prepareAction(db,{actionState:state,task,summary:approval.summary,actionClass:approval.action_class,action:approval.action});
   return {action:out as AssistantActionState,task:await getTask(db,task.id),approval:out.approval};
 }
@@ -213,6 +215,16 @@ export async function expirePreparedActionApprovals(db:Db):Promise<number>{
         where id=$1`,[action.presented_turn_id]);
       const task=await getTask(tx,action.task_id);
       if(task.state==='awaiting_approval')await transition(tx,task.id,'cancelled',{actor:'system'});
+      // Say so: otherwise the card just disappears and the last message still points at it.
+      if(action.thread_id){
+        const noun=action.domain==='email'?'email':action.domain==='calendar'?'calendar change':'change';
+        try{
+          const {addMessage}=await import('./conversations.js');
+          await addMessage(tx,{threadId:action.thread_id,direction:'out',
+            body:`The approval for that ${noun} expired, so nothing was ${action.domain==='email'?'sent':'changed'}. Say "yes, ${action.domain==='email'?'send it':'do it'}" and I will prepare it again for you to approve.`,
+            meta:{approval_expired:action.id}});
+        }catch{/* the thread may be gone */}
+      }
     }
     return due.length;
   });
