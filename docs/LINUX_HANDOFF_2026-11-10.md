@@ -463,6 +463,28 @@ Build folder `~/josi-linux/dockerbuild22`, scripts `~/josi-linux/dbuild22.sh` an
   clears emulation on claw again; bring it back with `docker run --privileged --rm tonistiigi/binfmt --install arm64`.
 - The GitHub draft does not carry the Docker images.
 
+## beta.24 (2026-11-12, 15:45 PST): thinking off for local models, Docker reaches the host
+
+Built by the Docker session (commit `e78a6865`, `build-26.log`), 13 files, both processors.
+
+- New: "A model on your own hardware" has a `thinking` setting (a picker; the catalogue field has
+  `choices`). `off` makes `openaiCompatible.ts` send `reasoning_effort: "none"`. Only for
+  `openai_compatible`, only when chosen. Roman's own model (Qwen, on Ollama at 10.10.1.239) returns
+  empty replies after tool results with thinking on (the model builder measured 9/93 against 89/93).
+- Docker: run line, compose file and the LAN starter add `host.docker.internal:host-gateway`.
+- Tried: the llm and setup suites (331 pass; the full suite was not run). VM upgrades: Ubuntu all
+  three e2e pass; Debian fake and pc pass, signin 4/5 on the first run ("the site received nothing"
+  on the typed login), then 5/5 twice on rerun, so a flake, not chased. Ollama 0.32.6 on claw
+  accepts `reasoning_effort: "none"` on `/v1/chat/completions`. The amd64 image starts, has the
+  setting in its catalogue, and its web service user can reach a server on the Docker host by
+  `host.docker.internal`.
+- Not tried: the setting against a thinking model, the picker in a browser, the arm64 beta.24 image
+  on the Pi (the Pi container is still beta.22).
+- LAN installer and Docker starter (`http://10.10.1.3:18099/linux` and `/docker`) serve beta.24.
+  Images: `josi-docker-1.2.8-beta.24-<arch>.tar.gz`. GitHub draft swapped to v1.2.8-beta.24 (12 files).
+- Roman deploys the Docker container on 10.10.1.239 himself. Do not touch that machine.
+- `vmtest.sh` now points at beta.24. Next version is beta.25, next log `build-27.log`.
+
 ## In beta.19 (was: after beta.18)
 
 - Managed child accounts cannot add or use MCP servers unless the owner turns on
