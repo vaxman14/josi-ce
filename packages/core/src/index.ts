@@ -17,6 +17,7 @@ export * from './readiness.js';
 export * from './sealing.js';
 export * from './vault.js';
 export * from './myWorld.js';
+export * from './briefMemory.js';
 export * from './cardinalRules.js';
 export * from './automationPermissions.js';
 export { AUTOMATION_ENFORCEMENT_VERSION, automationPolicyChangeBinding,
