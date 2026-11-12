@@ -425,6 +425,21 @@ package did not start on a Pi 4); beta.22 is the one.
   Raspberry Pi OS (only Debian 13), the Arch arm64 package, the Docker image.
 - The Pi was left with a clean beta.22 install for the owner to set up.
 
+## beta.23 (2026-11-11, 16:40 PST): Codex gets Josi's tools on a slow machine
+
+- **Cause of the open item above.** Codex 0.152 sends its first request to the model without
+  waiting for a tool server that is still starting; a late server is silently left out. Josi's
+  server takes over two seconds to load on a Pi 4. Shown on the Pi with a stand-in tool server
+  and the fake model: instant server, 9 tools; 4 seconds late, 6 tools.
+- **Fix.** `codexArgs` (`packages/llm/src/providers/codexCli.ts`) adds
+  `mcp_servers.josi.required=true` and `startup_timeout_sec=60`. Codex then waits (seen with a
+  server 20 seconds late). A tool server that cannot start now fails the turn.
+- **Tested.** Intel VMs (upgrade) and the Pi 4 (wiped, fresh install): all three e2e sets pass on
+  each, `e2e-fake` 5/5 and `e2e-pc` 9/9 on the Pi.
+- The owner said the Pi may be wiped at will. It was left with a clean beta.23 install.
+- Still not tried on ARM: an upgrade, voice, a real model, a Pi 5, Ubuntu or Raspberry Pi OS,
+  the Arch arm64 package.
+
 ## beta.22 Docker images, amd64 and arm64 (2026-11-11, 15:00 PST)
 
 Built on claw from the two beta.22 packages, one Dockerfile (`--platform linux/amd64` and `linux/arm64`):

@@ -32,7 +32,7 @@ guess it says so.
 | Test VMs on claw | Ubuntu 24.04: ssh port **2224**, web port 18891. Debian 13: ssh port **2223**, web port 18890. User `roman`, passwordless sudo |
 | VM test script on claw | `~/josi-linux/vmtest.sh <ssh port> <fresh|upgrade>` |
 | LAN install folder on claw | `~/josi-linux/lan`, served by `python3 -m http.server 18099 --bind 10.10.1.3` (already running) |
-| ARM test machine | Raspberry Pi 4, 8 GB, Debian 13: `roman@10.10.1.195` (hostname `josipie`), key `~/.ssh/id_ed25519_josi_pi`, passwordless sudo. It is also where Roman runs Josi, so ask before wiping it |
+| ARM test machine | Raspberry Pi 4, 8 GB, Debian 13: `roman@10.10.1.195` (hostname `josipie`), key `~/.ssh/id_ed25519_josi_pi`, passwordless sudo. Roman said it may be wiped and reinstalled at will |
 | Test server | gate, `roman@10.10.1.5`, key `~/.ssh/id_ed25519_josi_gate`. Read-only for us |
 | Running notes | `docs/LINUX_HANDOFF_2026-11-10.md` in the repo: one section per beta. Add yours |
 
@@ -78,7 +78,7 @@ Claw builds only what is on GitHub.
 ```bash
 ssh … 'cd ~/josi-linux/src && git pull -q --ff-only origin linux/josi-server && git log --oneline | head -1 \
   && cd ~/josi-linux && (DOCKER_CONFIG=$HOME/josi-linux/docker-anon nohup bash -c \
-  "cd src && bash scripts/linux/build-release.sh --version 1.2.8-beta.23 --skip-provision --arm64" > build-25.log 2>&1 &); sleep 2; echo started'
+  "cd src && bash scripts/linux/build-release.sh --version 1.2.8-beta.24 --skip-provision --arm64" > build-26.log 2>&1 &); sleep 2; echo started'
 ```
 
 - Call the script with `bash` (it is not executable).
@@ -97,7 +97,7 @@ ssh … 'cd ~/josi-linux/src && git pull -q --ff-only origin linux/josi-server &
 Wait for it (note the bracket in the pattern, so the wait does not match itself):
 
 ```bash
-ssh … 'while pgrep -f "[b]uild-release.sh" >/dev/null; do sleep 20; done; tail -2 ~/josi-linux/build-25.log; ls ~/JosiDrive/BuildTemp/josi-ce-native-linux-20261010/releases/1.2.8-beta.23/'
+ssh … 'while pgrep -f "[b]uild-release.sh" >/dev/null; do sleep 20; done; tail -2 ~/josi-linux/build-26.log; ls ~/JosiDrive/BuildTemp/josi-ce-native-linux-20261010/releases/1.2.8-beta.24/'
 ```
 
 A good build leaves 13 files: `install.sh`, `linux`, `linux-latest.json`, `SHA256SUMS.txt`,
@@ -203,10 +203,10 @@ The web app can be run from the Mac against a test VM, signed in with that VM's 
 
 ## State when this was written
 
-- Latest build: **1.2.8-beta.22**, commit `ca6c044`, Intel and arm64. beta.21 was built and
-  never handed out. The next version is beta.23 and the next log `build-25.log`.
-- LAN installer and the one GitHub draft are beta.22. Gate was on beta.19 when last looked.
-- `vmtest.sh` on claw currently names beta.22 and `josi-install-22`.
+- Latest build: **1.2.8-beta.23**, commit `c03e493`, Intel and arm64. beta.21 was built and
+  never handed out. The next version is beta.24 and the next log `build-26.log`.
+- LAN installer and the one GitHub draft are beta.23. Gate was on beta.19 when last looked.
+- `vmtest.sh` on claw currently names beta.23 and `josi-install-23`.
 - The version numbers in the commands above still say beta.21 and beta.20 in places: read them
   as "the new one" and "the one before".
 - Before any public release: set `DEBUGGER_BUILT_IN` to `false` in `packages/core/src/debugger.ts`.
