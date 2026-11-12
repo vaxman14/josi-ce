@@ -40,6 +40,7 @@ import { executeSetupStatusTool, SETUP_STATUS_TOOL_NAMES } from './setupStatusTo
 import { executeCredentialCardTool, CREDENTIAL_CARD_TOOL_NAMES } from './credentialCardTools.js';
 import { executeConnectorRequestTool, CONNECTOR_REQUEST_TOOL_NAMES } from './connectorRequestTools.js';
 import { executeMyWorldTool, MY_WORLD_TOOL_NAMES } from './myWorldTools.js';
+import { BRIEF_TOOL_NAMES, executeBriefTool } from './briefTools.js';
 import { executePcDesktopTool, PC_DESKTOP_TOOL_NAMES } from './pcDesktopTools.js';
 import { executeSignInTool, SIGN_IN_TOOL_NAMES } from './signInTools.js';
 import { executeSendFileTool, SEND_FILE_TOOL_NAMES } from './sendFileTools.js';
@@ -113,6 +114,7 @@ export async function executeAssistantTool(
   if (SETUP_STATUS_TOOL_NAMES.has(name)) return executeSetupStatusTool(db, userId, name, input);
   if (CREDENTIAL_CARD_TOOL_NAMES.has(name)) return executeCredentialCardTool(db, userId, name, input, ctx.threadId);
   if (MY_WORLD_TOOL_NAMES.has(name)) return executeMyWorldTool(db, userId, name, input, ctx.threadId);
+  if (BRIEF_TOOL_NAMES.has(name)) return executeBriefTool(db, userId, ctx.connectors?.masterKey() ?? null, name, input);
   if (CONNECTOR_REQUEST_TOOL_NAMES.has(name)) return executeConnectorRequestTool(db, userId, name, input, ctx.threadId, ctx.connectors?.masterKey() ?? null);
   if (SETTINGS_CHANGE_TOOL_NAMES.has(name)) return executeSettingsChangeTool(db, userId, name, input, ctx.threadId, ctx.connectors?.masterKey() ?? null);
   if (WORK_GOAL_TOOL_NAMES.has(name)) return executeWorkGoalTool(db, ctx, name, input);

@@ -12,7 +12,7 @@
 import {
   addMessage, approvalHash, claimJobs, claimReadyTask, completeJob, consumeApproval, enqueue,
   expireApprovals, expireHolds, failJob, getTask, tickSchedules,
-  reconcileWorkGoals, settleWorkContinuation,
+  reconcileWorkGoals, settleWorkContinuation, claimDueBriefs, pruneBriefTasks,
   claimDurableTurn, completeDurableTurn, durableTurnHasEffects, durableTurnHasIncompleteEffects, failDurableTurn, renewDurableTurnLease, renewJobLease, processPushBatch, processPushReceipts, deliverReminderPersisted, json,
   expirePreparedActionApprovals, settleActionForTask, transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
@@ -32,7 +32,7 @@ import {
   TelegramBotApi, listLinksFor, loadConfig, openToken, prepareOutbound, sendChunk, deliverTelegramWorkProgress,
 } from '@josi-ce/channels';
 import { assistantMailAvailable, loadProfile, mailPolicy, newRoutingToken, renderedEmailMime, sendOperationalEmail, smtpTransport, verifyFrozenEmail } from '@josi-ce/mail';
-import { effectiveTimeContext, formatCalendarRange, runAssistantTurn, conversationHistory, createRecall, summarizeThread,
+import { runDailyBrief, effectiveTimeContext, formatCalendarRange, runAssistantTurn, conversationHistory, createRecall, summarizeThread,
   recordTurnInsights, learnFromTurn, reviewInsights, ALL_TOOLS } from '@josi-ce/agent';
 import { IMAGE_MEDIA_TYPES, MEDIA_PROCESSING, MEDIA_TRANSCRIPT, clock, extractFrames, isAudio, isVideo, mediaToolsAvailable, readAttachment, syncLocalMapping, withMediaFile, type Scanner } from '@josi-ce/storage';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
@@ -84,6 +84,22 @@ async function enqueueOnce(db: Db, kind: string, payload: Record<string, unknown
  * done would hide it forever. */
 export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise<void> {
   switch (job.kind) {
+    // Daily Brief + Memory. The tick finds the briefs that are due and claims
+    // each, so two workers never post the same one; each run is its own job.
+    case 'brief.tick': {
+      for (const due of await claimDueBriefs(db)) await enqueue(db, { kind: 'brief.run', payload: { ...due } });
+      await pruneBriefTasks(db);
+      return;
+    }
+    case 'brief.run': {
+      const p = job.payload as { runId?: unknown; userId?: unknown; kind?: unknown; day?: unknown };
+      if (typeof p.runId !== 'string' || typeof p.userId !== 'string' || typeof p.day !== 'string' || !['morning', 'checkin', 'now'].includes(String(p.kind))) return;
+      const key = ctx.masterKey ?? null;
+      await runDailyBrief(db, { registry: { db, masterKey: key, fetchImpl: ctx.llmFetch, resolve: ctx.llmResolve }, masterKey: key,
+        access: key ? { masterKey: () => key, fetchImpl: ctx.connectorFetch, customApiFetch: ctx.customApiFetch } : null },
+      { runId: p.runId, userId: p.userId, kind: p.kind as 'morning' | 'checkin' | 'now', day: p.day });
+      return;
+    }
     case 'work-progress.telegram': {
       if (ctx.masterKey) await deliverTelegramWorkProgress(db, { key: ctx.masterKey, fetchImpl: ctx.telegramFetch });
       return;

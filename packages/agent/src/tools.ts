@@ -23,6 +23,7 @@ import { MY_WORLD_TOOLS } from './myWorldTools.js';
 import { PC_DESKTOP_TOOLS } from './pcDesktopTools.js';
 import { SIGN_IN_TOOLS } from './signInTools.js';
 import { SEND_FILE_TOOLS } from './sendFileTools.js';
+import { BRIEF_TOOLS } from './briefTools.js';
 import { DEBUGGER_TOOLS } from './debuggerTools.js';
 import { FAMILY_TOOLS } from './familyTools.js';
 import { COMPUTER_TOOLS } from './computerControlTools.js';
@@ -255,6 +256,7 @@ export const ALL_TOOLS: ToolSpec[] = [
   ...PC_DESKTOP_TOOLS,
   ...SIGN_IN_TOOLS,
   ...SEND_FILE_TOOLS,
+  ...BRIEF_TOOLS,
   ...DEBUGGER_TOOLS,
   ...FAMILY_TOOLS,
   ...COMPUTER_TOOLS,

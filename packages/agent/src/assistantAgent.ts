@@ -48,6 +48,7 @@ import { SETUP_STATUS_PROMPT } from './setupStatusTools.js';
 import { CREDENTIAL_CARD_PROMPT } from './credentialCardTools.js';
 import { CONNECTOR_REQUEST_PROMPT, announceConnectorRequests } from './connectorRequestTools.js';
 import { MY_WORLD_PROMPT } from './myWorldTools.js';
+import { BRIEF_PROMPT, briefContext } from './briefTools.js';
 import { worldContext } from '@josi-ce/core';
 import { pcDesktopToolAvailability, PC_DESKTOP_PROMPT } from './pcDesktopTools.js';
 import { signInToolAvailability, SIGN_IN_PROMPT } from './signInTools.js';
@@ -311,6 +312,7 @@ function toolActivity(name: string): string {
     own_goal: 'Planning the work', checkpoint_goal: 'Saving progress', verify_goal: 'Checking the results',
     revise_goal_plan: 'Updating the plan', schedule_reminder: 'Setting the reminder', create_task: 'Preparing the task', list_josi_settings: 'Reading settings',
     propose_josi_setting_change: 'Preparing the settings change', remember: 'Saving a memory',
+    note_remember: 'Noting that down', note_forget: 'Updating your notes', brief_task_add: 'Adding a task', brief_task_update: 'Updating a task', brief_tasks_list: 'Looking at your tasks',
   };
   return known[name] ?? `Using ${name.replace(/_/g, ' ')}`;
 }
@@ -588,7 +590,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     // Parental Controls: topics a parent turned off for this managed child.
     // An instruction to the model, not a filter on what it says.
     + (childAccess.blockedTopics?.length ? `\n\n${blockedTopicsInstruction(childAccess.blockedTopics)}` : '')
-    + (capabilities.toolCalling ? `\n\n${SETUP_STATUS_PROMPT}\n\n${CREDENTIAL_CARD_PROMPT}\n\n${CONNECTOR_REQUEST_PROMPT}\n\n${MY_WORLD_PROMPT}\n\n${SETTINGS_CHANGE_PROMPT}`
+    + (capabilities.toolCalling ? `\n\n${SETUP_STATUS_PROMPT}\n\n${CREDENTIAL_CARD_PROMPT}\n\n${CONNECTOR_REQUEST_PROMPT}\n\n${MY_WORLD_PROMPT}\n\n${BRIEF_PROMPT}\n\n${SETTINGS_CHANGE_PROMPT}`
       // Honest about the gap: without tool calling nothing can act, and the
       // owner needs to hear which model to change, not a generic refusal.
       : `\n\nThis model (${stored?.model ?? 'the configured model'}) did not pass Josi's tool-calling check, so in this conversation you cannot act on the PC, run commands, read files or change Josi's settings. If asked to, say exactly that and tell the owner to run Check Again or choose a model with tool calling under Models in Josi.`);
@@ -649,6 +651,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   }
   // My World: its own store, read every turn, never part of the memory engine.
   try { const world = await worldContext(db, userId); if (world) system += `\n\n${world}`; } catch (err) { console.error('My World unavailable for this turn', (err as Error).message); }
+  if (capabilities.toolCalling && !args.workGoalId) { try { const brief = await briefContext(db, args.registry.masterKey, userId); if (brief) system += `\n\n${brief}`; } catch (err) { console.error('Notes unavailable for this turn', (err as Error).message); } }
   if (guidance) system += `\n\n${guidance}`;
   if (args.workGoalId) system += `\n\nThis is a server-scheduled continuation of goal ${args.workGoalId}. The last user message below is its ORIGINAL request, not a fresh instruction or approval. Read that goal and its current checkpoint before acting. Continue the saved next step within existing permissions; do not recreate the goal, approve a pending action, or repeat a completed/uncertain effect. Each step has one consequential intent across all continuations. Save meaningful progress and an exact next step, timed wait or precise question with checkpoint_goal before ending. A reply is not completion. If one step needs approval, secure reauthentication, missing information or outcome evidence, record its precise blocker and continue only declared independent work. If no independent step is available, save the exact question and stop. An uncertain external effect permits read-only inspection, never another effect or an invented success receipt. When the reply a step was waiting for is in the inbox, say what it says and save a question; do not prepare the next step before the person has answered. When a check finds nothing yet, save the next timed wait; after about a day with no reply, save a question telling the person none has come.`;
 
