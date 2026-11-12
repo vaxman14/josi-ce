@@ -286,5 +286,22 @@ class LinuxLifecycleTests(unittest.TestCase):
         self.assertEqual((program/'codex').read_text(),'binary')
         self.assertTrue((kept/'keep.json').exists());self.assertTrue((obj.data/'codex/auth-like.json').exists())
         self.assertFalse((obj.data/'profiles/web/.codex/tmp/arg0').exists())
+    def test_old_versions_are_removed_but_the_running_one_and_the_way_back_stay(self):
+        self.installation.mkdir(mode=0o700);versions=self.installation/'versions'
+        for name in ('1.2.8-beta.10','1.2.8-beta.11','1.2.8-beta.12','1.2.8-beta.13'):
+            (versions/name).mkdir(parents=True);(versions/name/'blob').write_text(name)
+        (versions/'not-a-version').mkdir();(versions/'link').symlink_to(versions/'1.2.8-beta.10')
+        removed=self.obj.prune_old_versions({'1.2.8-beta.13','1.2.8-beta.12'})
+        self.assertEqual(sorted(removed),['1.2.8-beta.10','1.2.8-beta.11'])
+        self.assertEqual(sorted(p.name for p in versions.iterdir()),['1.2.8-beta.12','1.2.8-beta.13','link','not-a-version'])
+        self.assertTrue((versions/'link').is_symlink())
+    def test_a_full_disk_is_named_in_plain_words_before_anything_is_copied(self):
+        self.installation.mkdir(mode=0o700)
+        real=shutil.disk_usage
+        shutil.disk_usage=lambda path:shutil._ntuple_diskusage(10<<30,10<<30,100)
+        try:
+            with self.assertRaisesRegex(ValueError,'Not enough free disk space.*Nothing was changed'):self.obj.ensure_space(None)
+        finally:shutil.disk_usage=real
+        self.obj.ensure_space(None)
 
 if __name__=='__main__':unittest.main()

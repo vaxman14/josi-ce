@@ -1233,6 +1233,22 @@ main() {
   finish
 
   begin 4
+  # Say so in plain words if the disk cannot hold the new program (about 6 GB:
+  # the package unpacked, a second copy beside the old one, and a copy of the
+  # data). Old versions an upgrade would remove count as free.
+  need_kb=$((6 * 1024 * 1024))
+  free_kb=$(df -Pk /var/lib 2>/dev/null | awk 'NR == 2 { print $4 + 0 }') || free_kb=0
+  case $free_kb in '' | *[!0-9]*) free_kb=0 ;; esac
+  back_kb=0
+  if [ -d /var/lib/josi/versions ]; then
+    for v in /var/lib/josi/versions/*; do
+      [ -d "$v" ] && [ ! -L "$v" ] && [ "${v##*/}" != "$CUR_VERSION" ] || continue
+      back_kb=$((back_kb + $(du -sk "$v" 2>/dev/null | awk '{ print $1 + 0 }')))
+    done
+  fi
+  if [ "$free_kb" -gt 0 ] && [ $((free_kb + back_kb)) -lt "$need_kb" ]; then
+    fail "not enough free disk space: Josi needs about 6 GB free on /var/lib and only $((free_kb / 1048576)) GB is free. Nothing was changed. Free some space and run the installer again."
+  fi
   if [ "$family" = arch ]; then
     run pacman -U --noconfirm "$work/$package" || fail 'pacman could not install the Josi package'
   else

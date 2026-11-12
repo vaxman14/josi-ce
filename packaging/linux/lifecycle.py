@@ -948,6 +948,59 @@ class Lifecycle:
             os.lchown(path,0,0)
             if not path.is_symlink(): os.chmod(path,0o755 if path.is_dir() or path.stat().st_mode&0o111 else 0o644)
 
+    VERSION_NAME = re.compile(r'[0-9][0-9A-Za-z.~+-]{0,63}')
+
+    def program_size(self, path):
+        """Bytes in a folder tree, counting each file once and following no links."""
+        total = 0
+        for base, _dirs, names in os.walk(path, followlinks=False):
+            for name in names:
+                try: total += os.lstat(os.path.join(base, name)).st_size
+                except OSError: pass
+        return total
+
+    def prune_old_versions(self, keep):
+        """Remove program copies nobody needs: everything in versions/ except
+        the names in `keep` (the running version and the one to roll back to).
+
+        Every upgrade leaves the previous program behind (about 2 GB each), and
+        after a day of betas a small disk fills. Only plain folders whose name
+        looks like a version are touched, nothing is followed, and a folder
+        that cannot be removed is left alone: this never fails an install.
+        Returns the names removed.
+        """
+        folder = self.root/'versions'
+        if not folder.is_dir() or folder.is_symlink(): return []
+        removed = []
+        for child in sorted(folder.iterdir()):
+            if child.name in keep or not self.VERSION_NAME.fullmatch(child.name): continue
+            if child.is_symlink() or not child.is_dir(): continue
+            try:
+                shutil.rmtree(child)
+                removed.append(child.name)
+            except OSError as error:
+                self.progress('Could not remove the old version '+child.name+': '+str(error)[:120], 'installer')
+        if removed: self.progress('Removed '+str(len(removed))+' old version'+('s' if len(removed) != 1 else '')+' to free disk space', 'installer')
+        return removed
+
+    def ensure_space(self, old):
+        """Say so in plain words, before anything is copied, if the disk is too full.
+
+        The new program is copied beside the old one, and an upgrade also takes
+        a cold copy of the data first. Old versions are removed first when that
+        is what makes room.
+        """
+        program = self.program_size(self.runtime)
+        need = program + (self.program_size(self.data) if old else 0) + (512 << 20)
+        probe = self.root if self.root.exists() else self.root.parent
+        if shutil.disk_usage(probe).free >= need: return
+        if old: self.prune_old_versions({old})
+        free = shutil.disk_usage(probe).free
+        if free < need:
+            gb = lambda n: '%.1f GB' % (n / (1 << 30))
+            raise ValueError('Not enough free disk space on %s: Josi needs about %s free for this %s and only %s is free. Nothing was changed. Free some space (for example old files under %s) and run the installer again.'
+                % (probe, gb(need), 'upgrade' if old else 'install', gb(free), probe))
+
     def install(self, ports=None, fail_at=None, interactive_uid=None, repair=False):
         # 0 is root itself: the one-command installer run from a root shell,
         # or the web updater. Any other account must be a real login account.
@@ -988,6 +1041,7 @@ class Lifecycle:
                 self.journal.phase(name); self.progress(name,'installer')
                 if fail_at == name: raise RuntimeError('Injected isolated failure')
             phase('prepared'); phase('verified')
+            if not self.isolated or os.environ.get('JOSI_LIFECYCLE_CHECK_SPACE') == '1': self.ensure_space(old)
             if fresh:
                 if not self.isolated:
                     for role in ROLES:
@@ -1059,6 +1113,9 @@ class Lifecycle:
                 os.chown(handoff/'bootstrap.json',interactive_uid,-1)
             phase('committed')
             durable(self.root/'status.json',{'installed':True,'version':self.version,'publicPort':cfg['publicPort']},replace=True,mode=0o644)
+            # Only after a good start: keep this version and the one just
+            # replaced (the way back), drop the rest.
+            self.prune_old_versions({self.version, *([old] if old else [])})
             return folder
         except BaseException as error:
             # Ctrl-C, SIGTERM and SIGHUP too: a transaction left mid-phase
