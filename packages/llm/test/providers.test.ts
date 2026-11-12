@@ -32,6 +32,25 @@ describe('the OpenAI-shaped adapter', () => {
     expect(res.latencyMs).toBeGreaterThanOrEqual(0);
   });
 
+  it('asks a model on the operator\'s own hardware not to think, only when told to', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = stubFetch((_url, init) => {
+      bodies.push(JSON.parse(String(init.body)));
+      return oaiReply({ choices: [{ message: { content: 'ok' } }] });
+    });
+    const ask = (opts: { kind: 'openai_compatible' | 'openai'; noThinking?: boolean }) => openAiCompatibleProvider({
+      kind: opts.kind, model: 'm', baseUrl: 'http://box.test/v1', external: false, noThinking: opts.noThinking,
+      resolve: localResolve, fetchImpl,
+    }).chat({ messages: [{ role: 'user', content: 'hi' }] });
+    await ask({ kind: 'openai_compatible', noThinking: true });
+    await ask({ kind: 'openai_compatible' });
+    // A hosted vendor never gets the value, whatever the option says.
+    await ask({ kind: 'openai', noThinking: true });
+    expect(bodies[0].reasoning_effort).toBe('none');
+    expect('reasoning_effort' in bodies[1]).toBe(false);
+    expect('reasoning_effort' in bodies[2]).toBe(false);
+  });
+
   it('normalises tool calls, including malformed arguments', async () => {
     const provider = openAiCompatibleProvider({
       kind: 'openai', model: 'gpt-test', apiKey: 'k', external: true, resolve,

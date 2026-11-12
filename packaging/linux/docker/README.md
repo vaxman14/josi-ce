@@ -22,6 +22,7 @@ docker build -t josi:latest .
 docker run -d -t --name josi --restart unless-stopped --privileged --cgroupns=host \
   -v josi-data:/var/lib/josi -v josi-pc:/var/lib/josi-pc \
   -v josi-etc:/etc/josi -v josi-home:/home/josi \
+  --add-host host.docker.internal:host-gateway \
   -p 8080:8080 -e JOSI_HOST_ADDRESS=<this machine's address> josi:latest
 docker logs josi          # after about a minute: the one-time setup link
 ```
@@ -43,6 +44,19 @@ Or with Compose, from this folder: set `JOSI_HOST_ADDRESS` in the environment
 | `JOSI_HOST_PORT` | `8080` | the port you published for 8080 |
 | `JOSI_PC_CONTROL` | `1` | `0`: Josi may not control the container |
 | `JOSI_BROWSER` | `1` | `0`: no hidden-screen Chrome |
+
+## A model on the same machine
+
+With the `--add-host` line above, a model server running on the Docker host is
+`http://host.docker.internal:<port>` from inside the container. For Ollama:
+
+- Ollama must listen on the Docker bridge address, not only on 127.0.0.1
+  (for example `OLLAMA_HOST=172.17.0.1:11434` in its service settings).
+- In Josi (setup, or Admin, Model) pick "A model on your own hardware", address
+  `http://host.docker.internal:11434/v1`, no key.
+- If the model thinks before it answers (Qwen 3 and relatives), set
+  "Thinking" to "Off". Josi then sends `reasoning_effort: "none"` with every
+  request. Left on, such a model can come back empty after using a tool.
 
 ## Notes
 

@@ -57,6 +57,9 @@ export interface CredentialField {
   placeholder?: string;
   /** Shown under the field. Says where to get the value, not what it is. */
   help?: string;
+  /** A fixed set of answers instead of free text: the form shows a picker and
+   * the server refuses anything else. The empty value means "not set". */
+  choices?: readonly { value: string; label: string }[];
 }
 
 const API_KEY: CredentialField = {
@@ -143,7 +146,25 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
     wire: 'openai-chat',
     external: false,
     baseUrlMode: 'required',
-    fields: [{ ...API_KEY, required: false, label: 'API key (only if your server needs one)' }],
+    fields: [
+      { ...API_KEY, required: false, label: 'API key (only if your server needs one)' },
+      {
+        // Some local models (Qwen 3 and its relatives under Ollama) think
+        // before they answer, and with tools that can end in an empty reply.
+        // "Off" sends reasoning_effort "none" with every request, which Ollama
+        // honours. It is a choice and not the default because a server that
+        // does not know the value may refuse the request.
+        key: 'thinking',
+        label: 'Thinking',
+        secret: false,
+        required: false,
+        choices: [
+          { value: '', label: 'Leave it to the model' },
+          { value: 'off', label: 'Off (answers directly)' },
+        ],
+        help: 'Turn it off if your model thinks out loud, answers slowly, or comes back empty after using a tool. Works with Ollama.',
+      },
+    ],
     discovery: 'endpoint',
     residency: 'Nothing leaves this server. Josi talks to the address you give it and nowhere else.',
     docsUrl: 'https://github.com/ollama/ollama/blob/main/docs/openai.md',

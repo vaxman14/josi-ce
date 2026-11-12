@@ -116,6 +116,7 @@ export function providerCatalog(): Array<Record<string, unknown>> {
         required: f.required,
         placeholder: f.placeholder ?? null,
         help: f.help ?? null,
+        choices: f.choices ?? null,
       })),
       discovery: p.discovery,
       modelNoun: p.modelNoun ?? 'model',
@@ -149,7 +150,8 @@ export function readCredentials(kind: string, body: Record<string, unknown>) {
   const settings: Record<string, string> = {};
   for (const field of config) {
     const value = str(body[field.key], 200);
-    if (value) settings[field.key] = value;
+    // A picker's answer is one of its choices or it is nothing.
+    if (value && (!field.choices || field.choices.some((c) => c.value === value))) settings[field.key] = value;
   }
   return { secrets, settings, secretFields: secret, configFields: config };
 }

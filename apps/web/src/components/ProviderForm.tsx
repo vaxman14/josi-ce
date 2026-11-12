@@ -130,6 +130,7 @@ export interface ProviderCatalogEntry {
     required: boolean;
     placeholder: string | null;
     help: string | null;
+    choices?: Array<{ value: string; label: string }> | null;
   }>;
   discovery: string;
   modelNoun: string;
@@ -415,7 +416,17 @@ export function ProviderForm({
           <label className="mb-1 block text-sm" htmlFor={`field-${f.key}`}>
             {f.label}{f.required ? '' : ' (optional)'}
           </label>
-          <Input
+          {f.choices?.length ? (
+            <select
+              id={`field-${f.key}`}
+              name={f.key}
+              className="min-h-11 w-full rounded-md border border-border bg-background px-3 text-base sm:text-sm"
+              value={values[f.key] ?? ''}
+              onChange={(e) => setField(f.key, e.target.value)}
+            >
+              {f.choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          ) : <Input
             id={`field-${f.key}`}
             name={f.key}
             type={f.secret ? 'password' : 'text'}
@@ -425,7 +436,7 @@ export function ProviderForm({
             placeholder={f.placeholder ?? undefined}
             value={values[f.key] ?? ''}
             onChange={(e) => setField(f.key, e.target.value)}
-          />
+          />}
           {f.help ? <p className="mt-1 text-xs text-muted-foreground">{f.help}</p> : null}
         </div>
       )) : null}

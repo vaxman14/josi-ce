@@ -27,6 +27,10 @@ export interface OpenAiCompatibleOptions {
    * which is how an operator reaches a regional host. */
   baseUrl?: string | null;
   external: boolean;
+  /** Ask the server not to think before answering (`reasoning_effort: "none"`).
+   * Only for a model on the operator's own hardware, and only when they chose
+   * it: a hosted vendor may reject the value. */
+  noThinking?: boolean;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   resolve?: SafeFetchOptions['resolve'];
@@ -154,6 +158,7 @@ export function openAiCompatibleProvider(opts: OpenAiCompatibleOptions): LlmProv
 
     async chat(request: ChatRequest): Promise<ChatResponse> {
       const body = openAiChatBody(opts.model, request);
+      if (opts.noThinking && opts.kind === 'openai_compatible') body.reasoning_effort = 'none';
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       // A self-hosted runtime may need no key at all; sending an empty bearer
