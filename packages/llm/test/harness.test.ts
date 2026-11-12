@@ -136,6 +136,9 @@ describe('the codex command line with a harness', () => {
       // and would otherwise fail every MCP call with "requires approval". Safe
       // because Josi's own step-up gate lives inside the server.
       expect(joined).toContain('mcp_servers.josi.default_tools_approval_mode="approve"');
+      // Without these Codex asks the model before a slow tool server is up.
+      expect(joined).toContain('mcp_servers.josi.required=true');
+      expect(joined).toContain('mcp_servers.josi.startup_timeout_sec=60');
     } finally {
       s.cleanup();
     }

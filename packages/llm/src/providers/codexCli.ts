@@ -168,6 +168,14 @@ export function codexArgs(model: string, harness?: HarnessSession | null, imageP
       '-c', `mcp_servers.${MCP_SERVER_NAME}.args=[${JSON.stringify(harness.serverPath)}]`,
       '-c', `mcp_servers.${MCP_SERVER_NAME}.env={${Object.entries(harness.serverEnvironment).map(([key, value]) => `${key} = ${JSON.stringify(value)}`).join(', ')}}`,
       '-c', `mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`,
+      // Codex does not wait for a tool server unless it is required: it
+      // sends the first request to the model at once, and a server that is
+      // still starting is simply left out, so the model gets no Josi tools.
+      // Seen on a Raspberry Pi 4, where Josi's server takes over two seconds
+      // to load. Required also turns a server that cannot start into a
+      // failed turn instead of an answer without tools.
+      '-c', `mcp_servers.${MCP_SERVER_NAME}.required=true`,
+      '-c', `mcp_servers.${MCP_SERVER_NAME}.startup_timeout_sec=60`,
     ]
     : [];
   return [
