@@ -26,3 +26,6 @@ export * from './providers/claudeLogin.js';
 export * from './providers/claudeVaultStatus.js';
 export * from './credentials.js';
 export * from './cardinalReview.js';
+export * from './promptSize.js';
+export * from './debugLog.js';
+export * from './contextDetect.js';

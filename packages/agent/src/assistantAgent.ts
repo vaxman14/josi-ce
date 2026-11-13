@@ -34,6 +34,8 @@ import {
 } from '@josi-ce/core';
 import {
   capabilitiesOf, chat, featureAvailable, loadStoredProvider,
+  loadModelContext, refreshModelContext, promptProfile, measureRequest, calibrate, describePromptSize,
+  recordLastPrompt, rememberOverflowContext, describeContextOverflow,
   type ChatImage, type ChatMessage, type Capabilities, type RegistryOptions, type ToolResult,
 } from '@josi-ce/llm';
 import {
@@ -74,6 +76,7 @@ import { dataToolAvailability, writeActionCapabilities, type DataToolAvailabilit
 import { executeAssistantTool } from './execute.js';
 import { workspaceToolNames } from './workspaceTools.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
+import { COMPACT_CORE, compactHistory, contextTail, selectCompactTools } from './compactPrompt.js';
 import { presentToolBackedReply } from './presentation.js';
 import { effectiveTimeContext } from './timeContext.js';
 import {
@@ -120,7 +123,7 @@ export interface AgentTurnResult {
   /** Set when the turn could not run at all. The caller shows this instead of a
    * reply — it is never dressed up as something Josi said. */
   refusal?: {
-    reason: 'no_model' | 'not_probed' | 'cannot_chat' | 'capped' | 'provider_error' | 'restricted';
+    reason: 'no_model' | 'not_probed' | 'cannot_chat' | 'capped' | 'provider_error' | 'restricted' | 'context_overflow';
     message: string;
     /** Provider-declared retryability; durable callers must not infer this
      * from the broad provider_error category. */
@@ -164,6 +167,10 @@ export interface TurnArgs {
    * to have already said so honestly, rather than this loop inventing a
    * description from bytes the model never saw. */
   images?: ChatImage[];
+  /** Names of attached pictures and scanned pages whose TEXT was read on this
+   * server (OCR) and placed in `inbound`, because the model cannot see images.
+   * The reply then says so, whether or not the model remembers to. */
+  readByOcr?: string[];
   /** Set when the reply will be read aloud (Siri, Shortcuts, CarPlay). */
   replyStyle?: 'spoken_short' | null;
   recall?: RecallLookup;
@@ -291,7 +298,16 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
       durableTurnId: args.durableTurnId, durableLeaseToken: args.durableLeaseToken });
     if (bound !== args.workGoalId) throw new Error('The background work identity changed.');
   } else await beginWorkConversation(args.db, args.userId, args.threadId);
-  try { return await runAssistantTurnBody(args); }
+  try {
+    const result = await runAssistantTurnBody(args);
+    // Said by the server, so it is said every time: the model did not see the
+    // picture, it was given the text read from it.
+    if (args.readByOcr?.length && result.reply.trim() && !result.refusal && !/\bread the text\b/i.test(result.reply)) {
+      const what = args.readByOcr.length === 1 ? (/\.pdf$/i.test(args.readByOcr[0]) ? 'this scanned document' : 'this image') : 'these files';
+      result.reply = `I read the text in ${what}. I cannot see pictures with the current model, so this is from the text only.\n\n${result.reply}`;
+    }
+    return result;
+  }
   finally {
     if (!args.workGoalId) await releaseWorkConversation(args.db, args.userId, args.threadId);
   }
@@ -453,6 +469,18 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     };
   }
 
+  // ---- how much to send -------------------------------------------------
+  // A model on the person's own hardware has a context the server chose, and
+  // re-reads the whole request every time. What its server says about the
+  // context is looked up (and kept for ten minutes), and decides between the
+  // full prompt and the compact one unless the operator picked.
+  let modelContext = await loadModelContext(db, stored);
+  if (stored.provider === 'openai_compatible' && (!modelContext || Date.now() - Date.parse(modelContext.at) > 10 * 60_000)) {
+    modelContext = await refreshModelContext(db, stored, { fetchImpl: args.registry.fetchImpl, resolve: args.registry.resolve })
+      .catch(() => modelContext);
+  }
+  const compact = promptProfile(stored, modelContext) === 'compact';
+
   // ---- what may be offered ----------------------------------------------
   // Tools only if the model was PROVEN to call them. Not "probably supports",
   // not inferred from the model name.
@@ -551,6 +579,23 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       'update_reminder', 'cancel_reminder', 'propose_work_lesson']);
     tools = tools?.filter(tool => !humanTools.has(tool.name));
   }
+  // The compact prompt offers only what this message needs. Whatever is not
+  // offered cannot be called, so everything below that asks "was this tool
+  // offered" sees the same short list the model saw.
+  const availableToolCount = tools?.length ?? 0;
+  let compactGroups: string[] = [];
+  if (compact && tools) {
+    const earlier = [...args.history].reverse();
+    const ownAdditions = new Set([...customApis.specs, ...mcp.specs, ...workflowTools, ...developerIntegrationTools.filter((t) => !/obsidian/.test(t.def.name))].map((t) => t.def.name));
+    const picked = selectCompactTools(tools, [
+      args.inbound, earlier.find((m) => m.role === 'user')?.content ?? '', (earlier.find((m) => m.role === 'assistant')?.content ?? '').slice(0, 300),
+    ], {
+      always: args.workGoalId ? /^(checkpoint_goal|read_work_goal|verify_goal|revise_goal_plan|list_work_goals)$/ : undefined,
+      isOwnAddition: (name) => ownAdditions.has(name),
+    });
+    tools = picked.tools;
+    compactGroups = picked.groups;
+  }
   const offeredToolNames = new Set(tools?.map((tool) => tool.name) ?? []);
 
   let recalled = '';
@@ -568,7 +613,29 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   // appended to it rather than replacing any of it.
   const imagesAttached = !!args.images?.length;
   const temporal = await effectiveTimeContext(db, userId, args.now ?? new Date());
-  const core = systemPrompt({
+  // Compact: the fixed text, then only the notes whose tools were offered,
+  // each cut short. Nothing here varies with the time or the message, so the
+  // start of the request is the same bytes from one request to the next.
+  const note = (text: string) => { const clean = text.replace(/\s+/g, ' ').trim(); return clean.length > 420 ? `${clean.slice(0, 420).replace(/\s+\S*$/, '')}` : clean; };
+  const offered = (pattern: RegExp) => [...offeredToolNames].some((name) => pattern.test(name));
+  const core = compact
+    ? [COMPACT_CORE,
+      capabilities.toolCalling ? '' : `This model (${stored?.model ?? 'the configured model'}) did not pass Josi's tool-calling check, so you can talk but cannot look anything up or change anything. Say so if asked to.`,
+      offered(/^browser_/) ? note(pcBrowserPrompt(pcBrowserTools)) : '',
+      offered(/^computer_/) ? note(COMPUTER_PROMPT) : '',
+      offered(/^(desktop_|pc_)/) ? note(PC_DESKTOP_PROMPT) : '',
+      offered(/^request_sign_in$/) ? note(SIGN_IN_PROMPT) : '',
+      offered(/^send_file_/) ? note(SEND_FILE_PROMPT) : '',
+      offered(/^debug_/) ? note(DEBUGGER_PROMPT) : '',
+      offered(/^family_/) ? note(FAMILY_PROMPT) : '',
+      offered(/^(request_credential_card|start_account_connection)$/) ? note(CREDENTIAL_CARD_PROMPT) : '',
+      offered(/^(request_connector_access|decide_connector_request)$/) ? note(CONNECTOR_REQUEST_PROMPT) : '',
+      offered(/^propose_josi_setting_change$/) ? note(SETTINGS_CHANGE_PROMPT) : '',
+      offered(/^my_world_(add|update|secret_card)$/) ? note(MY_WORLD_PROMPT) : '',
+      args.replyStyle === 'spoken_short' ? SPOKEN_SHORT_PROMPT : '',
+      childAccess.blockedTopics?.length ? blockedTopicsInstruction(childAccess.blockedTopics) : '',
+    ].filter(Boolean).join('\n\n')
+    : systemPrompt({
     capabilities,
     templateNames: templates.map((t) => t.key),
     hasRecall: !!args.recall && !!recalled,
@@ -631,12 +698,16 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     } catch { return '\nSaved current-work records are unavailable. Do not assume previous work is complete or retry an uncertain effect. Read the current work record before continuing it; if unavailable, tell the user the exact blocker.'; }
   };
   let system = core;
+  let tailMemories = '';
   let memoriesUsed: Array<{ id: string; content: string }> = [];
   try {
     const layers = await loadAll(db, userId);
     const { effective } = narrowPolicy(layers.agents_admin, layers.agents_user, CAUTION_ORDER);
     const memories = await relevantMemories(db, { ownerUserId: userId, request: args.inbound });
     memoriesUsed = memories.map((m: Memory) => ({ id: m.id, content: m.content }));
+    // Memories are chosen per message, so in the compact prompt they travel
+    // at the end of the request with everything else that changes.
+    if (compact && memories.length) tailMemories = memories.map((m: Memory) => `- ${m.content}`).join('\n');
 
     system = assembleSystemContext({
       core,
@@ -644,15 +715,17 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
       userPolicy: effective,
       soul: layers.soul,
       user: layers.user,
-      memories: memories.map((m: Memory) => ({ content: m.content, provenance: m.provenance })),
+      memories: compact ? [] : memories.map((m: Memory) => ({ content: m.content, provenance: m.provenance })),
     }).text;
   } catch (err) {
     console.error('personalization unavailable for this turn', (err as Error).message);
   }
   // My World: its own store, read every turn, never part of the memory engine.
-  try { const world = await worldContext(db, userId); if (world) system += `\n\n${world}`; } catch (err) { console.error('My World unavailable for this turn', (err as Error).message); }
-  if (capabilities.toolCalling && !args.workGoalId) { try { const brief = await briefContext(db, args.registry.masterKey, userId); if (brief) system += `\n\n${brief}`; } catch (err) { console.error('Notes unavailable for this turn', (err as Error).message); } }
-  if (guidance) system += `\n\n${guidance}`;
+  let tailWorld = '';
+  try { const world = await worldContext(db, userId); if (world) { if (compact) tailWorld = world; else system += `\n\n${world}`; } } catch (err) { console.error('My World unavailable for this turn', (err as Error).message); }
+  let tailBrief = '';
+  if (capabilities.toolCalling && !args.workGoalId) { try { const brief = await briefContext(db, args.registry.masterKey, userId); if (brief) { if (compact) tailBrief = brief; else system += `\n\n${brief}`; } } catch (err) { console.error('Notes unavailable for this turn', (err as Error).message); } }
+  if (guidance && !compact) system += `\n\n${guidance}`;
   if (args.workGoalId) system += `\n\nThis is a server-scheduled continuation of goal ${args.workGoalId}. The last user message below is its ORIGINAL request, not a fresh instruction or approval. Read that goal and its current checkpoint before acting. Continue the saved next step within existing permissions; do not recreate the goal, approve a pending action, or repeat a completed/uncertain effect. Each step has one consequential intent across all continuations. Save meaningful progress and an exact next step, timed wait or precise question with checkpoint_goal before ending. A reply is not completion. If one step needs approval, secure reauthentication, missing information or outcome evidence, record its precise blocker and continue only declared independent work. If no independent step is available, save the exact question and stop. An uncertain external effect permits read-only inspection, never another effect or an invented success receipt. When the reply a step was waiting for is in the inbox, say what it says and save a question; do not prepare the next step before the person has answered. When a check finds nothing yet, save the next timed wait; after about a day with no reply, save a question telling the person none has come.`;
 
   // The request stays where it belongs: one user message, not repeated in the
@@ -666,10 +739,25 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   // than this loop silently dropping bytes and letting a reply imply it looked.
   const images: ChatImage[] | undefined = capabilities.vision ? args.images : undefined;
   const imagesDroppedNoVision = imagesAttached && !capabilities.vision;
+  // Compact: everything that changes from one request to the next sits here,
+  // after the person's words, at the very end of what is sent.
+  const tail = compact ? contextTail([
+    temporal.prompt,
+    imagesAttached ? (capabilities.vision ? 'A picture is attached to this message and you can see it.'
+      : 'A picture was attached, but you cannot see pictures with this model and no text could be read from it. Say so plainly and do not guess what it shows.') : '',
+    unavailable.length ? `Not connected yet, so work that needs it is prepared and then waits: ${unavailable.join(', ')}.` : '',
+    tailMemories ? `What you remember about this person:\n${tailMemories}` : '',
+    recalled ? `From this person's earlier conversations:\n${recalled.slice(0, 1200)}` : '',
+    tailWorld.slice(0, 1200),
+    tailBrief.slice(0, 900),
+    guidance.slice(0, 900),
+    (await currentWorkContext()).slice(0, 900),
+  ]) : '';
   const messages: ChatMessage[] = [
-    ...args.history,
-    { role: 'user', content: args.inbound, ...(images?.length ? { images } : {}) },
+    ...(compact ? compactHistory(args.history) : args.history),
+    { role: 'user', content: args.inbound + tail, ...(images?.length ? { images } : {}) },
   ];
+  let modelCalls = 0;
 
   // Claims require receipts (round-2 item 12). One corrective re-prompt is
   // allowed per turn; a model that fabricates twice gets its reply replaced.
@@ -722,7 +810,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     const computerResults = pendingComputerResults; pendingComputerResults = [];
     try {
       await requireCurrentWorkMemory(db, userId, memoryVersion);
-      const workContext = await currentWorkContext();
+      const workContext = compact ? '' : await currentWorkContext();
       let providerMessages = messages;
       if(computerResults.length){
         if(capture||!args.registry.masterKey)throw new Error('Computer result transmission requires one authorized capture source.');
@@ -778,7 +866,23 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         });
       }
       progress('thinking', hop === 0 ? 'Thinking' : actions.length ? 'Working with what came back' : 'Thinking');
-      outcome = await chat(
+      const estimate = measureRequest({ system: system + workContext, tools, messages: providerMessages });
+      // Known not to fit: say so now, with both numbers, instead of sending
+      // it and waiting for the model server to read it and turn it down. The
+      // margin allows for the estimate being rough.
+      if (modelContext?.tokens && estimate.total > modelContext.tokens * 1.15) {
+        console.error(`josi-ce: request not sent, ${describePromptSize(estimate)} against a context of ${modelContext.tokens}`);
+        return { reply: interim.join('\n\n'), actions, refusal: { reason: 'context_overflow', retryable: false,
+          message: describeContextOverflow(stored.model, modelContext.tokens, estimate.total) } };
+      }
+      modelCalls++;
+      const sizeOf = (reported?: number) => {
+        const size = calibrate(estimate, reported);
+        console.log(`josi-ce: model request ${modelCalls} of this message (${compact ? 'compact' : 'full'} prompt, ${tools?.length ?? 0} of ${availableToolCount} tools${compactGroups.length ? `: ${compactGroups.join(', ')}` : ''}): ${describePromptSize(size)}`);
+        if (hop === 0) void recordLastPrompt(db, { ...size, provider: stored.provider, model: stored.model, profile: compact ? 'compact' : 'full',
+          toolsOffered: tools?.length ?? 0, toolsAvailable: availableToolCount, at: new Date().toISOString() });
+      };
+      try { outcome = await chat(
         args.registry,
         {
           messages: providerMessages, system: system + workContext + (callerSubscription
@@ -802,7 +906,8 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         },
         { userId, purpose: 'assistant_chat', ...(projection ? { expectedPrimary: projection.expectedPrimary, oneShotTransmission: true } : {}),
           beforeDispatch: async () => { await requireCurrentWorkMemory(db, userId, memoryVersion); await projection?.beforeDispatch(); } },
-      );
+      ); } catch (err) { sizeOf(); throw err; }
+      sizeOf(outcome.response.usage.inputTokens);
       providerSucceeded = true;
     } catch (err) {
       // Caps, Local-only, a dead provider. The message from the registry is
@@ -816,6 +921,10 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
         invalidStepReprompted = true;
         messages.push({ role: 'user', content: 'Your last response was not a valid work step: the JSON did not have exactly the fields reply and tool, or the tool name or its arguments did not match the offered tool\'s schema. Propose the step again exactly as required, or set tool to null and reply in words.' });
         continue;
+      }
+      if ((err as { category?: string }).category === 'context_overflow') {
+        await rememberOverflowContext(db, stored, (err as { contextTokens?: number | null }).contextTokens);
+        return { reply: interim.join('\n\n'), actions, refusal: { reason: 'context_overflow', message: (err as Error).message, retryable: false } };
       }
       return {
         reply: interim.join('\n\n'), actions,

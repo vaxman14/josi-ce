@@ -13,7 +13,7 @@ import {
   LlmError, buildProvider, discoverModels, explainCategory, loadStoredProvider, meteredProvider, probeProvider,
   type ProbeResult,
   type LlmErrorCategory,
-} from '@josi-ce/llm';
+refreshModelContext, } from '@josi-ce/llm';
 import { classifySmtpError, loadProfile, smtpTransport, type SmtpTransport } from '@josi-ce/mail';
 import { accountMailSender, ENDPOINTS, loadClient, NoClientError } from '@josi-ce/connectors';
 import { VaultLockedError, type Db, type MasterKey } from '@josi-ce/core';
@@ -61,6 +61,8 @@ export async function verifyLlm(
   } finally {
     track.done();
   }
+  // What the model's own server says about its context, for the Models page.
+  await refreshModelContext(opts.db, stored).catch(() => null);
   const who = stored.model || "your plan's model";
   if (!probe.capabilities.chat) {
     const category = probe.fatalCategory ?? 'provider_outage';

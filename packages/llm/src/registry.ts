@@ -285,7 +285,8 @@ function buildProviderClient(opts: RegistryOptions, stored: StoredProvider, secr
     case 'openai-chat':
     default:
       return openAiCompatibleProvider({ ...shared, kind: stored.provider, external,
-        noThinking: stored.provider === 'openai_compatible' && configString('thinking') === 'off' });
+        // Off unless the operator chose to leave it to the model.
+        noThinking: stored.provider === 'openai_compatible' && configString('thinking') !== 'model' });
   }
 }
 

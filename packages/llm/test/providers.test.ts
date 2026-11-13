@@ -51,6 +51,21 @@ describe('the OpenAI-shaped adapter', () => {
     expect('reasoning_effort' in bodies[2]).toBe(false);
   });
 
+  it('asks again without the thinking value when a local server refuses it, and then stops sending it', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = stubFetch((_url, init) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(body);
+      if ('reasoning_effort' in body) return new Response(JSON.stringify({ error: { message: 'invalid value for reasoning_effort', type: 'invalid_request_error' } }), { status: 400 });
+      return oaiReply({ choices: [{ message: { content: 'ok' } }] });
+    });
+    const provider = openAiCompatibleProvider({ kind: 'openai_compatible', model: 'm', baseUrl: 'http://box.test/v1', external: false,
+      noThinking: true, resolve: localResolve, fetchImpl });
+    expect((await provider.chat({ messages: [{ role: 'user', content: 'hi' }] })).text).toBe('ok');
+    expect((await provider.chat({ messages: [{ role: 'user', content: 'again' }] })).text).toBe('ok');
+    expect(bodies.map((b) => 'reasoning_effort' in b)).toEqual([true, false, false]);
+  });
+
   it('normalises tool calls, including malformed arguments', async () => {
     const provider = openAiCompatibleProvider({
       kind: 'openai', model: 'gpt-test', apiKey: 'k', external: true, resolve,
@@ -261,7 +276,11 @@ describe('the capability probe', () => {
     expect(withImage.capabilities.vision).toBe(true);
     const withoutImage = await probeProvider(fakeModel({ json: true, tools: true, image: false }));
     expect(withoutImage.capabilities.vision).toBe(false);
-    expect(withoutImage.steps.find((s) => s.id === 'vision')?.detail).toMatch(/will not describe/i);
+    // Not a fault: the step says OCR stands in, and is marked as covered.
+    const visionStep = withoutImage.steps.find((s) => s.id === 'vision');
+    expect(visionStep?.detail).toMatch(/Josi uses OCR instead/i);
+    expect(visionStep?.substitute).toBe('ocr');
+    expect(visionStep?.passed).toBe(false);
   });
 
   it('an adapter that ignores the images field entirely fails the vision step honestly', async () => {

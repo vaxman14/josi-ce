@@ -20,6 +20,8 @@ import {
 import {
   UnsafeEndpointError, buildProvider, capabilitiesOf, checkCaps, disabledFeatures, discoverModels,
   isExternalProvider, isLocalOnly, isSubscriptionProvider, loadStoredProvider, meteredProvider,
+  loadModelContext, loadLastPrompt, promptProfile, backgroundModelWork, refreshModelContext,
+  llmDebugEnabled, llmDebugFile, LLM_DEBUG_FLAG_FILE,
   probeProvider, usageSummary, validateEndpoint, LlmError, DEFAULT_CLAUDE_COMMAND,
   DEFAULT_CODEX_COMMAND,
   PROVIDERS, credentialFields, describeProvider, saveModelConfiguration, removeModelConfiguration, ModelConfigurationError,
@@ -340,8 +342,17 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
       const [caps] = await db.query(
         `select monthly_cost_usd, monthly_tokens from llm_caps where id = true`,
       );
+      const storedPrimary = await loadStoredProvider(db, 'primary');
       return res.json({
         primary,
+        // What the model's own server says it can take in, the size of the
+        // last chat request against it, and which prompt is in use. Sizes
+        // only: nothing here is the content of a request.
+        modelContext: await loadModelContext(db, storedPrimary),
+        lastPrompt: await loadLastPrompt(db, storedPrimary),
+        promptProfile: storedPrimary ? promptProfile(storedPrimary, await loadModelContext(db, storedPrimary)) : null,
+        backgroundModelWork: backgroundModelWork(storedPrimary),
+        debugLog: { on: llmDebugEnabled(), file: llmDebugFile(), flagFile: LLM_DEBUG_FLAG_FILE },
         fallback: await providerDto(db, 'fallback'),
         localOnly: await isLocalOnly(db),
         // What CE will and will not do right now, with the reason attached.
@@ -353,6 +364,26 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         // showing a control that silently does nothing.
         edition: describeEdition(),
       });
+    }),
+  );
+
+  /** The debug view: the most recent model requests, one row each, with why
+   * it was made, how many tokens went in and came out, and how long it took.
+   * Counts and times from the usage table, which has no column for content. */
+  r.get(
+    '/requests',
+    handle(async (req, res) => {
+      const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 60));
+      const rows = await db.query<{ id: string; at: string; purpose: string | null; provider: string; model: string; role: string; input_tokens: number; output_tokens: number; latency_ms: number | null }>(
+        `select id::text, created_at as at, purpose, provider, model, role, input_tokens, output_tokens, latency_ms
+           from llm_usage order by id desc limit $1`, [limit]);
+      // Requests that belong to one chat message: consecutive chat requests
+      // with less than a minute between one ending and the next starting.
+      return res.json({ requests: rows.map((r) => ({
+        id: r.id, at: r.at, purpose: r.purpose ?? 'unknown', provider: r.provider, model: r.model, role: r.role,
+        inputTokens: r.input_tokens, outputTokens: r.output_tokens, latencyMs: r.latency_ms,
+        tokensPerSecond: r.latency_ms && r.latency_ms > 0 ? Math.round(((r.input_tokens + r.output_tokens) / r.latency_ms) * 1000) : null,
+      })) });
     }),
   );
 
@@ -637,6 +668,9 @@ export function adminLlmRoutes(ctx: LlmRoutesCtx): Router {
         kind: 'llm.probed',
         payload: { role, capabilities: result.capabilities, passed: result.capabilities.chat },
       });
+      // Ask the model's own server what context it runs with, so the page
+      // can show the real number beside the result of the test.
+      if (role === 'primary') await refreshModelContext(db, stored, { fetchImpl: ctx.fetchImpl, resolve: ctx.resolve }).catch(() => null);
 
       const dto = await providerDto(db, role);
       return res.json({

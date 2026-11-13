@@ -17,6 +17,8 @@ import {
 } from '../types.js';
 import { describeProvider } from '../catalog.js';
 import { safeFetch, UnsafeEndpointError, type SafeFetchOptions } from '../ssrf.js';
+import { measureRequest } from '../promptSize.js';
+import { writeLlmDebug } from '../debugLog.js';
 
 export interface OpenAiCompatibleOptions {
   kind: ProviderKind;
@@ -150,6 +152,9 @@ export function openAiCompatibleProvider(opts: OpenAiCompatibleOptions): LlmProv
   // rather than being unusable for the people it was added for.
   const base = (opts.baseUrl || describeProvider(opts.kind)?.defaultBaseUrl || '').replace(/\/$/, '');
   if (!base) throw new LlmError(`no endpoint configured for ${opts.kind}`);
+  // Set when this server turned down `reasoning_effort: "none"` and then
+  // answered the same request without it.
+  let thinkingValueRefused = false;
 
   return {
     kind: opts.kind,
@@ -158,32 +163,63 @@ export function openAiCompatibleProvider(opts: OpenAiCompatibleOptions): LlmProv
 
     async chat(request: ChatRequest): Promise<ChatResponse> {
       const body = openAiChatBody(opts.model, request);
-      if (opts.noThinking && opts.kind === 'openai_compatible') body.reasoning_effort = 'none';
+      const askNoThinking = !!opts.noThinking && opts.kind === 'openai_compatible' && !thinkingValueRefused;
+      if (askNoThinking) body.reasoning_effort = 'none';
 
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       // A self-hosted runtime may need no key at all; sending an empty bearer
       // makes some of them reject the request outright.
       if (opts.apiKey) headers.Authorization = `Bearer ${opts.apiKey}`;
 
-      const started = Date.now();
-      let res: Response;
-      try {
-        res = await safeFetch(`${base}/chat/completions`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body),
-        }, { timeoutMs: opts.timeoutMs, fetchImpl: opts.fetchImpl, resolve: opts.resolve });
-      } catch (err) {
-        if (err instanceof UnsafeEndpointError) {
-          throw new LlmError(err.message, { needsReconfiguration: true });
+      const url = `${base}/chat/completions`;
+      const send = async (payload: Record<string, unknown>): Promise<{ res: Response; text: string; latencyMs: number }> => {
+        const started = Date.now();
+        let res: Response;
+        try {
+          res = await safeFetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+          }, { timeoutMs: opts.timeoutMs, fetchImpl: opts.fetchImpl, resolve: opts.resolve });
+        } catch (err) {
+          await writeLlmDebug({ provider: opts.kind, model: opts.model, url, request: payload, status: null, reply: null,
+            latencyMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) });
+          if (err instanceof UnsafeEndpointError) {
+            throw new LlmError(err.message, { needsReconfiguration: true });
+          }
+          // Abort or socket failure.
+          throw new LlmError(explainCategory('network'), { retryable: true, category: 'network' });
         }
-        // Abort or socket failure.
-        throw new LlmError(explainCategory('network'), { retryable: true, category: 'network' });
-      }
-      const latencyMs = Date.now() - started;
+        const latencyMs = Date.now() - started;
+        const text = await res.text().catch(() => '');
+        await writeLlmDebug({ provider: opts.kind, model: opts.model, url, request: payload, status: res.status, reply: text, latencyMs });
+        return { res, text, latencyMs };
+      };
 
-      const text = await res.text().catch(() => '');
+      let { res, text, latencyMs } = await send(body);
+      // "Do not think" is on by default for a model on the operator's own
+      // hardware, and not every local server knows the value. One that refuses
+      // the request for it is asked again without it, once, and not asked that
+      // way again by this client. A request that was too large is not that case.
+      if (askNoThinking && (res.status === 400 || res.status === 422) && !contextOverflow(text)) {
+        const plain = { ...body };
+        delete plain.reasoning_effort;
+        const again = await send(plain);
+        if (again.res.ok) thinkingValueRefused = true;
+        ({ res, text, latencyMs } = again);
+      }
+
       if (!res.ok) {
+        // A request larger than the model's context. The server's sentence is
+        // not repeated (it is prose), only the two numbers in it; the request
+        // size falls back to our own estimate.
+        const overflow = contextOverflow(text);
+        if (overflow) {
+          const requestTokens = overflow.requestTokens ?? measureRequest(request).total;
+          throw new LlmError(describeContextOverflow(opts.model, overflow.contextTokens, requestTokens, overflow.requestTokens !== null), {
+            status: res.status, category: 'context_overflow', contextTokens: overflow.contextTokens, requestTokens,
+          });
+        }
         // The provider's own PROSE goes nowhere near the caller: it routinely
         // echoes back parts of the request, and this one contains the prompt.
         // Its short `code`/`type` is an enum member rather than prose, and it
@@ -216,6 +252,55 @@ export function openAiCompatibleProvider(opts: OpenAiCompatibleOptions): LlmProv
       return readOpenAiChat(parsed, latencyMs);
     },
   };
+}
+
+/** Whether an error body says the request did not fit the model's context,
+ * and the numbers it gives.
+ *
+ * llama.cpp answers with `type: exceed_context_size_error` and two counters;
+ * Ollama and the hosted vendors say it in a sentence, sometimes with the
+ * numbers in it. Only numbers are taken from the sentence. */
+export function contextOverflow(body: string): { contextTokens: number | null; requestTokens: number | null } | null {
+  if (!body) return null;
+  let message = body.slice(0, 2000);
+  let type = '';
+  let contextTokens: number | null = null;
+  let requestTokens: number | null = null;
+  const count = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 && value < 100_000_000 ? Math.round(value) : null;
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; n_ctx?: unknown; n_prompt_tokens?: unknown };
+    const error = (parsed.error && typeof parsed.error === 'object' ? parsed.error : parsed) as Record<string, unknown>;
+    if (typeof parsed.error === 'string') message = parsed.error.slice(0, 2000);
+    else if (typeof error.message === 'string') message = error.message.slice(0, 2000);
+    type = [error.type, error.code].filter((v) => typeof v === 'string').join(' ');
+    contextTokens = count(error.n_ctx) ?? count(parsed.n_ctx);
+    requestTokens = count(error.n_prompt_tokens) ?? count(parsed.n_prompt_tokens);
+  } catch { /* not JSON: the text itself is searched */ }
+  const says = /exceed_context_size|context_length_exceeded/i.test(type)
+    || /(exceeds?|larger than|longer than|over|beyond|too long for)[^.]{0,60}context/i.test(message)
+    || /context (size|length|window)[^.]{0,60}(exceed|too (small|short)|is only)/i.test(message)
+    || /maximum context length|prompt is too long|too many (input )?tokens/i.test(message);
+  if (!says) return null;
+  if (contextTokens === null) {
+    const m = /(?:context (?:size|length|window)|n_ctx|num_ctx)[^0-9]{0,40}(\d{3,9})/i.exec(message) ?? /maximum[^0-9]{0,40}(\d{3,9}) tokens/i.exec(message);
+    if (m) contextTokens = Number(m[1]);
+  }
+  if (requestTokens === null) {
+    const m = /(?:request(?:ed)?|prompt|messages?|input)[^0-9]{0,40}(\d{3,9})(?: tokens)?/i.exec(message);
+    if (m && Number(m[1]) !== contextTokens) requestTokens = Number(m[1]);
+  }
+  return { contextTokens, requestTokens };
+}
+
+/** The sentence a person reads: both sizes, and the two ways out. */
+export function describeContextOverflow(model: string, contextTokens: number | null, requestTokens: number | null, exact = false): string {
+  const n = (v: number) => v.toLocaleString('en-US');
+  const request = requestTokens ? `${exact ? '' : 'about '}${n(requestTokens)} tokens` : 'more tokens than fit';
+  const context = contextTokens ? `${n(contextTokens)} tokens` : 'a smaller number';
+  return `This request is ${request}, and the model ${model || 'in use'} can take in ${context} at once (its context size). `
+    + 'Nothing was answered. Either raise the context size on the model server (in Ollama: num_ctx), '
+    + 'or switch Josi to the compact prompt under Models, then send the message again.';
 }
 
 /** Status codes turned into something an operator can act on, with nothing of

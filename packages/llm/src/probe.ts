@@ -19,10 +19,18 @@ import { LlmError } from './types.js';
 const RED_SWATCH_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGO4IyKCFTEMLQkAmD9BAZzFjLYAAAAASUVORK5CYII=';
 
+/** What the image step says when the model has no image understanding. */
+export const VISION_SUBSTITUTE_DETAIL = 'Not supported by this model. Josi uses OCR instead: the text in pictures and scanned pages '
+  + 'is read on this server and given to the model, and Josi says so each time. Nothing else is switched off.';
+
 export interface ProbeStep {
   id: keyof Capabilities | 'context';
   label: string;
   passed: boolean;
+  /** Set when the model cannot do this itself and Josi covers it another way,
+   * which is neither a pass nor a fault. Today: image understanding, covered
+   * by reading the text in the picture on this server (OCR). */
+  substitute?: 'ocr';
   /** One sentence for the operator. Never the provider's own error text. */
   detail: string;
   latencyMs?: number;
@@ -230,11 +238,11 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
       id: 'vision',
       label: 'Image understanding',
       passed,
+      ...(passed ? {} : { substitute: 'ocr' as const }),
       latencyMs: res.latencyMs,
       detail: passed
         ? 'The model correctly identified the color of a test image.'
-        : 'The model did not correctly identify a test image, so Josi will not describe attached '
-          + 'pictures with it — it will say plainly that it cannot see them.',
+        : VISION_SUBSTITUTE_DETAIL,
     });
   } catch (err) {
     if (process.env.JOSI_PROBE_DEBUG) console.log(`probe vision error: ${err instanceof Error ? err.message : String(err)}`);
@@ -242,7 +250,8 @@ export async function probeProvider(provider: LlmProvider, opts: ProbeOptions = 
       id: 'vision',
       label: 'Image understanding',
       passed: false,
-      detail: err instanceof LlmError ? err.message : 'the image-understanding check failed',
+      substitute: 'ocr',
+      detail: VISION_SUBSTITUTE_DETAIL,
     });
   }
 

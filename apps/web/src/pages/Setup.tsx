@@ -47,7 +47,7 @@ interface Review {
   canComplete: boolean;
   headline: string;
   summary?: {
-    llm?: { probeSteps?: Array<{ id: string; label: string; passed: boolean; detail: string }> };
+    llm?: { probeSteps?: Array<{ id: string; label: string; passed: boolean; detail: string; substitute?: string }> };
     smtp?: Array<{
       kind: string; host: string | null; port: number | null; security: string | null;
       username: string | null; passwordSet: boolean | null; fromName: string | null;
@@ -892,8 +892,8 @@ function ReviewPanel({
               <ul className="mt-2 space-y-1 text-xs" aria-label="Model capability test results">
                 {review.summary.llm.probeSteps.map((step) => (
                   <li key={step.id} className="flex gap-2">
-                    <span className={step.passed ? 'text-success' : 'text-warning'} aria-hidden>
-                      {step.passed ? '✓' : '—'}
+                    <span className={step.passed ? 'text-success' : step.substitute ? 'text-muted-foreground' : 'text-warning'} aria-hidden>
+                      {step.passed ? '✓' : step.substitute ? '→' : '—'}
                     </span>
                     <span><strong>{step.label}:</strong> {step.detail}</span>
                   </li>

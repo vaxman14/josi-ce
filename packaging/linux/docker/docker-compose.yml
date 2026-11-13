@@ -24,6 +24,8 @@ services:
     environment:
       JOSI_HOST_ADDRESS: ${JOSI_HOST_ADDRESS:?set JOSI_HOST_ADDRESS to the address people use to reach this machine}
       JOSI_HOST_PORT: ${JOSI_PORT:-8080}
+      # Set when Josi is published at an https name through a tunnel or proxy.
+      JOSI_PUBLIC_URL: ${JOSI_PUBLIC_URL:-}
       JOSI_PC_CONTROL: ${JOSI_PC_CONTROL:-1}
       JOSI_BROWSER: ${JOSI_BROWSER:-1}
     volumes:

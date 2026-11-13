@@ -152,17 +152,47 @@ export const PROVIDERS: readonly ProviderDescriptor[] = [
         // Some local models (Qwen 3 and its relatives under Ollama) think
         // before they answer, and with tools that can end in an empty reply.
         // "Off" sends reasoning_effort "none" with every request, which Ollama
-        // honours. It is a choice and not the default because a server that
-        // does not know the value may refuse the request.
+        // honours. It is the default: nothing stored means off. A server that
+        // does not know the value and refuses the request is asked again
+        // without it (see the adapter), so the default cannot lock anyone out.
         key: 'thinking',
         label: 'Thinking',
         secret: false,
         required: false,
         choices: [
-          { value: '', label: 'Leave it to the model' },
-          { value: 'off', label: 'Off (answers directly)' },
+          { value: 'off', label: 'Off: answers directly (recommended)' },
+          { value: 'model', label: 'Leave it to the model' },
         ],
-        help: 'Turn it off if your model thinks out loud, answers slowly, or comes back empty after using a tool. Works with Ollama.',
+        help: 'Off is right for almost every local model: with thinking on, many answer slowly or come back empty after using a tool.',
+      },
+      {
+        // How much Josi sends with every message. The full prompt and every
+        // tool is about 15,000 tokens before the conversation starts, which a
+        // small local model either cannot take in or was never trained on.
+        key: 'prompt',
+        label: 'Prompt size',
+        secret: false,
+        required: false,
+        choices: [
+          { value: 'auto', label: 'Automatic: compact when the model\'s context is under 32,000 tokens' },
+          { value: 'compact', label: 'Compact: short instructions, only the tools this message needs' },
+          { value: 'full', label: 'Full: everything, every time' },
+        ],
+        help: 'Compact keeps a whole request near 5,000 tokens, close to what small local models are trained on. Full suits large models with a large context.',
+      },
+      {
+        // Josi's own calls around a conversation (learning from a message,
+        // reviewing mistakes). On one local model each of them makes the next
+        // message slower, so they are off unless asked for.
+        key: 'background',
+        label: 'Background learning',
+        secret: false,
+        required: false,
+        choices: [
+          { value: 'off', label: 'Off: one model request per step, nothing in the background (recommended)' },
+          { value: 'on', label: 'On: Josi also learns facts and reviews mistakes with extra model requests' },
+        ],
+        help: 'With one local model, every extra request makes the next message slower, because the model re-reads the conversation afterwards.',
       },
     ],
     discovery: 'endpoint',

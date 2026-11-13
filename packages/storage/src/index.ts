@@ -75,3 +75,4 @@ export { nativeScannerHealth, type NativeScannerHealth } from './nativeScannerHe
 export { openStorageFile, pinWindowsDirectory, publishWindowsFile } from './windowsFiles.js';
 
 export { nativeMac, nativeLinux, nativePosix } from './nativeRuntime.js';
+export * from './ocr.js';

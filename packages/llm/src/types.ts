@@ -205,6 +205,10 @@ export type LlmErrorCategory =
   | 'billing'
   | 'network'
   | 'malformed_request'
+  // The request is larger than the model's context window. Its own category
+  // because the fix is neither "report a defect" nor "try again": the operator
+  // raises the model's context or switches Josi to the compact prompt.
+  | 'context_overflow'
   | 'provider_outage'
   | 'unknown';
 
@@ -222,10 +226,15 @@ export class LlmError extends Error {
    * quote the request back, and the request contains the prompt. A code is an
    * enum member, so it is safe to show and worth showing. */
   providerCode?: string;
+  /** For `context_overflow`: the model's context window and the size of the
+   * request that did not fit, in tokens. Numbers only, read from the server's
+   * answer or measured here; null when neither could be established. */
+  contextTokens?: number | null;
+  requestTokens?: number | null;
 
   constructor(
     message: string,
-    init: Partial<Pick<LlmError, 'needsReconfiguration' | 'retryable' | 'status' | 'category' | 'providerCode'>> = {},
+    init: Partial<Pick<LlmError, 'needsReconfiguration' | 'retryable' | 'status' | 'category' | 'providerCode' | 'contextTokens' | 'requestTokens'>> = {},
   ) {
     super(message);
     Object.assign(this, init);
@@ -270,6 +279,8 @@ export function explainCategory(category: LlmErrorCategory): string {
       return 'The provider could not be reached from this server. Check outbound network access and DNS.';
     case 'malformed_request':
       return 'The provider rejected the shape of the request. This is a defect in Josi rather than in your configuration — please report it.';
+    case 'context_overflow':
+      return 'The request is larger than the model can take in at once (its context size).';
     case 'provider_outage':
       return 'The provider had a server error. Nothing is wrong with this installation; try again shortly.';
     default:
@@ -354,8 +365,8 @@ export const FEATURE_GATES: readonly FeatureGate[] = [
     feature: 'chat_vision',
     requires: 'vision',
     explanation:
-      'This model was not shown to understand images, so Josi will not guess what a picture shows. '
-      + 'It will say plainly that it cannot see the attachment.',
+      'This model does not understand images. Josi reads the text in pictures and scanned pages on this server (OCR) '
+      + 'and passes that text to the model. It says so each time, and it will not describe what a picture looks like.',
   },
 ];
 

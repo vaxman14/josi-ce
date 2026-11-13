@@ -31,7 +31,7 @@ import {
   changeWorkOutcome, workOutcomeHistory, retireWorkStep, WorkGoalError,
 } from '@josi-ce/core';
 import { verifyPassword } from '@josi-ce/auth';
-import { runAssistantTurn, automationDiscovery, type RecallLookup } from '@josi-ce/agent';
+import { runAssistantTurn, automationDiscovery, ocrAttachment, needsOcr, fitAttachmentText, attachmentBudgetChars, type RecallLookup } from '@josi-ce/agent';
 import type { LoadOptions } from '@josi-ce/core';
 import { loadMasterKey } from '@josi-ce/core';
 import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
@@ -531,11 +531,26 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
       // Non-image attachments keep working exactly as before: their extracted
       // text (never run through OCR-as-description — that path is images
       // only) rides along as context in the message.
-      const attachmentContext = nonImageAttachments.map((a) => a.extracted_text
-        ? `Attached file ${a.filename}:\n${a.extracted_text}`
-        : a.analysis_status==='unavailable'
-          ? `Attached file ${a.filename} (${a.content_type}); analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`
-          : `Attached file ${a.filename} (${a.content_type}); no readable text was extracted.`).join('\n\n');
+      // A model that cannot see is given the text read from each picture (OCR,
+      // on this server); a PDF that is pictures of pages is read the same way
+      // for every model. The reply says so.
+      const readByOcr: string[] = [];
+      const contextParts: string[] = [];
+      if (!hasVision) for (const a of imageAttachments) {
+        const text = await ocrAttachment(db, a, () => readAttachment(a.id, uploadDir));
+        if (text) { contextParts.push(text); readByOcr.push(a.filename); }
+      }
+      for (const a of nonImageAttachments) {
+        const scanned = needsOcr(a) ? await ocrAttachment(db, a, () => readAttachment(a.id, uploadDir)) : null;
+        if (scanned) { contextParts.push(scanned); readByOcr.push(a.filename); continue; }
+        contextParts.push(a.extracted_text
+          ? `Attached file ${a.filename}:\n${a.extracted_text}`
+          : a.analysis_status==='unavailable'
+            ? `Attached file ${a.filename} (${a.content_type}); analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`
+            : `Attached file ${a.filename} (${a.content_type}); no readable text was extracted.`);
+      }
+      const attachmentContext = (await fitAttachmentText(registryOptions(ctx), { userId: thread.owner_user_id, question: inbound,
+        text: contextParts.join('\n\n'), budget: await attachmentBudgetChars(db) })).text;
 
       // Image attachments are never described from pre-extracted text. Either
       // the bytes are read and handed to a model PROVEN to have vision, or
@@ -571,6 +586,7 @@ export function assistantRoutes(ctx: AssistantRoutesCtx): Router {
         inboundMessageId: inboundMessage.id,
         automationRuntime: ctx.automationRuntime,
         images,
+        readByOcr,
         recall: ctx.recall,
         connectorFetch: ctx.connectorFetch,
         customApiFetch: ctx.customApiFetch,

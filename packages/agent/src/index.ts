@@ -26,3 +26,5 @@ export * from './connectorRequestTools.js';
 export * from './myWorldTools.js';
 export * from './briefTools.js';
 export * from './dailyBrief.js';
+export * from './attachmentText.js';
+export * from './compactPrompt.js';

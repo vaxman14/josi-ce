@@ -30,6 +30,7 @@ export function failureMessage(code: string | null): string {
     case 'not_probed': return 'The saved model must pass its capability check before it can answer.';
     case 'cannot_chat': return 'The saved model did not pass its basic reply check.';
     case 'capped': return 'The model cannot run with its current connection or usage settings. Check the subscription or API connection and the model limits.';
+    case 'context_overflow': return 'This message was too large for the model. The sizes and what to do are in the note Josi left in this conversation and under Models, Size and speed.';
     case 'provider_error': return 'The model provider could not complete this reply. Check its connection and run the model capability check.';
     case 'session_expired': return 'Your sign-in expired before this message could run. Sign in again to continue.';
     case 'worker_interrupted': return 'The server stopped before this reply finished.';

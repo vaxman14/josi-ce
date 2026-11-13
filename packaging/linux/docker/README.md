@@ -42,6 +42,7 @@ Or with Compose, from this folder: set `JOSI_HOST_ADDRESS` in the environment
 |---|---|---|
 | `JOSI_HOST_ADDRESS` | the container's address | what people type to reach this machine |
 | `JOSI_HOST_PORT` | `8080` | the port you published for 8080 |
+| `JOSI_PUBLIC_URL` | none | the `https://` address when Josi is published through a tunnel or your own proxy (see below) |
 | `JOSI_PC_CONTROL` | `1` | `0`: Josi may not control the container |
 | `JOSI_BROWSER` | `1` | `0`: no hidden-screen Chrome |
 
@@ -54,9 +55,52 @@ With the `--add-host` line above, a model server running on the Docker host is
   (for example `OLLAMA_HOST=172.17.0.1:11434` in its service settings).
 - In Josi (setup, or Admin, Model) pick "A model on your own hardware", address
   `http://host.docker.internal:11434/v1`, no key.
-- If the model thinks before it answers (Qwen 3 and relatives), set
-  "Thinking" to "Off". Josi then sends `reasoning_effort: "none"` with every
-  request. Left on, such a model can come back empty after using a tool.
+- "Thinking" is Off unless you change it: Josi sends `reasoning_effort: "none"`
+  with every request. With thinking on, Qwen 3 and its relatives answer slowly
+  and can come back empty after using a tool.
+- "Prompt size" is Automatic: Josi asks Ollama what context the model runs
+  with (`num_ctx`) and uses its compact prompt, about 5,000 tokens a request,
+  when that is under 32,000. Josi cannot raise `num_ctx` itself; it is set on
+  the model in Ollama. Admin, Model, "Size and speed" shows the context, the
+  size of the last request split into instructions, tools and conversation, and
+  every recent request with its tokens and seconds.
+- A model that cannot see pictures still gets their text: Josi reads pictures
+  and scanned PDFs on this server (OCR, English) and says so in the reply.
+
+To record the exact request and raw reply of every model call, for debugging:
+
+```
+docker exec josi touch /etc/josi/llm-debug      # on, no restart
+docker exec josi sh -c 'tail -n 2 /var/lib/josi/data/logs/worker/llm-debug/model-calls.jsonl'
+docker exec josi rm /etc/josi/llm-debug         # off
+```
+
+Chat replies are made by the worker service, the model test by the web
+service (`.../logs/web/llm-debug/`). The file holds conversations; turn it off
+when you are done.
+
+## Behind a tunnel or your own proxy
+
+When people reach Josi at an `https://` name that something else serves (a
+Cloudflare tunnel, nginx, Caddy on the host), start the container with that
+name and point the tunnel at `http://localhost:8080`:
+
+```
+docker run ... -e JOSI_PUBLIC_URL=https://josi.example.com ... josi:latest
+```
+
+The setup link, emailed links, sign-in redirects and phone pairing then use
+that address, and sign-in cookies are marked Secure. Two consequences: signing
+in at the plain `http://<LAN address>:8080` stops working (use the https name,
+or `http://localhost:8080` on the machine itself), and the variable has to
+stay on the container, because the address is applied at every start. To
+change an existing container, remove it and run it again with the variable;
+the data volumes stay.
+
+Before the first account exists, the only thing an outside visitor can do is
+load the sign-in page: every setup request needs the one-time link printed in
+the container's log, which is random, works once and expires after ten
+minutes. Finish setup before you tell anyone the address.
 
 ## Notes
 

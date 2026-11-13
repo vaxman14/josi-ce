@@ -24,11 +24,19 @@ interface Provider {
   active: boolean;
   probedAt: string | null;
   capabilities: { chat: boolean; structuredOutput: boolean; toolCalling: boolean; contextTokens: number | null } | null;
-  probeSteps: Array<{ id: string; label: string; passed: boolean; detail: string }>;
+  probeSteps: Array<{ id: string; label: string; passed: boolean; detail: string; substitute?: string }>;
 }
+
+interface PromptSize { system: number; tools: number; history: number; latest: number; total: number; measured: boolean }
+interface ModelRequest { id: string; at: string; purpose: string; model: string; inputTokens: number; outputTokens: number; latencyMs: number | null; tokensPerSecond: number | null }
 
 interface AdminLlm {
   primary: Provider | null;
+  modelContext?: { tokens: number | null; source: string; trainedMax: number | null; at: string } | null;
+  lastPrompt?: (PromptSize & { profile: string; toolsOffered: number; toolsAvailable: number; at: string }) | null;
+  promptProfile?: 'full' | 'compact' | null;
+  backgroundModelWork?: boolean;
+  debugLog?: { on: boolean; file: string; flagFile: string };
   fallback: Provider | null;
   localOnly: boolean;
   disabledFeatures: Array<{ feature: string; reason: string }>;
@@ -153,15 +161,15 @@ export function AdminModel() {
                 disabled={probing || saving} onClick={() => void probe()}>{probing ? 'Testing…' : 'Test again'}</Button> : null}
               {Array.isArray(data.primary.probeSteps) && data.primary.probeSteps.length ? <ul className="space-y-1">
                 {data.primary.probeSteps.map((s) => <li key={s.id} className="break-words">
-                  {s.passed ? '✓' : '✗'} {s.label} — {s.detail}
+                  {s.passed ? '✓' : s.substitute ? '→' : '✗'} {s.label} — {s.detail}
                 </li>)}
               </ul> : null}
             </div> : null}
-            {data.disabledFeatures.length ? <div className="space-y-2">
+            {data.disabledFeatures.filter((f) => f.feature !== 'chat_vision').length ? <div className="space-y-2">
               <h2 className="font-medium">Unavailable features</h2>
               <ul className="space-y-1 text-muted-foreground">
-                {data.disabledFeatures.map((f) => <li key={f.feature}>
-                  {f.feature === 'chat_vision' ? 'Image understanding' : f.feature.replace(/_/g, ' ')} — {f.reason}
+                {data.disabledFeatures.filter((f) => f.feature !== 'chat_vision').map((f) => <li key={f.feature}>
+                  {f.feature.replace(/_/g, ' ')} — {f.reason}
                 </li>)}
               </ul>
             </div> : null}
@@ -175,8 +183,110 @@ export function AdminModel() {
             </div> : null}
           </div>
         </CollapsibleCard>
+        {data.primary ? <SizeAndSpeed data={data} /> : null}
       </> : null}
     </div>
+  );
+}
+
+const count = (n: number) => n.toLocaleString('en-US');
+const PURPOSES: Record<string, string> = {
+  assistant_chat: 'Chat reply', probe: 'Model test', 'memory.learn': 'Learning from a message', 'memory.summary': 'Conversation summary',
+  'improvement.review': 'Reviewing mistakes', 'attachment.condense': 'Condensing a long attachment', josi_doctor_plan: 'System checkup',
+  cardinal_meaning_review: 'Rule wording review',
+};
+
+/** How much the model can take in, how much Josi sends, and what each recent
+ * request cost. Numbers only: nothing on this card is the content of a request. */
+function SizeAndSpeed({ data }: { data: AdminLlm }) {
+  const [requests, setRequests] = useState<ModelRequest[] | null>(null);
+  const loadRequests = () => api.get<{ requests: ModelRequest[] }>('/admin/llm/requests?limit=40').then((r) => setRequests(r.requests)).catch(() => setRequests([]));
+  const context = data.modelContext?.tokens ?? null;
+  const last = data.lastPrompt ?? null;
+  const local = data.primary?.provider === 'openai_compatible';
+  // Room for the reply is part of the context too.
+  const tooBig = !!(context && last && last.total + 1024 > context);
+  // Requests one chat message made: chat rows with under a minute between them.
+  const perMessage = (() => {
+    const chats = (requests ?? []).filter((r) => r.purpose === 'assistant_chat');
+    if (!chats.length) return null;
+    let n = 1;
+    for (let i = 1; i < chats.length; i++) {
+      if (Date.parse(chats[i - 1].at) - Date.parse(chats[i].at) > 60_000) break;
+      n++;
+    }
+    return n;
+  })();
+  return (
+    <CollapsibleCard title="Size and speed" summary="How much the model can take in, how much Josi sends, and how long each request took." className="text-sm">
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <h2 className="font-medium">Context size</h2>
+          {context ? <p>{count(context)} tokens <span className="text-muted-foreground">({data.modelContext?.source})</span></p>
+            : <p className="text-muted-foreground">{local ? `Unknown: ${data.modelContext?.source ?? 'run Test again to ask your model server'}.` : 'Set by the provider; Josi does not need to check it.'}</p>}
+          {data.modelContext?.trainedMax && data.modelContext.trainedMax !== context
+            ? <p className="text-muted-foreground">The model itself supports up to {count(data.modelContext.trainedMax)} tokens.</p> : null}
+        </div>
+        <div className="space-y-1">
+          <h2 className="font-medium">What Josi sends</h2>
+          <p>{data.promptProfile === 'compact'
+            ? 'Compact prompt: short instructions and only the tools each message needs.'
+            : 'Full prompt: all instructions and every tool, each time.'}
+            {local ? ' Change it under Change model, Prompt size.' : ''}</p>
+          {last ? <>
+            <p>Last chat request: <strong>{last.measured ? '' : 'about '}{count(last.total)} tokens</strong>
+              {' '}<span className="text-muted-foreground">({last.measured ? 'counted by the model server' : 'estimated'})</span></p>
+            <ul className="text-muted-foreground">
+              <li>Instructions (system prompt): {count(last.system)}</li>
+              <li>Tools ({last.toolsOffered} of {last.toolsAvailable} offered): {count(last.tools)}</li>
+              <li>Earlier conversation: {count(last.history)}</li>
+              <li>The message itself, with its context: {count(last.latest)}</li>
+            </ul>
+          </> : <p className="text-muted-foreground">No chat request has been sent with this model yet.</p>}
+          {tooBig ? <ErrorNote>
+            That request plus room for a reply does not fit the model's context of {count(context!)} tokens.
+            {data.promptProfile === 'compact' ? ' Raise the context size on your model server.' : ' Switch Prompt size to Compact, or raise the context size on your model server.'}
+          </ErrorNote> : null}
+        </div>
+        <div className="space-y-1">
+          <h2 className="font-medium">Background requests</h2>
+          <p className="text-muted-foreground">{data.backgroundModelWork
+            ? 'On: after a reply Josi may make extra model requests to learn facts and review mistakes.'
+            : 'Off: Josi makes model requests only to answer. Nothing runs in the background, so the model is not interrupted between messages.'}</p>
+        </div>
+        <div className="space-y-2">
+          <h2 className="font-medium">Recent requests</h2>
+          {requests === null ? <Button type="button" variant="secondary" onClick={() => void loadRequests()}>Show recent requests</Button>
+            : !requests.length ? <p className="text-muted-foreground">No requests recorded yet.</p> : <>
+              {perMessage ? <p className="text-muted-foreground">The last chat message took {perMessage} model request{perMessage === 1 ? '' : 's'}.</p> : null}
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="text-muted-foreground"><tr>
+                    <th className="py-1 pr-3 font-medium">Time</th><th className="py-1 pr-3 font-medium">Why</th>
+                    <th className="py-1 pr-3 font-medium">Tokens in</th><th className="py-1 pr-3 font-medium">Tokens out</th>
+                    <th className="py-1 pr-3 font-medium">Seconds</th><th className="py-1 font-medium">Tokens/s</th>
+                  </tr></thead>
+                  <tbody>{requests.map((r) => <tr key={r.id} className="border-t border-border">
+                    <td className="whitespace-nowrap py-1 pr-3">{new Date(r.at).toLocaleTimeString()}</td>
+                    <td className="py-1 pr-3">{PURPOSES[r.purpose] ?? r.purpose}</td>
+                    <td className="py-1 pr-3 tabular-nums">{count(r.inputTokens)}</td>
+                    <td className="py-1 pr-3 tabular-nums">{count(r.outputTokens)}</td>
+                    <td className="py-1 pr-3 tabular-nums">{r.latencyMs === null ? '' : (r.latencyMs / 1000).toFixed(1)}</td>
+                    <td className="py-1 tabular-nums">{r.tokensPerSecond === null ? '' : count(r.tokensPerSecond)}</td>
+                  </tr>)}</tbody>
+                </table>
+              </div>
+              <Button type="button" variant="secondary" onClick={() => void loadRequests()}>Refresh</Button>
+            </>}
+        </div>
+        {data.debugLog ? <div className="space-y-1">
+          <h2 className="font-medium">Exact requests and replies</h2>
+          <p className="text-muted-foreground">{data.debugLog.on
+            ? `Recording is ON. Every request to a model on your own hardware and its raw reply is written to ${data.debugLog.file} on the server. It contains conversations: turn it off when you are done by deleting ${data.debugLog.flagFile}.`
+            : `Off. To record the exact request and raw reply of every call for debugging, create the file ${data.debugLog.flagFile} on the server. Nothing is recorded until then.`}</p>
+        </div> : null}
+      </div>
+    </CollapsibleCard>
   );
 }
 

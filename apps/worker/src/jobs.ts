@@ -33,9 +33,10 @@ import {
 } from '@josi-ce/channels';
 import { assistantMailAvailable, loadProfile, mailPolicy, newRoutingToken, renderedEmailMime, sendOperationalEmail, smtpTransport, verifyFrozenEmail } from '@josi-ce/mail';
 import { runDailyBrief, effectiveTimeContext, formatCalendarRange, runAssistantTurn, conversationHistory, createRecall, summarizeThread,
-  recordTurnInsights, learnFromTurn, reviewInsights, ALL_TOOLS } from '@josi-ce/agent';
+  recordTurnInsights, learnFromTurn, reviewInsights, ALL_TOOLS,
+  ocrAttachment, needsOcr, fitAttachmentText, attachmentBudgetChars } from '@josi-ce/agent';
 import { IMAGE_MEDIA_TYPES, MEDIA_PROCESSING, MEDIA_TRANSCRIPT, clock, extractFrames, isAudio, isVideo, mediaToolsAvailable, readAttachment, syncLocalMapping, withMediaFile, type Scanner } from '@josi-ce/storage';
-import { capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
+import { backgroundModelWork, capabilitiesOf, loadStoredProvider } from '@josi-ce/llm';
 import { extname } from 'node:path';
 import { purgeGoogleLoginStates } from '@josi-ce/auth';
 import { runDailyBackup } from './dailyBackup.js';
@@ -142,6 +143,10 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
           :a.analysis_code===MEDIA_PROCESSING?' Its transcript is still being made, so what is said is not available yet.'
           :a.analysis_code==='media_no_speech'?' Nothing is said in it.':` What is said in it could not be transcribed (${a.analysis_code??'analysis_unavailable'}).`;
         const parts:string[]=[];
+        // A model that cannot see is given the text read from each picture
+        // (OCR, on this server) and the reply says so.
+        const readByOcr:string[]=[];
+        if(!vision)for(const a of attachments.filter(a=>mediaType(a.filename))){const text=await ocrAttachment(db,a,()=>readAttachment(a.id));if(text){parts.push(text);readByOcr.push(a.filename);}}
         for(const a of attachments.filter(a=>!mediaType(a.filename))){
           const ext=extension(a.filename);
           if(isVideo(ext)){
@@ -154,19 +159,30 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
             parts.push(`Attached video ${a.filename}.`+(frames.length?` ${frames.length} still frames from it are attached as images, in time order, taken at ${frames.map(f=>clock(f.atSeconds)).join(', ')}.`
               :vision?' Its frames could not be read.':' This model cannot see images, so only what is said in it is available.')+said(a));
           }else if(isAudio(ext))parts.push(`Attached recording ${a.filename}.`+said(a));
+          else if(needsOcr(a)){
+            // A PDF that is pictures of pages: read page by page, for every model.
+            const text=await ocrAttachment(db,a,()=>readAttachment(a.id));
+            if(text){parts.push(text);readByOcr.push(a.filename);}else parts.push(`Attached file ${a.filename}; no readable text was extracted.`);
+          }
           else parts.push(a.extracted_text?`Attached file ${a.filename}:\n${a.extracted_text}`:a.analysis_status==='unavailable'?`Attached file ${a.filename}; analysis unavailable (${a.analysis_code??'analysis_unavailable'}).`:`Attached file ${a.filename}; no readable text was extracted.`);
         }
-        const context=parts.join('\n\n');
+        const registry={db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve};
+        // Attached text over what a small local model can take in is worked
+        // through in parts first; under it, it is passed as it is.
+        const context=(await fitAttachmentText(registry,{userId:turn.owner_user_id,question:inbound.body??'',text:parts.join('\n\n'),budget:await attachmentBudgetChars(db)})).text;
         const images=vision?pictures.slice(0,10):undefined;
         // Item 16: what the turn is doing, written as it happens for the app's live status line; never more than a few writes a second.
         let progressAt=0;const onProgress=(p:{phase:string;detail:string})=>{const now=Date.now();if(now-progressAt<250&&p.phase==='thinking')return;progressAt=now;void db.query('update assistant_turns set progress=$2 where id=$1',[turnId,json({...p,at:new Date().toISOString()})]).catch(()=>undefined);};
-        const result=await runAssistantTurn({db,registry:{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},onProgress,userId:turn.owner_user_id,threadId:turn.thread_id,history,recall:recall.lookup,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,automationRuntime:ctx.automationRuntime,workGoalId:turn.work_goal_id??undefined,originalRequestAt:turn.work_goal_id?new Date(inbound.created_at):undefined,replyToMessageId:turn.reply_to_message_id,replyStyle:turn.reply_style??null,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.work_goal_id?`work-goal:${turn.work_goal_id}`:turn.accepted_session_id});
+        const result=await runAssistantTurn({db,registry,readByOcr,onProgress,userId:turn.owner_user_id,threadId:turn.thread_id,history,recall:recall.lookup,inbound:[inbound.body,context].filter(Boolean).join('\n\n'),inboundMessageId:inbound.id,durableTurnId:turn.id,durableLeaseToken:turn.lease_token,automationRuntime:ctx.automationRuntime,workGoalId:turn.work_goal_id??undefined,originalRequestAt:turn.work_goal_id?new Date(inbound.created_at):undefined,replyToMessageId:turn.reply_to_message_id,replyStyle:turn.reply_style??null,requireApprovalReplyTarget:true,images,connectorFetch:ctx.connectorFetch,customApiFetch:ctx.customApiFetch,outboundResolve:ctx.outboundResolve,channel:'native',sessionKey:turn.work_goal_id?`work-goal:${turn.work_goal_id}`:turn.accepted_session_id});
         if(await durableTurnHasIncompleteEffects(db,turnId)){await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:'effect_outcome_unknown',retryable:false});return;}
         if(result.mediaRequest)await db.query(`update messages set meta=meta||$2 where id=$1 and thread_id=$3`,[inbound.id,json({media_request:result.mediaRequest}),turn.thread_id]);
         if(result.refusal){const crossed=await durableTurnHasEffects(db,turnId);
           // What the model wrote for the person before the provider failed is
           // handed over with the failure, not lost with the turn.
           if(result.reply.trim())await addMessage(db,{threadId:turn.thread_id,direction:'out',body:`${result.reply.trim()}\n\n${result.refusal.message}`,meta:turn.work_goal_id?{work_goal_id:turn.work_goal_id}:undefined});
+          // The two sizes belong in front of the person on every client, not
+          // only in the server log: the message itself names them.
+          else if(result.refusal.reason==='context_overflow')await addMessage(db,{threadId:turn.thread_id,direction:'out',body:result.refusal.message,meta:turn.work_goal_id?{work_goal_id:turn.work_goal_id}:undefined});
           console.error(`josi-ce: turn ${turnId} failed (${crossed?'effect_then_provider_error':result.refusal.reason}): ${result.refusal.message}`);await failDurableTurn(db,{turnId,leaseToken:turn.lease_token,code:crossed?'effect_then_provider_error':result.refusal.reason,retryable:!turn.work_goal_id&&!crossed&&result.refusal.retryable===true});return;}
         const approvalNeeded=result.actions.some(a=>a.result&&typeof a.result==='object'&&String((a.result as any).state)==='prepared');
         const taskIds=result.actions.map(a=>a.result).filter((v):v is {state:string;task_id:string}=>!!v&&typeof v==='object'&&['collecting','prepared'].includes(String((v as any).state))&&typeof (v as any).task_id==='string').map(v=>v.task_id);
@@ -209,6 +225,8 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
       // Reads the turn's own messages here rather than carrying them in the queue.
       const turnId=String((job.payload as {turnId?:unknown}).turnId??'');
       if(!turnId||!ctx.masterKey)return;
+      // Off for a model on the person's own hardware unless they turned it on.
+      if(!backgroundModelWork(await loadStoredProvider(db,'primary')))return;
       const [row]=await db.query<{owner_user_id:string;thread_id:string;inbound:string;reply:string|null;at:string}>(`select t.owner_user_id,t.thread_id,i.body as inbound,o.body as reply,i.created_at as at
         from assistant_turns t join messages i on i.id=t.inbound_message_id left join messages o on o.id=t.assistant_message_id where t.id=$1 and t.status='completed'`,[turnId]);
       if(!row)return;
@@ -218,6 +236,7 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
     }
 
     case 'improvement.review': {
+      if(!backgroundModelWork(await loadStoredProvider(db,'primary')))return;
       if(!ctx.masterKey)return;
       await reviewInsights(db,{db,masterKey:ctx.masterKey,fetchImpl:ctx.llmFetch,resolve:ctx.llmResolve},ALL_TOOLS.map(t=>t.def.name));
       return;
