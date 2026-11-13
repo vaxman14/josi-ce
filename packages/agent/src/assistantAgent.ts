@@ -587,11 +587,16 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   if (compact && tools) {
     const earlier = [...args.history].reverse();
     const ownAdditions = new Set([...customApis.specs, ...mcp.specs, ...workflowTools, ...developerIntegrationTools.filter((t) => !/obsidian/.test(t.def.name))].map((t) => t.def.name));
-    const picked = selectCompactTools(tools, [
-      ownWords(args.inbound), earlier.find((m) => m.role === 'user')?.content ?? '', (earlier.find((m) => m.role === 'assistant')?.content ?? '').slice(0, 300),
+    // With a file attached, the question is about that file: its own words
+    // decide, the exchange before it does not, and the file-search tools stay out.
+    const words = ownWords(args.inbound);
+    const aboutAttachment = words.length < args.inbound.length || !!args.readByOcr?.length;
+    const picked = selectCompactTools(tools, aboutAttachment ? [words] : [
+      words, earlier.find((m) => m.role === 'user')?.content ?? '', (earlier.find((m) => m.role === 'assistant')?.content ?? '').slice(0, 300),
     ], {
       always: args.workGoalId ? /^(checkpoint_goal|read_work_goal|verify_goal|revise_goal_plan|list_work_goals)$/ : undefined,
       isOwnAddition: (name) => ownAdditions.has(name),
+      without: aboutAttachment ? /^(files|notes|code)$/ : undefined,
     });
     tools = picked.tools;
     compactGroups = picked.groups;

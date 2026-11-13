@@ -98,7 +98,10 @@ export interface CompactSelection {
  * gets no tools. That is on purpose: a small model handed a tool it has no
  * use for tends to call it anyway, which doubles the requests for "hello". `always`
  * names tools that must be offered whatever the wording, such as a work goal's
- * own tools while that goal is being continued. */
+ * own tools while that goal is being continued. `without` leaves word groups
+ * out by key: a question about an attached file is answered from the text that
+ * came with it, and a file-search tool offered beside that text invites a small
+ * model to go looking for the document it is already holding. */
 /** What the person wrote, without the attached text that follows it. The words
  * in a scanned invoice say nothing about which tools the question needs, and
  * a page of them would bring in every tool there is. */
@@ -108,10 +111,10 @@ export function ownWords(inbound: string): string {
 }
 
 export function selectCompactTools(
-  available: ToolDefinition[], signals: string[], opts: { always?: RegExp; isOwnAddition?: (name: string) => boolean } = {},
+  available: ToolDefinition[], signals: string[], opts: { always?: RegExp; isOwnAddition?: (name: string) => boolean; without?: RegExp } = {},
 ): CompactSelection {
   const text = signals.map((s) => s.slice(0, 600)).join('\n');
-  const matched = GROUPS.filter((g) => g.words.test(text));
+  const matched = GROUPS.filter((g) => g.words.test(text) && !opts.without?.test(g.key));
   // A message that names a tool outright gets that tool, whatever else it says.
   const wanted = (name: string) => text.includes(name) || matched.some((g) => g.tools.test(name))
     || OWN_ADDITIONS.test(name) || opts.isOwnAddition?.(name) === true || opts.always?.test(name) === true;
