@@ -154,7 +154,7 @@ export async function machineFacts(db?: Db): Promise<Omit<CrashReport, 'type' | 
   return {
     app_version: appVersion(), model_version: model, os: osName(), arch: arch(), cpu: cpus()[0]?.model ?? '',
     gpu: gpuFacts.gpu || 'none', vram: gpuFacts.vram, ram: `${Math.round(totalmem() / 2 ** 30)} GB`,
-    docker_version: process.env.JOSI_DOCKER_VERSION ?? (existsSync('/.dockerenv') ? 'container' : ''), uptime: Math.floor(process.uptime()),
+    docker_version: process.env.JOSI_DOCKER_VERSION ?? testerFile().docker_version ?? (existsSync('/.dockerenv') ? 'container' : ''), uptime: Math.floor(process.uptime()),
   };
 }
 
@@ -167,13 +167,16 @@ export async function buildReport(args: { type: ReportType; error?: unknown; sta
 
 // ---------------------------------------------------------------- the tester token and the owner's choice
 
+/** What the installer wrote for a tester: the token, and the Docker version when Josi runs in a container. */
+function testerFile(): { token?: string; docker_version?: string } {
+  try { return JSON.parse(readFileSync(process.env.JOSI_TESTER_FILE ?? '/etc/josi/tester.json', 'utf8')) ?? {}; } catch { return {}; }
+}
+
 export function testerToken(): string | null {
   const fromEnv = process.env.JOSI_TESTER_TOKEN?.trim();
   if (fromEnv && fromEnv.length >= 20) return fromEnv;
-  try {
-    const token = JSON.parse(readFileSync(process.env.JOSI_TESTER_FILE ?? '/etc/josi/tester.json', 'utf8')).token;
-    return typeof token === 'string' && token.length >= 20 ? token : null;
-  } catch { return null; }
+  const token = testerFile().token;
+  return typeof token === 'string' && token.length >= 20 ? token : null;
 }
 export const reportUrl = () => process.env.JOSI_REPORT_URL || REPORT_URL_DEFAULT;
 
