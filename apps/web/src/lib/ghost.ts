@@ -332,3 +332,35 @@ export function firstName(user: { displayName?: string | null; display_name?: st
   const name = (user?.displayName || user?.display_name || user?.username || '').trim();
   return name.split(/\s+/)[0] ?? '';
 }
+
+// ------------------------------------------------------------------ keeping the clips
+
+/** After a clip fails to play, wait this long before trying again: 4 s, 8 s, 16 s, then every 30 s.
+ * A failure must never leave the ghost on a still for good. */
+export const ghostRetryDelayMs = (attempt: number) => Math.min(30_000, 4_000 * 2 ** Math.max(0, attempt));
+
+const keptClips = new Map<string, string>();
+let warming: Promise<void> | null = null;
+
+/** Where a clip plays from: the copy this page already holds, else the server. A clip the page
+ * holds still plays when the connection is down, which is exactly when the ghost used to vanish
+ * (the resting clip is first asked for after twenty quiet seconds). */
+export const clipUrl = (clip: GhostClip, hevc: boolean) => keptClips.get(`${clip}.${hevc}`) ?? clipSource(clip, hevc);
+
+/** Keeps the looping clips in memory, one at a time, once per page. Failures are skipped; the
+ * next call tries the missing ones again. */
+export function warmClips(hevc: boolean, fetcher: typeof fetch = fetch): Promise<void> {
+  if (warming) return warming;
+  warming = (async () => {
+    for (const clip of LOOP_CLIPS) {
+      const key = `${clip}.${hevc}`;
+      if (keptClips.has(key)) continue;
+      try {
+        const response = await fetcher(clipSource(clip, hevc), { cache: 'force-cache' });
+        if (!response.ok) continue;
+        keptClips.set(key, URL.createObjectURL(await response.blob()));
+      } catch { /* try again on the next call */ }
+    }
+  })().finally(() => { warming = null; });
+  return warming;
+}

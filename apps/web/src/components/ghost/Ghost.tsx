@@ -7,7 +7,7 @@
 // reduced motion, or if a clip will not play, the still pose stands in.
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-  CLIP_MS, clipSource, glowFor, GHOST_STILL, inlineTokens, isLoopClip, plainText, prefersHevc, replyParts, revealStepMs, splitWords,
+  CLIP_MS, clipUrl, ghostRetryDelayMs, glowFor, GHOST_STILL, inlineTokens, isLoopClip, plainText, prefersHevc, replyParts, revealStepMs, splitWords, warmClips,
   type GhostClip,
 } from '@/lib/ghost';
 
@@ -34,8 +34,30 @@ export function GhostFigure({ clip, beat, reduced, size }: { clip: GhostClip; be
   const wanted = useRef<GhostClip | null>(null);
   const request = useRef(0);
   const [failed, setFailed] = useState(false);
+  const [stillBroken, setStillBroken] = useState(false);
+  const attempts = useRef(0);
   const hevc = useMemo(() => typeof navigator !== 'undefined' && prefersHevc(navigator.userAgent), []);
   const still = reduced || failed;
+
+  // Hold the looping clips in memory a moment after the page is up, so the resting clip (asked
+  // for after twenty quiet seconds) plays even if the connection has dropped by then.
+  useEffect(() => {
+    if (reduced) return;
+    const timer = window.setTimeout(() => { void warmClips(hevc); }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [hevc, reduced]);
+
+  // A clip that would not play is not the end of the ghost: the still stands in, then the
+  // animation is tried again (sooner when the page comes back to the front or the network returns).
+  useEffect(() => {
+    if (!failed || reduced) return;
+    const retry = () => { wanted.current = null; setStillBroken(false); setFailed(false); };
+    const timer = window.setTimeout(retry, ghostRetryDelayMs(attempts.current++));
+    const soon = () => { if (document.visibilityState !== 'hidden') { window.clearTimeout(timer); retry(); } };
+    window.addEventListener('online', soon);
+    document.addEventListener('visibilitychange', soon);
+    return () => { window.clearTimeout(timer); window.removeEventListener('online', soon); document.removeEventListener('visibilitychange', soon); };
+  }, [failed, reduced]);
 
   useEffect(() => {
     if (still) { wanted.current = null; return; }
@@ -48,9 +70,10 @@ export function GhostFigure({ clip, beat, reduced, size }: { clip: GhostClip; be
     const mine = ++request.current;
     back.classList.remove('ghost-layer-on');
     back.loop = isLoopClip(clip);
-    back.src = clipSource(clip, hevc);
+    back.src = clipUrl(clip, hevc);
     const forward = () => {
       if (mine !== request.current) return;
+      attempts.current = 0;
       back.classList.add('ghost-layer-on');
       old?.classList.remove('ghost-layer-on');
       front.current = backIndex;
@@ -77,7 +100,7 @@ export function GhostFigure({ clip, beat, reduced, size }: { clip: GhostClip; be
   return (
     <div ref={figure} className="ghost-figure" aria-hidden style={size ? { width: size, height: size } : undefined}>
       <div className={`ghost-glow ${glow === 'calm' ? '' : `ghost-glow-${glow}`}`} />
-      {still ? <img src={GHOST_STILL} alt="" className="ghost-layer ghost-layer-on" draggable={false} /> : <>
+      {still ? (stillBroken ? null : <img src={GHOST_STILL} alt="" className="ghost-layer ghost-layer-on" draggable={false} onError={() => setStillBroken(true)} />) : <>
         <video ref={first} className="ghost-layer" muted playsInline preload="auto" disablePictureInPicture onError={onError} />
         <video ref={second} className="ghost-layer" muted playsInline preload="auto" disablePictureInPicture onError={onError} />
       </>}
