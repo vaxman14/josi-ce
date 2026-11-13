@@ -259,6 +259,7 @@ function SizeAndSpeed({ data }: { data: AdminLlm }) {
           {requests === null ? <Button type="button" variant="secondary" onClick={() => void loadRequests()}>Show recent requests</Button>
             : !requests.length ? <p className="text-muted-foreground">No requests recorded yet.</p> : <>
               {perMessage ? <p className="text-muted-foreground">The last chat message took {perMessage} model request{perMessage === 1 ? '' : 's'}.</p> : null}
+              <p className="text-muted-foreground">Tokens in is what the model server says it read. A server that kept the start of the previous request reports only the new part, so a small number here means the start was reused.</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead className="text-muted-foreground"><tr>

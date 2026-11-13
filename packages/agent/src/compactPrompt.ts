@@ -62,8 +62,17 @@ const GROUPS: Group[] = [
     tools: /^(own_goal|checkpoint_goal|read_work_goal|list_work_goals|verify_goal|revise_goal_plan)$/ },
   { key: 'setup', words: /\b(connect|connected|connection|disconnect|set ?up|settings?|configure|status|accounts?|sign ?in|log ?in|gmail|google|outlook|microsoft|icloud|telegram|whatsapp|slack|signal|permissions?|provider|api key|credentials?|card|access)\b/i,
     tools: /^(josi_setup_status|get_provider_status|start_account_connection|request_credential_card|list_josi_settings|propose_josi_setting_change|request_connector_access|decide_connector_request|revoke_connector_access|my_world_secret_card|request_sign_in)$/ },
-  { key: 'computer', words: /\b(browser|web ?site|web ?page|page|tabs?|url|link|open|click|scroll|screenshot|desktop|windows?|app|program|launch|run|command|terminal|shell|pc|computer|laptop|download|upload|install|photos?)\b/i,
-    tools: /^(browser_|desktop_|pc_|computer_|get_automation_|connect_automation_|start_automation_|open_automation_|observe_automation_)/ },
+  // Josi's browser, the desktop and the PC are three separate sets, and each is
+  // large: only the one the message is about is offered. Everyday words that
+  // also mean something else ("open", "page", "run") are left out on purpose.
+  { key: 'browser', words: /\b(browser|chrome|web ?sites?|web ?pages?|webpage|tabs?|url|click|scroll|download|upload|log ?in to|sign ?in to|google it|look (it )?up online|online)\b|https?:\/\/|\b[a-z0-9-]+\.(com|org|net|io|gov|edu|co)\b/i,
+    tools: /^(browser_|request_sign_in$)/ },
+  { key: 'desktop', words: /\b(desktop|screen|screenshot|windows?|apps?|programs?|launch|start the|close the|type into|keyboard|mouse)\b/i,
+    tools: /^(desktop_|pc_find_app$|pc_environment$|pc_get_permissions$)/ },
+  { key: 'pc', words: /\b(pc|computer|laptop|server|machine|terminal|shell|bash|command|commands|install|uninstall|disk|cpu|memory usage|process|processes|folder on|file on|run the|run a)\b/i,
+    tools: /^(pc_)/ },
+  { key: 'automation', words: /\b(automation|workspace machine|remote desktop|guest|virtual machine|vm)\b/i,
+    tools: /^(computer_|get_automation_|connect_automation_|start_automation_|open_automation_|observe_automation_|browser_control$|computer_control$)/ },
   { key: 'notes', words: /\b(obsidian|vaults?|notes?|notebook|journal)\b/i, tools: /obsidian/ },
   { key: 'family', words: /\b(family|child|children|kids?|parental|screen time|bedtime|allow|block|limit)\b/i, tools: /^family_/ },
   { key: 'debug', words: /\b(what went wrong|why did|why didn'?t|debug|broken|went wrong|not working|didn'?t work|failed|error|stuck)\b/i, tools: /^debug_/ },
@@ -90,6 +99,14 @@ export interface CompactSelection {
  * follow-up ("and tomorrow?") keeps the tools of what it follows. `always`
  * names tools that must be offered whatever the wording, such as a work goal's
  * own tools while that goal is being continued. */
+/** What the person wrote, without the attached text that follows it. The words
+ * in a scanned invoice say nothing about which tools the question needs, and
+ * a page of them would bring in every tool there is. */
+export function ownWords(inbound: string): string {
+  const at = inbound.search(/\n\n(Attached (file|video|recording|picture|scanned document) |Text read by OCR |The attached text is too long)/);
+  return at >= 0 ? inbound.slice(0, at) : inbound;
+}
+
 export function selectCompactTools(
   available: ToolDefinition[], signals: string[], opts: { always?: RegExp; isOwnAddition?: (name: string) => boolean } = {},
 ): CompactSelection {

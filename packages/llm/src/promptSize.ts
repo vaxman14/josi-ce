@@ -61,6 +61,11 @@ export function measureRequest(request: Pick<ChatRequest, 'system' | 'tools' | '
 /** Scale an estimate to the provider's own count, keeping the proportions. */
 export function calibrate(size: PromptSize, reportedInputTokens: number | undefined): PromptSize {
   if (!reportedInputTokens || reportedInputTokens <= 0 || !size.total) return size;
+  // A model server that kept the start of the previous request reports only
+  // the tokens it had to read this time (Ollama does). That number is far
+  // under the size of the request and says nothing about its parts, so the
+  // estimate stands.
+  if (reportedInputTokens < size.total * 0.7) return size;
   const k = reportedInputTokens / size.total;
   const system = Math.round(size.system * k);
   const tools = Math.round(size.tools * k);

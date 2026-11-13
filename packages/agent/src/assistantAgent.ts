@@ -76,7 +76,7 @@ import { dataToolAvailability, writeActionCapabilities, type DataToolAvailabilit
 import { executeAssistantTool } from './execute.js';
 import { workspaceToolNames } from './workspaceTools.js';
 import { TASK_TOOLS, TOOL_SPECS_BY_NAME } from './tools.js';
-import { COMPACT_CORE, compactHistory, contextTail, selectCompactTools } from './compactPrompt.js';
+import { COMPACT_CORE, compactHistory, contextTail, ownWords, selectCompactTools } from './compactPrompt.js';
 import { presentToolBackedReply } from './presentation.js';
 import { effectiveTimeContext } from './timeContext.js';
 import {
@@ -588,7 +588,7 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     const earlier = [...args.history].reverse();
     const ownAdditions = new Set([...customApis.specs, ...mcp.specs, ...workflowTools, ...developerIntegrationTools.filter((t) => !/obsidian/.test(t.def.name))].map((t) => t.def.name));
     const picked = selectCompactTools(tools, [
-      args.inbound, earlier.find((m) => m.role === 'user')?.content ?? '', (earlier.find((m) => m.role === 'assistant')?.content ?? '').slice(0, 300),
+      ownWords(args.inbound), earlier.find((m) => m.role === 'user')?.content ?? '', (earlier.find((m) => m.role === 'assistant')?.content ?? '').slice(0, 300),
     ], {
       always: args.workGoalId ? /^(checkpoint_goal|read_work_goal|verify_goal|revise_goal_plan|list_work_goals)$/ : undefined,
       isOwnAddition: (name) => ownAdditions.has(name),
