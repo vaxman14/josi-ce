@@ -49,6 +49,7 @@ import { deviceTransferRoutes } from './http/deviceTransferRoutes.js';
 import { liveSignInRoutes } from './http/liveSignInRoutes.js';
 import { systemMailAccountRoutes } from './http/systemMailAccountRoutes.js';
 import { briefRoutes } from './http/briefRoutes.js';
+import { crashReportRoutes } from './http/crashReportRoutes.js';
 import { LiveSignInBroker } from '@josi-ce/core';
 import { automationSettingsRoutes } from './http/automationSettingsRoutes.js';
 import { nasController } from './http/nasController.js';
@@ -90,6 +91,8 @@ export interface AppConfig {
   developerServiceFetch?: typeof fetch;
   /** HTTP for administrator-defined REST integrations. */
   customApiFetch?: typeof fetch;
+  /** HTTP to the crash-report address, injected by the suites so no test reaches heyjosi.com. */
+  reportFetch?: typeof fetch;
   /** The publisher's licence verification key. Unset in production, where the
    * key stamped into the artefact is used; injected by the suites so a test can
    * stand in for a supported build without rebuilding one. */
@@ -361,6 +364,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use('/mail', mailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));
   api.use('/admin/mail-account', systemMailAccountRoutes({ db }));
   api.use('/brief', briefRoutes({ db, masterKey: cfg.masterKeyCheck }));
+  api.use('/crash-reports', crashReportRoutes({ db, fetchImpl: cfg.reportFetch }));
   api.use('/admin/mail', adminMailRoutes({ db, masterKey: cfg.masterKeyCheck, transport: cfg.mailTransport }));
   api.use('/admin/connectors', adminConnectorRoutes({
     db, masterKey: cfg.masterKeyCheck, fetchImpl: cfg.connectorFetch, appUrl: cfg.appUrl,

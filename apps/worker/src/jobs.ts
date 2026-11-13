@@ -12,7 +12,7 @@
 import {
   addMessage, approvalHash, claimJobs, claimReadyTask, completeJob, consumeApproval, enqueue,
   expireApprovals, expireHolds, failJob, getTask, tickSchedules,
-  reconcileWorkGoals, settleWorkContinuation, claimDueBriefs, pruneBriefTasks,
+  reconcileWorkGoals, settleWorkContinuation, claimDueBriefs, pruneBriefTasks, flushCrashReports,
   claimDurableTurn, completeDurableTurn, durableTurnHasEffects, durableTurnHasIncompleteEffects, failDurableTurn, renewDurableTurnLease, renewJobLease, processPushBatch, processPushReceipts, deliverReminderPersisted, json,
   expirePreparedActionApprovals, settleActionForTask, transition, type Db, type Job, type MasterKey,
 } from '@josi-ce/core';
@@ -87,6 +87,11 @@ export async function runJob(db: Db, job: Job, ctx: WorkerContext = {}): Promise
   switch (job.kind) {
     // Daily Brief + Memory. The tick finds the briefs that are due and claims
     // each, so two workers never post the same one; each run is its own job.
+    // Crash reports waiting to be sent (only when the owner allows automatic reports).
+    case 'crash.flush': {
+      await flushCrashReports(db);
+      return;
+    }
     case 'brief.tick': {
       for (const due of await claimDueBriefs(db)) await enqueue(db, { kind: 'brief.run', payload: { ...due } });
       await pruneBriefTasks(db);

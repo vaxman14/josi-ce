@@ -4,7 +4,7 @@
 // compose stack needs a second process to prove restart policy, health
 // checking and least-privilege networking against — and because adding it later
 // would mean revisiting all three.
-import { connectFromEnv, loadMasterKey, resolveDataPath, createNativeInspectionRuntime } from '@josi-ce/core';
+import { connectFromEnv, loadMasterKey, resolveDataPath, createNativeInspectionRuntime, installCrashHandlers, importQueuedReports } from '@josi-ce/core';
 import { attachmentRoot, cleanupAttachments, probeAttachmentStorage, nativeScanner } from '@josi-ce/storage';
 import { josiArchiveWriter } from '@josi-ce/ops';
 import { processQueue } from './jobs.js';
@@ -25,6 +25,9 @@ const scanner = process.platform === 'win32' && process.env.JOSI_NATIVE_RUNTIME 
 
 const { db, close, describe } = await connectFromEnv({ ...process.env }, { max: 4 });
 console.log(`josi-ce worker: database ${describe}`);
+// A crash in this process becomes a scrubbed report for the owner (see crashReport.ts).
+installCrashHandlers('worker', () => db);
+void importQueuedReports(db, 'worker').catch(() => undefined);
 
 let masterKey: Awaited<ReturnType<typeof loadMasterKey>> | null = null;
 try {

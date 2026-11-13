@@ -1,6 +1,6 @@
 // Josi CE API entrypoint.
 import { josiArchiveWriter, pgRestoreReader } from '@josi-ce/ops';
-import { apiListenHost, connectFromEnv, loadMasterKey, createNativeInspectionRuntime } from '@josi-ce/core';
+import { apiListenHost, connectFromEnv, loadMasterKey, createNativeInspectionRuntime, installCrashHandlers, importQueuedReports } from '@josi-ce/core';
 import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
 import { createApp } from './app.js';
 import type { CookieSecurePolicy } from './http/cookies.js';
@@ -14,6 +14,9 @@ const PORT = Number(process.env.PORT ?? 8080);
 
 const { db, close, describe } = await connectFromEnv();
 console.log(`josi-ce: database ${describe}`);
+// A crash in this process becomes a scrubbed report for the owner (see crashReport.ts).
+installCrashHandlers('api', () => db);
+void importQueuedReports(db, 'api').catch(() => undefined);
 
 // Load the key once at boot so a misconfigured installation fails immediately
 // and visibly, rather than at the first request that needs to decrypt something.
