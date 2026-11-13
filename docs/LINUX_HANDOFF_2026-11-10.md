@@ -569,6 +569,17 @@ Known gaps, told to Roman: OCR is English only; behind a tunnel every visitor ha
 replaces X-Forwarded-For and `CF-Connecting-IP` is not read), so the sign-in limit of 25 tries per
 15 minutes is shared; no judge role, no per-turn training capture and no JSONL export exist.
 
+beta.29 results (build-31.log, 13 files, built from `bf808719`): Ubuntu and Debian VM upgrades all
+pass (e2e-fake, e2e-pc 9/9, e2e-signin 5/5). In the amd64 image against `llama3.2:3b`: greeting one
+request of 444 tokens, the invoice picture and the two-page scanned PDF answered correctly from
+OCR with the server's "I read the text…" line, full prompt refused with both numbers. That 3B model
+is unreliable at calling tools: across four runs the reminder was set once, and once the call came
+back as text. `JOSI_PUBLIC_URL` tried in a throwaway container: proxy mode, setup link printed at
+the https name, kept after a restart, cookies Secure. LAN folder and Docker starter serve beta.29
+(`josi-docker-1.2.8-beta.29-<arch>.tar.gz`); GitHub draft is v1.2.8-beta.29 (12 files), the
+beta.25 draft is deleted. The trial containers and the Ollama forwarder on claw are removed; the
+old `josi-docker` beta.20 container on port 18095 is still there.
+
 Next version is beta.30, next log `build-32.log`.
 
 ## In beta.19 (was: after beta.18)
