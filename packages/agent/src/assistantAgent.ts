@@ -300,6 +300,14 @@ export async function runAssistantTurn(args: TurnArgs): Promise<AgentTurnResult>
   } else await beginWorkConversation(args.db, args.userId, args.threadId);
   try {
     const result = await runAssistantTurnBody(args);
+    // A small model sometimes repeats the server's context note, and then
+    // goes on from it. The note is not for the person: the reply ends where
+    // the echo begins, or loses just the label when it opens with it.
+    const echo = result.reply.indexOf('[Context from Josi');
+    if (echo >= 0) {
+      const before = result.reply.slice(0, echo).trim();
+      result.reply = before || result.reply.replace(/\[Context from Josi[^\]\n]*\]?:?/g, '').trim();
+    }
     // Said by the server, so it is said every time: the model did not see the
     // picture, it was given the text read from it.
     if (args.readByOcr?.length && result.reply.trim() && !result.refusal && !/\bread the text\b/i.test(result.reply)) {
@@ -591,13 +599,19 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
     // decide, the exchange before it does not, and the file-search tools stay out.
     const words = ownWords(args.inbound);
     const aboutAttachment = words.length < args.inbound.length || !!args.readByOcr?.length;
-    const picked = selectCompactTools(tools, aboutAttachment ? [words] : [
-      words, earlier.find((m) => m.role === 'user')?.content ?? '', (earlier.find((m) => m.role === 'assistant')?.content ?? '').slice(0, 300),
-    ], {
+    const options = {
       always: args.workGoalId ? /^(checkpoint_goal|read_work_goal|verify_goal|revise_goal_plan|list_work_goals)$/ : undefined,
-      isOwnAddition: (name) => ownAdditions.has(name),
+      isOwnAddition: (name: string) => ownAdditions.has(name),
       without: aboutAttachment ? /^(files|notes|code)$/ : undefined,
-    });
+    };
+    // The message's own words decide. Only when they point nowhere ("and the
+    // day after?") is the person's previous message looked at, so a follow-up
+    // keeps the tools of what it follows. Josi's own replies never pick tools.
+    let picked = selectCompactTools(tools, [words], options);
+    if (!picked.groups.length && !aboutAttachment) {
+      const before = selectCompactTools(tools, [ownWords(earlier.find((m) => m.role === 'user')?.content ?? '')], options);
+      if (before.groups.length) picked = before;
+    }
     tools = picked.tools;
     compactGroups = picked.groups;
   }
@@ -747,10 +761,11 @@ async function runAssistantTurnBody(args: TurnArgs): Promise<AgentTurnResult> {
   // Compact: everything that changes from one request to the next sits here,
   // after the person's words, at the very end of what is sent.
   const tail = compact ? contextTail([
-    temporal.prompt,
+    `Now: ${temporal.currentLocal} (time zone ${temporal.timeZone}). Today is ${temporal.today}, tomorrow is ${temporal.tomorrow}, yesterday was ${temporal.yesterday}.`,
     imagesAttached ? (capabilities.vision ? 'A picture is attached to this message and you can see it.'
       : 'A picture was attached, but you cannot see pictures with this model and no text could be read from it. Say so plainly and do not guess what it shows.') : '',
-    unavailable.length ? `Not connected yet, so work that needs it is prepared and then waits: ${unavailable.join(', ')}.` : '',
+    unavailable.length && [...offeredToolNames].some((name) => /^(draft_|create_task$)/.test(name))
+      ? `Not connected yet, so work that needs it is prepared and then waits: ${unavailable.join(', ')}.` : '',
     tailMemories ? `What you remember about this person:\n${tailMemories}` : '',
     recalled ? `From this person's earlier conversations:\n${recalled.slice(0, 1200)}` : '',
     tailWorld.slice(0, 1200),

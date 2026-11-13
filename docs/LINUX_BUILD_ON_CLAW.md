@@ -44,7 +44,7 @@ ssh -i ~/.ssh/id_ed25519_josi_claw -o IdentitiesOnly=yes -o BatchMode=yes -o Con
 
 ## The whole cycle, in order
 
-Version numbers: the next one is `1.2.8-beta.21`. The `.deb` calls it `1.2.8~beta.21`.
+Version numbers: the next one is in the newest section of `docs/LINUX_HANDOFF_2026-11-10.md` (beta.30 as of beta.29). Another session may have built since: check `ls ~/josi-linux/build-*.log` and the release list first. The `.deb` calls it `1.2.8~beta.21`.
 
 ### 1. Test on the Mac before building
 

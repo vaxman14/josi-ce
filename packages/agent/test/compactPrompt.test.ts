@@ -127,6 +127,16 @@ describe('a start that does not change', () => {
     expect(requests[1].messages.slice(0, 9)).toEqual(before);
   });
 
+  it('follows a follow-up back to the person\'s previous message, and never to Josi\'s reply', async () => {
+    await configure({});
+    await turn({ inbound: 'and the day after?', history: [
+      { role: 'user', content: 'what reminders do I have tomorrow' },
+      { role: 'assistant', content: 'None. Want me to open the browser, connect your email or search your files?' }] });
+    const names = requests[0].tools.map((t: any) => t.function.name);
+    expect(names).toContain('list_reminders');
+    expect(names.some((n: string) => /^(browser_|search_documents|start_account_connection)/.test(n))).toBe(false);
+  });
+
   it('drops old history in blocks, not one message at a time', () => {
     const history = Array.from({ length: 40 }, (_, i) => ({ role: i % 2 ? 'assistant' as const : 'user' as const, content: 'x'.repeat(400) }));
     const a = compactHistory(history);
@@ -139,8 +149,8 @@ describe('a start that does not change', () => {
 
 describe('picking tools by what was asked', () => {
   const all = TASK_TOOLS.map((t) => t.def);
-  it('follows a follow-up back to the topic before it', () => {
-    const picked = selectCompactTools(all, ['and the day after?', 'what reminders do I have tomorrow', '']).tools.map((t) => t.name);
+  it('picks the reminder tools for a question about reminders', () => {
+    const picked = selectCompactTools(all, ['what reminders do I have tomorrow']).tools.map((t) => t.name);
     expect(picked).toContain('list_reminders');
   });
   it('goes by the person\'s words, not by the text of what they attached', async () => {
@@ -204,6 +214,16 @@ describe('a request that does not fit', () => {
     expect(result.refusal?.reason).toBe('context_overflow');
     expect(result.refusal?.message).toMatch(/4,096 tokens/);
     expect(requests).toHaveLength(0);
+  });
+});
+
+describe('the context note stays out of the reply', () => {
+  it('ends the reply where a model starts repeating the note', async () => {
+    await configure({});
+    chatReply = () => ok({ content: 'The total is $128.37.\n[Context from Josi]\nThe invoice amount needs a dollar symbol.' });
+    expect((await turn({ inbound: 'what is the total?' })).reply).toBe('The total is $128.37.');
+    chatReply = () => ok({ content: '[Context from Josi]\nYou are welcome.' });
+    expect((await turn({ inbound: 'thanks' })).reply).toBe('You are welcome.');
   });
 });
 

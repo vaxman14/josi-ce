@@ -485,6 +485,92 @@ Built by the Docker session (commit `e78a6865`, `build-26.log`), 13 files, both 
 - Roman deploys the Docker container on 10.10.1.239 himself. Do not touch that machine.
 - `vmtest.sh` now points at beta.24. Next version is beta.25, next log `build-27.log`.
 
+## beta.29 (2026-11-12, about 20:15 PST): small local models (compact prompt, OCR, context, speed)
+
+Written by the session that did the Docker image and the Thinking setting (beta.22 to beta.24).
+Asked for by Roman for his own model on the machine he calls docker (10.10.1.239, Ollama,
+`josi-qwen3.5-9b`, no vision, 8 GB GPU). **He deploys there himself. Do not touch that machine.**
+beta.26, beta.27 and beta.28 were built and tested on the way and never drafted; beta.29 is the one.
+
+What changed, all for provider "A model on your own hardware" (`openai_compatible`) unless said:
+
+- **Prompt size** (new setting, `provider_config.prompt`: auto, compact, full). Compact
+  (`packages/agent/src/compactPrompt.ts`): a fixed instruction text (`COMPACT_CORE`, about 390
+  tokens with the authority note), only the tools the message's words point at
+  (`selectCompactTools`, word groups, tool order kept, descriptions shortened), recent history
+  only (`compactHistory`, dropped in blocks of six). Everything that changes between requests
+  (time, memories, recall, My World, notes, guidance, saved work) goes in a block at the END of
+  the person's message (`contextTail`), so the start of the request is the same bytes every time.
+  Auto = compact when the model server reports under 32,000 tokens of context, or does not say.
+  Plain conversation is offered no tools. A follow-up whose own words point nowhere takes the
+  tools of the person's previous message; Josi's replies never pick tools. A reply that repeats
+  the context note is cut where the echo begins. A message with an attachment is answered from the
+  attached text: only its own words pick tools and the file-search group is left out. A message
+  that names a tool outright gets that tool (the VM tests rely on this).
+- **Context**: `packages/llm/src/contextDetect.ts` asks the server (Ollama `/api/ps` then
+  `/api/show`, llama.cpp `/props`, the model list), keeps the answer in `workspace.settings.modelContext`
+  for ten minutes, refreshed at a model test and at a turn. A request the server turns down for
+  size becomes `LlmError` category `context_overflow` with both numbers (`contextOverflow` in
+  `openaiCompatible.ts` reads them; only numbers are taken from the server's sentence), the turn
+  fails with code `context_overflow`, and the worker also writes the sentence into the
+  conversation. A request estimated at more than 115% of a known context is not sent.
+- **Sizes**: `packages/llm/src/promptSize.ts` estimates system, tools, history and message
+  (characters over 4, tool JSON over 3.4) and scales to the server's own count when that count is
+  not a cache-shortened one. Logged per request (`josi-ce: model request N of this message …`),
+  the last one kept in `workspace.settings.lastPrompt`.
+- **Models page**, new card "Size and speed": context and where it came from, prompt in use, last
+  request split four ways with a warning when it does not fit, background requests on or off,
+  recent requests from `llm_usage` (why, tokens in and out, seconds, tokens a second;
+  `GET /api/admin/llm/requests`), and the state of the debug log.
+- **Thinking** is off unless set to "Leave it to the model" (was: on unless set off). A server
+  that answers 400 or 422 to `reasoning_effort: "none"` is asked again without it, and that
+  client stops sending it.
+- **OCR** (`packages/storage/src/ocr.ts`, `packages/agent/src/attachmentText.ts`): pictures for a
+  model without image understanding, and PDFs with no text layer for every model, are read with
+  the Tesseract WebAssembly build and English data already in the package (nothing new is
+  installed, nothing leaves the server). Text comes back per page with a confidence figure and a
+  POOR mark under 60%; first 12 pages of a scan. Kept on the attachment (`analysis_code`
+  `ocr_text`). The reply is prefixed by the server with "I read the text in this image…".
+  Attached text over a local model's budget (12,000 characters under 32,000 tokens of context) is
+  condensed in up to six parts, one model call each (`purpose` `attachment.condense`).
+- **Five-part test**: the image step of a model without vision reports "Not supported by this
+  model. Josi uses OCR instead…" with `substitute: 'ocr'`; the web no longer lists image
+  understanding under unavailable features. The API still returns `chat_vision` in
+  `disabledFeatures`, with the new sentence, for the native apps.
+- **Background learning** (`provider_config.background`, default off for a local model): the
+  worker skips `memory.learn` and `improvement.review`. The conversation summary still runs.
+- **Debug log**: `sudo touch /etc/josi/llm-debug` (no restart) writes every chat-completions
+  request body and raw reply to `/var/lib/josi/data/logs/<web|worker>/llm-debug/model-calls.jsonl`
+  (0600, rolls at 50 MB). An environment variable would not work: `Runtime.mjs` clears the
+  environment. Only the OpenAI-shaped adapter writes it; the subscription CLIs do not.
+- **Docker**: `JOSI_PUBLIC_URL=https://name` makes firstboot use `--address-mode proxy
+  --public-url` and print the setup link at that name. Without it nothing changes.
+
+Tested:
+- Mac: typecheck clean; full suite 22 failures, the same 22 as the baseline (run on the commit
+  before the last three small ones; agent and model suites rerun after each).
+- VMs: beta.27 Ubuntu upgrade and Debian FRESH install, beta.28 both upgrades: e2e-fake, e2e-pc
+  9/9, e2e-signin 5/5 each time. beta.29 results are in the last lines of this section. The Debian VM had been left by the typed-installer test on port 8099
+  without a browser, which fails e2e-pc and e2e-signin on an upgrade; `fresh` puts it back.
+- The fake model in `scripts/linux/e2e-fake-model.mjs` now sets aside the context block.
+- A real local model: the amd64 image on claw (container `josi29`, port 18096) against
+  claw's own Ollama 0.32.6, `llama3.2:3b`, through a small forwarder on the Docker bridge
+  (`~/josi-linux/dreal29.sh`; Ollama itself was not changed). Context detected 4,096 (loaded),
+  compact prompt chosen, greeting 536 tokens in one request, reminder set through the tool in two
+  requests, picture and two-page scanned PDF read at 89% and 92% confidence, the full prompt
+  (about 20,000 tokens there) turned down with both numbers and not sent.
+
+Not tried: Roman's own model and Ollama 0.40; a thinking model; the Models card and the Prompt
+size picker in a browser; a turn through the worker with an attachment (the trial used the direct
+`/talk` route; the worker has the same calls); the long-attachment condensing against a real
+model; JOSI_PUBLIC_URL behind a real tunnel; the arm64 image of this build.
+
+Known gaps, told to Roman: OCR is English only; behind a tunnel every visitor has one IP (Caddy
+replaces X-Forwarded-For and `CF-Connecting-IP` is not read), so the sign-in limit of 25 tries per
+15 minutes is shared; no judge role, no per-turn training capture and no JSONL export exist.
+
+Next version is beta.30, next log `build-32.log`.
+
 ## In beta.19 (was: after beta.18)
 
 - Managed child accounts cannot add or use MCP servers unless the owner turns on
