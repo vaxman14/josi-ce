@@ -34,7 +34,10 @@ function normalise(api, body) {
       if (m.role === 'tool') out.toolResults.push({ id: m.tool_call_id, content: text(m.content) });
       if (Array.isArray(m.content) && m.content.some((p) => p.type === 'image_url')) out.hasImage = true;
       // A new user turn starts over: earlier turns' tool results are history.
-      if (m.role === 'user') { out.prompt = text(m.content); out.toolResults = []; }
+      // The compact prompt for a local model appends a block of server context
+      // (time, memories) after the person's words. The markers this fake looks
+      // for are in the person's words, so the block is set aside.
+      if (m.role === 'user') { out.prompt = text(m.content).replace(/\n\n\[Context from Josi[\s\S]*$/, ''); out.toolResults = []; }
     }
   } else if (api === 'messages') {
     out.tools = (body.tools ?? []).map((t) => t.name).filter(Boolean);
