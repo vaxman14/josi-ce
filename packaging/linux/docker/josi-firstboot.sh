@@ -47,6 +47,11 @@ else
 fi
 
 echo "Josi is starting (this takes about a minute)…"
+# Data volumes from an earlier container: the service accounts and units an
+# install makes lived in that container, not in the volumes. Put them back
+# before the installer looks for them. Does nothing on a first start or when
+# this same container starts again.
+/usr/bin/python3 /usr/local/sbin/josi-adopt.py || echo "The earlier container's services could not be restored; the installer will say what is missing."
 url=$(/usr/bin/josi-ce-server-install "${args[@]}" 2>/tmp/josi-firstboot.err) || {
   echo "Josi did not start:"; tail -n 20 /tmp/josi-firstboot.err; exit 1
 }

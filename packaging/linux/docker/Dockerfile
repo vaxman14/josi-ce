@@ -45,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends /tmp/josi_*_${T
     && rm -rf /var/lib/apt/lists/* /tmp/josi_*_${TARGETARCH}.deb
 
 COPY josi-firstboot.sh /usr/local/sbin/josi-firstboot
+COPY josi-adopt.py /usr/local/sbin/josi-adopt.py
 COPY josi-firstboot.service /etc/systemd/system/josi-firstboot.service
 # The container is privileged, so its systemd would reach the host's kernel
 # settings. Its binfmt service clears the host's list of program formats

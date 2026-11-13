@@ -46,6 +46,23 @@ Or with Compose, from this folder: set `JOSI_HOST_ADDRESS` in the environment
 | `JOSI_PC_CONTROL` | `1` | `0`: Josi may not control the container |
 | `JOSI_BROWSER` | `1` | `0`: no hidden-screen Chrome |
 
+## Upgrading, or starting again with other options
+
+Remove the container and run the new image with the same volumes:
+
+```
+docker rm -f josi
+docker run ... (the same line, with the new image or the new options)
+```
+
+Josi's service accounts and service files live in the container, not in the
+volumes, so a new container starts without them. `josi-firstboot` puts them
+back from what the data volume records (`josi-adopt.py`: the same numeric ids
+as before, units for the version the data last ran with), and the installer
+then upgrades or simply starts Josi. Images before 1.2.8-beta.30 do not do
+this by themselves and report "Josi did not start"; pipe the script in once
+and restart: `docker exec -i josi python3 - < josi-adopt.py && docker restart josi`.
+
 ## A model on the same machine
 
 With the `--add-host` line above, a model server running on the Docker host is
