@@ -618,3 +618,12 @@ Built on claw (`build-27.log`, 13 files, both processors, claw's source left cle
 - **Tests:** typecheck clean; full suite on Windows 4730 passed, 34 failed: 22 are the known list and 12 are Windows-host checks (file modes, symlinks, Mac Doctor, Windows antivirus, LAN address, tunnel key store), none touching this work; the same files were not rerun on Linux. New tests: `goalFollowsRequest`, `briefMemory`, `dailyBrief`, `brief` (API), `systemMailAccount`, lifecycle Python tests (36 OK on claw), actionState additions.
 - **VMs:** Ubuntu 24.04 and Debian 13 upgraded from beta.24: `e2e-fake` 9/9, `e2e-pc` 5/5, `e2e-signin` rc 0 on both. The Debian VM was then purged and installed fresh by the typed test, and is left running beta.25 on port 8099.
 - Next version is beta.26, next log `build-28.log`. Gate is Roman's; he upgrades it himself.
+
+## beta.30 (2026-11-13): the ghost that vanished after a quiet spell
+
+Commit `42f1e1d0`, built on claw (`build-32.log`, 13 files, both processors). Upgrade from beta.29 passed `e2e-fake` 9/9, `e2e-pc` 5/5 and `e2e-signin` on the Ubuntu 24.04 and Debian 13 VMs. LAN installer (`http://10.10.1.3:18099/linux`) and the one GitHub draft are beta.30; the beta.29 draft is deleted. The Docker images are still beta.29 (not rebuilt).
+
+- **Cause (found from a screenshot of the web chat at dt.heyjosi.com):** after 20 quiet seconds the stage asks for the resting clip `gentle-float`, which had never been loaded. If that one request failed (a dropped connection or tunnel hiccup after idle), `Ghost.tsx` set `failed` for good and drew the still image `/ghost/arms-open.png`; with the connection still down that plain image showed as a broken-image icon. The server serves all the clips fine.
+- **Fix:** a failed clip is retried (4, 8, 16 s, then every 30 s, or at once when the tab comes back or the network returns); the eight looping clips are fetched once into memory (`warmClips`, blob URLs) a moment after the page loads, so the resting clip plays even if the connection has dropped; the still hides itself if it will not load. `apps/web/src/lib/ghost.ts`, `components/ghost/Ghost.tsx`, tests in `apps/web/test/ghostKeep.test.ts`.
+- **Not tried:** in a real browser against a flaky connection (the pieces are tested; the behaviour on screen is not). Safari uses the `.mov` clips; they are held the same way.
+- Next version is beta.31, next log `build-33.log`.
