@@ -18,6 +18,7 @@ import { useAuth } from '@/lib/auth';
 import { api, type Approval, type LlmStatus, type Task } from '@/lib/api';
 import { watchApprovals, type ApprovalSnapshot } from '@/lib/approvalRefresh';
 import { PwaPrompts } from '@/lib/pwa';
+import { CrashReportPrompt } from '@/components/CrashReportPrompt';
 import { syncSkin } from '@/lib/skin';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { JosiMark } from '@/components/brand/JosiMark';
@@ -225,6 +226,7 @@ export function Shell() {
           nothing offers to install an app to somebody looking at a login form,
           and an update prompt is only meaningful to somebody using the app. */}
       <PwaPrompts />
+      <CrashReportPrompt />
     </div>
   );
 }

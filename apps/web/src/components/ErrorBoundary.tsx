@@ -10,6 +10,7 @@
 // UI is a leak, and it is useless to the person reading it. The detail goes to
 // the console for whoever is debugging.
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { reportBrowserCrash } from '@/lib/crashReports';
 
 interface Props { children: ReactNode }
 interface State { failed: boolean }
@@ -23,6 +24,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('page failed to render', error, info.componentStack);
+    reportBrowserCrash(error);
   }
 
   render(): ReactNode {

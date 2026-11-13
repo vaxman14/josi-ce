@@ -45,6 +45,7 @@ export const ALL_WORKSPACE_MENU: MenuItem[] = [
   { to: '/app/family', label: 'Family', icon: 'family', section: 'family' },
   // Extra:
   { to: '/app/devices', label: 'Devices', icon: 'phone' },
+  { to: '/app/feedback', label: 'Send feedback', icon: 'conversations' },
 ];
 
 export const ALL_ADMIN_MENU: MenuItem[] = [

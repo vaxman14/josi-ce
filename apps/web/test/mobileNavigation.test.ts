@@ -9,7 +9,7 @@ describe('the one menu', () => {
     expect(labels(ALL_WORKSPACE_MENU)).toEqual([
       'My World', 'Daily brief', 'Tasks', 'Approvals', 'Conversations', 'Calendar', 'Email / Templates', 'Contacts', 'Connections', 'Local Workspace',
       'Workflows', 'Vault', 'Usage', 'Personalization', 'Channels', 'Settings', 'Apps', 'Family',
-      'Devices',
+      'Devices', 'Send feedback',
     ]);
   });
 
@@ -23,7 +23,7 @@ describe('the one menu', () => {
 
   it('shows what the Windows lean beta shows (Flags.cs), plus Conversations, Devices and Master Vault', () => {
     expect(labels(WORKSPACE_MENU)).toEqual([
-      'My World', 'Daily brief', 'Tasks', 'Approvals', 'Conversations', 'Calendar', 'Contacts', 'Connections', 'Vault', 'Settings', 'Family', 'Devices',
+      'My World', 'Daily brief', 'Tasks', 'Approvals', 'Conversations', 'Calendar', 'Contacts', 'Connections', 'Vault', 'Settings', 'Family', 'Devices', 'Send feedback',
     ]);
     expect(labels(ADMIN_MENU)).toEqual([
       'Overview', 'System checkup', 'People', 'Model', 'Connectors', 'Backups', 'Master Vault', 'Integrations', 'Custom APIs',

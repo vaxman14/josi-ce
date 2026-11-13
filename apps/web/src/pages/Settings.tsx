@@ -1,4 +1,5 @@
 // How much Josi may do without asking, and confirming who you are.
+import { CrashReportSettings } from '@/components/CrashReportSettings';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { canUsePasskeys, createPasskey, passkeyMessage } from '@/lib/passkeys';
@@ -54,6 +55,7 @@ export function Settings() {
     <div className="page">
       <h1 className="page-title">Settings</h1>
       {error ? <ErrorNote>{error}</ErrorNote> : null}
+      <CrashReportSettings />
 
       <CollapsibleCard
         title="What Josi may do without asking"
