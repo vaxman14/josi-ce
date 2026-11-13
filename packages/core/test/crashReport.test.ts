@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { testDb, type TestDb } from './helpers.js';
 import { ensureWorkspace } from '../../../apps/api/test/fixtures.js';
 import {
-  buildReport, crashSettings, flushCrashReports, importQueuedReports, listPending, recordReport, scrub, scrubReport, sendReport, setCrashAuto, testerToken,
+  buildReport, crashSettings, flushCrashReports, importQueuedReports, listPending, recordReport, REPORT_URL_DEFAULT, reportUrl, scrub, scrubReport, sendReport, setCrashAuto, testerToken,
   type CrashReport,
 } from '../src/crashReport.js';
 
@@ -86,6 +86,7 @@ describe('keeping and sending reports', () => {
     expect(await sendReport(report(), { fetchImpl: status(403) })).toMatchObject({ ok: false, retry: false, message: 'The tester token was refused.' });
     expect(await sendReport(report(), { fetchImpl: status(429) })).toMatchObject({ ok: false, retry: true });
     expect(await sendReport(report(), { fetchImpl: status(503) })).toMatchObject({ ok: false, retry: true });
+    expect(await sendReport(report(), { fetchImpl: status(404) })).toMatchObject({ ok: false, retry: true });
     expect(await sendReport(report(), { fetchImpl: (async () => { throw new Error('offline'); }) as unknown as typeof fetch })).toMatchObject({ ok: false, retry: true });
     expect(await sendReport(report(), { fetchImpl: ok, token: null })).toMatchObject({ ok: false, retry: false });
     expect(await sendReport(report({ stack_trace: 'x' }), { fetchImpl: ok, url: 'http://example.test/r' })).toMatchObject({ ok: true });
@@ -145,6 +146,17 @@ describe('the tester token', () => {
     expect(testerToken()).toBe('f'.repeat(40));
     writeFileSync(file, JSON.stringify({ token: 'short' }));
     expect(testerToken()).toBeNull();
+  });
+
+  it('takes a staging report address from tester.json, and ignores anything that is not http(s)', () => {
+    const file = join(dir, 'tester.json');
+    process.env.JOSI_TESTER_FILE = file;
+    writeFileSync(file, JSON.stringify({ token: 'f'.repeat(40), report_url: 'https://staging.example.test/api/report' }));
+    expect(reportUrl()).toBe('https://staging.example.test/api/report');
+    writeFileSync(file, JSON.stringify({ token: 'f'.repeat(40), report_url: 'file:///etc/passwd' }));
+    expect(reportUrl()).toBe(REPORT_URL_DEFAULT);
+    writeFileSync(file, JSON.stringify({ token: 'f'.repeat(40) }));
+    expect(reportUrl()).toBe(REPORT_URL_DEFAULT);
   });
 });
 

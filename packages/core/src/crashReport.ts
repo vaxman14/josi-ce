@@ -168,7 +168,7 @@ export async function buildReport(args: { type: ReportType; error?: unknown; sta
 // ---------------------------------------------------------------- the tester token and the owner's choice
 
 /** What the installer wrote for a tester: the token, and the Docker version when Josi runs in a container. */
-function testerFile(): { token?: string; docker_version?: string } {
+function testerFile(): { token?: string; docker_version?: string; report_url?: string } {
   try { return JSON.parse(readFileSync(process.env.JOSI_TESTER_FILE ?? '/etc/josi/tester.json', 'utf8')) ?? {}; } catch { return {}; }
 }
 
@@ -178,7 +178,11 @@ export function testerToken(): string | null {
   const token = testerFile().token;
   return typeof token === 'string' && token.length >= 20 ? token : null;
 }
-export const reportUrl = () => process.env.JOSI_REPORT_URL || REPORT_URL_DEFAULT;
+// The services run with a wiped environment, so a staging address comes from tester.json (written by the installer), not from env.
+export const reportUrl = () => {
+  const candidate = process.env.JOSI_REPORT_URL || testerFile().report_url;
+  return typeof candidate === 'string' && /^https?:\/\//.test(candidate) ? candidate : REPORT_URL_DEFAULT;
+};
 
 /** `auto` is null until the owner has chosen. */
 export async function crashSettings(db: Db): Promise<{ auto: boolean | null; tokenPresent: boolean }> {
@@ -221,7 +225,8 @@ export async function sendReport(report: CrashReport, opts: { fetchImpl?: typeof
   try {
     const response = await (opts.fetchImpl ?? fetch)(opts.url ?? reportUrl(), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(15_000) });
     if (response.ok) return { ok: true, retry: false, status: response.status, message: '' };
-    const retry = response.status === 429 || response.status >= 500;
+    // A 404 means the report site is not deployed (yet): the report waits rather than being lost.
+    const retry = response.status === 429 || response.status === 404 || response.status >= 500;
     return { ok: false, retry, status: response.status, message: response.status === 401 || response.status === 403 ? 'The tester token was refused.' : `The report address answered ${response.status}.` };
   } catch { return { ok: false, retry: true, status: 0, message: 'The report address could not be reached.' }; }
 }

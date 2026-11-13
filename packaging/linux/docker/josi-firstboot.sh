@@ -23,7 +23,7 @@ if [ -c /dev/console ]; then exec > >(tee /dev/console) 2>&1; fi
 # systemd does not pass `docker run -e` on to its services; the container's
 # first process (PID 1) still holds them.
 while IFS= read -r -d '' pair; do
-  case $pair in JOSI_HOST_ADDRESS=* | JOSI_HOST_PORT=* | JOSI_PUBLIC_URL=* | JOSI_PC_CONTROL=* | JOSI_BROWSER=* | JOSI_TESTER_TOKEN=* | JOSI_DOCKER_VERSION=*) export "$pair" ;; esac
+  case $pair in JOSI_HOST_ADDRESS=* | JOSI_HOST_PORT=* | JOSI_PUBLIC_URL=* | JOSI_PC_CONTROL=* | JOSI_BROWSER=* | JOSI_TESTER_TOKEN=* | JOSI_DOCKER_VERSION=* | JOSI_REPORT_URL=*) export "$pair" ;; esac
 done < /proc/1/environ
 
 # A beta tester's token, for crash reports (see docs/CRASH_REPORTS.md). The token is the only
@@ -32,9 +32,13 @@ done < /proc/1/environ
 if [[ "${JOSI_TESTER_TOKEN:-}" =~ ^[A-Za-z0-9_-]{20,128}$ ]]; then
   docker_version=${JOSI_DOCKER_VERSION:-}
   [[ "$docker_version" =~ ^[A-Za-z0-9._+~-]{0,40}$ ]] || docker_version=''
+  # JOSI_REPORT_URL points reports at a staging site; the services start with a wiped environment, so it goes in the file too.
+  report_url=${JOSI_REPORT_URL:-}
+  url_pattern='^https?://[A-Za-z0-9._~:/?&=%+-]{1,200}$'
+  [[ "$report_url" =~ $url_pattern ]] || report_url=''
   mkdir -p /etc/josi
-  printf '{"token":"%s","docker_version":"%s"}
-' "$JOSI_TESTER_TOKEN" "$docker_version" > /etc/josi/tester.json.new && chmod 0644 /etc/josi/tester.json.new && mv /etc/josi/tester.json.new /etc/josi/tester.json
+  printf '{"token":"%s","docker_version":"%s","report_url":"%s"}
+' "$JOSI_TESTER_TOKEN" "$docker_version" "$report_url" > /etc/josi/tester.json.new && chmod 0644 /etc/josi/tester.json.new && mv /etc/josi/tester.json.new /etc/josi/tester.json
 fi
 
 address=${JOSI_HOST_ADDRESS:-$(ip -4 -o addr show scope global | awk '{split($4, a, "/"); print a[1]; exit}')}
