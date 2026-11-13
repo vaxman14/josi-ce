@@ -78,10 +78,6 @@ const GROUPS: Group[] = [
   { key: 'debug', words: /\b(what went wrong|why did|why didn'?t|debug|broken|went wrong|not working|didn'?t work|failed|error|stuck)\b/i, tools: /^debug_/ },
 ];
 
-/** Offered when nothing in the message points anywhere: enough to be useful
- * in ordinary conversation, small enough not to matter. */
-const EVERYDAY = /^(schedule_reminder|search_my_history|my_world_note|josi_setup_status)$/;
-
 /** Tools the person connected themselves (their MCP servers, the outside
  * services an administrator set up, workflows). They chose these, so they are
  * offered whenever they exist rather than guessed at from wording. */
@@ -96,7 +92,11 @@ export interface CompactSelection {
 /** Pick the tools for one message.
  *
  * `signals` is what the person just wrote, plus the exchange before it so a
- * follow-up ("and tomorrow?") keeps the tools of what it follows. `always`
+ * follow-up ("and tomorrow?") keeps the tools of what it follows.
+ *
+ * A message that points nowhere (a greeting, small talk, a general question)
+ * gets no tools. That is on purpose: a small model handed a tool it has no
+ * use for tends to call it anyway, which doubles the requests for "hello". `always`
  * names tools that must be offered whatever the wording, such as a work goal's
  * own tools while that goal is being continued. */
 /** What the person wrote, without the attached text that follows it. The words
@@ -114,8 +114,7 @@ export function selectCompactTools(
   const matched = GROUPS.filter((g) => g.words.test(text));
   // A message that names a tool outright gets that tool, whatever else it says.
   const wanted = (name: string) => text.includes(name) || matched.some((g) => g.tools.test(name))
-    || OWN_ADDITIONS.test(name) || opts.isOwnAddition?.(name) === true || opts.always?.test(name) === true
-    || (!matched.length && EVERYDAY.test(name));
+    || OWN_ADDITIONS.test(name) || opts.isOwnAddition?.(name) === true || opts.always?.test(name) === true;
   // The order the tools were given in is kept, so the same selection is the
   // same bytes every time.
   return { tools: available.filter((t) => wanted(t.name)).map(shortenTool), groups: matched.map((g) => g.key) };

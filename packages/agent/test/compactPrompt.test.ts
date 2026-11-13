@@ -75,12 +75,14 @@ describe('how big a request is', () => {
     expect(names).not.toContain('my_world_secret_card');
   });
 
-  it('stays compact for plain conversation, with a few everyday tools', async () => {
+  it('offers no tools for plain conversation, so a greeting is one small request', async () => {
     await configure({});
-    await turn({ inbound: 'hello there' });
+    await turn({ inbound: 'hello there, who are you?' });
     const size = sizeOf(requests[0]);
-    console.log(`COMPACT plain ${describePromptSize(size)}; tools: ${requests[0].tools.map((t: any) => t.function.name).join(', ')}`);
-    expect(size.total).toBeLessThan(2500);
+    console.log(`COMPACT plain ${describePromptSize(size)}`);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].tools).toBeUndefined();
+    expect(size.total).toBeLessThan(900);
   });
 
   it('uses the full prompt when the model server reports a large context', async () => {
