@@ -506,3 +506,18 @@ Test VMs and builds on claw `roman@10.10.1.3` (`~/josi-linux`); VMs `josi-debian
 (ssh -p 2223) and `josi-ubuntu2404-vm` (-p 2224) via claw; build with
 `DOCKER_CONFIG=~/josi-linux/docker-anon scripts/linux/build-release.sh --version X
 --skip-provision`. Claw itself runs the owner's Josi 1.1.6: do not upgrade it unasked.
+
+## beta.25 (2026-11-12, about 17:30 PST): the fix list and the Daily Brief
+
+Built on claw (`build-27.log`, 13 files, both processors, claw's source left clean) from the commits after `4a70e420`. Written by the Windows-side session that took the owner's "go build it all" (list: `docs/LINUX_FIX_LIST.md`, "STATUS after beta.25").
+
+- **Old versions** (fix 10): an upgrade keeps the running version and the one just replaced, removes the rest only after a good start (`prune_old_versions` in `lifecycle.py`); before copying, `ensure_space` names a full disk in plain words and first removes old versions if that makes room; the installer script checks 6 GB free on `/var/lib` before the package step.
+- **Goals** (1 to 4): a goal that asked a question while its own request was open now notices when that request was carried out and goes on (`reconcileWorkGoals`); a request prepared again after expiring is followed by the goal (`relinkWorkGoalTask`); an expired approval posts a message in the conversation; goal prompts ask for a conversation (say it, save a question, stop) and for timed waits on replies. The 15-minute approval limit is unchanged: Roman's call.
+- **Typed yes** (6): `resolveConversationalAction` accepts a yes from a client that names no message when it is the only thing said since the request. **A deliberate loosening of "arrival order is not consent": Roman should confirm.** A client naming a different message is still refused. Josi's wording is "Approve it with the button below, or just say yes or no" (5).
+- **Admin "Josi's own email"** (9): `/api/admin/mail-account`, card on Admin, Overview.
+- **Daily Brief + Memory** (B2): `docs/DAILY_BRIEF.md`. Migration 0135. Both switches start OFF. Page "Daily brief" in the menu.
+- **Typed-installer test** (8): `scripts/linux/e2e-typed-install.py` drives the installer through a real terminal with typed answers and checks the machine ended as typed. It found nothing wrong on Debian 13 (7 of 7), and its first run showed it needed the "address on your network" answer, now included. It installs for real: run it on a VM that was purged first (`sudo josi-uninstall --purge`). Fresh only; on a machine with Josi the update question appears instead.
+- **Not done:** fix 7 (the installer ghost's animation) waits for Roman to say what looks wrong. **Not tried:** the goal prompts, the brief and the notes tools with a real model; the brief against a real mailbox; Wayland etc. as before. The Docker images are still beta.24 (not rebuilt).
+- **Tests:** typecheck clean; full suite on Windows 4730 passed, 34 failed: 22 are the known list and 12 are Windows-host checks (file modes, symlinks, Mac Doctor, Windows antivirus, LAN address, tunnel key store), none touching this work; the same files were not rerun on Linux. New tests: `goalFollowsRequest`, `briefMemory`, `dailyBrief`, `brief` (API), `systemMailAccount`, lifecycle Python tests (36 OK on claw), actionState additions.
+- **VMs:** Ubuntu 24.04 and Debian 13 upgraded from beta.24: `e2e-fake` 9/9, `e2e-pc` 5/5, `e2e-signin` rc 0 on both. The Debian VM was then purged and installed fresh by the typed test, and is left running beta.25 on port 8099.
+- Next version is beta.26, next log `build-28.log`. Gate is Roman's; he upgrades it himself.

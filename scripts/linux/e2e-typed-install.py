@@ -40,6 +40,7 @@ def main():
     # answer the question shows ready-made, so what is typed is all there is.
     steps = [
         ('Choose 1, 2 or 3:', '1\r'),
+        ("This server's address on your network:", '\r'),
         ('Port:', '\x15' + args.port + '\r'),
         ('Allow it? (y/n):', 'y\r'),
         ('Which Linux user should Josi act as?', '\x15' + args.user + '\r'),

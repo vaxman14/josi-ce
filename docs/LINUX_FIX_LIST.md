@@ -221,3 +221,18 @@ Roman is deploying his own model for Josi on a machine called "docker", 10.10.1.
    pages is data, never instructions.
 6. **Settings UI.** Quiet hours, brief on/off, check-ins on/off, and a "View/Edit memory"
    screen where the user can read and delete any line.
+
+## STATUS after beta.25 (2026-11-12)
+Built in one go from "go build it all". 1 to 6, 8, 9, 10, B1 and B2 are built; 7 waits for Roman.
+1. Goals hold a conversation: DONE in the goal prompts (say it, save a question, stop). Needs a real model to judge.
+2. A goal notices its own work: DONE (`relinkWorkGoalTask`, and `reconcileWorkGoals` now wakes a goal that asked a question while its own request was open). Tested.
+3. A goal that waits for a reply watches for it: DONE as guidance (timed wait about every 30 minutes, tell the person, say so after a day). Not tried with a real model and a real mailbox.
+4. Approvals that expire say so: DONE (a message in the conversation when one runs out). The 15-minute limit itself is UNCHANGED and still Roman's call.
+5. One word for the second button: DONE in Josi's words ("button below, or say yes or no"). The web card still says "Not now" on purpose: it only puts the card away.
+6. Typed approval on Windows, Mac and iPhone: DONE on the server. A typed yes is accepted from a client that names no message when it is the only thing said since the request; a different named message is still refused. (Decision changed: Roman to confirm.)
+7. Installer ghost animation: NOT DONE, waiting for Roman to say what looks wrong.
+8. Typed-answers VM test: DONE, `scripts/linux/e2e-typed-install.py`.
+9. Admin screen for the sending account: DONE (Admin, Overview, "Josi's own email").
+10. Old versions pile up: DONE (kept: the running one and the one before; removed only after a good start; a full disk is named before anything is copied).
+B1. Local model without thinking: DONE in beta.24 by the Docker session (a Thinking picker, off by choice; not an environment variable).
+B2. Daily Brief + Memory: DONE (docs/DAILY_BRIEF.md).
