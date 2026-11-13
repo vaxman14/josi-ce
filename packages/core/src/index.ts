@@ -92,3 +92,4 @@ export { readLinuxSecret, readProtectedLinuxFile } from './linuxSecrets.js';
 export * from './computerControl.js';
 export * from './liveSignIn.js';
 export * from './debugger.js';
+export * from './crashReport.js';
