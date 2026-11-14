@@ -12,6 +12,8 @@
 #                      setup link then use it, and JOSI_HOST_ADDRESS is not used.
 #   JOSI_PC_CONTROL    1 (default) or 0: let Josi control the container as user josi
 #   JOSI_BROWSER       1 (default) or 0: Josi's own browser on a hidden screen
+#   JOSI_BACKUP_DIR    a folder mounted into the container for backups (docker run -v /host/folder:/backups
+#                      -e JOSI_BACKUP_DIR=/backups): nightly and one-click backups are copied there
 #   JOSI_OPEN_SETUP    1 (default) or 0: the first visitor on the LAN starts setup without the one-use
 #                      link (lan address only; a published https address always needs the link)
 set -uo pipefail
@@ -25,7 +27,7 @@ if [ -c /dev/console ]; then exec > >(tee /dev/console) 2>&1; fi
 # systemd does not pass `docker run -e` on to its services; the container's
 # first process (PID 1) still holds them.
 while IFS= read -r -d '' pair; do
-  case $pair in JOSI_HOST_ADDRESS=* | JOSI_HOST_PORT=* | JOSI_PUBLIC_URL=* | JOSI_PC_CONTROL=* | JOSI_BROWSER=* | JOSI_TESTER_TOKEN=* | JOSI_DOCKER_VERSION=* | JOSI_REPORT_URL=* | JOSI_OPEN_SETUP=*) export "$pair" ;; esac
+  case $pair in JOSI_HOST_ADDRESS=* | JOSI_HOST_PORT=* | JOSI_PUBLIC_URL=* | JOSI_PC_CONTROL=* | JOSI_BROWSER=* | JOSI_TESTER_TOKEN=* | JOSI_DOCKER_VERSION=* | JOSI_REPORT_URL=* | JOSI_OPEN_SETUP=* | JOSI_BACKUP_DIR=*) export "$pair" ;; esac
 done < /proc/1/environ
 
 # A beta tester's token, for crash reports (see docs/CRASH_REPORTS.md). The token is the only
@@ -66,6 +68,19 @@ else
   args+=(--no-pc-control)
 fi
 
+# The backup folder. The services read its path from /etc/josi/backup-dir (they start with a wiped
+# environment); the folder itself is opened up for them after the installer has made their group.
+backup_dir=${JOSI_BACKUP_DIR:-}
+backup_dir=${backup_dir%/}
+backup_pattern='^/[A-Za-z0-9._/ -]{1,200}$'
+if [[ "$backup_dir" =~ $backup_pattern && "$backup_dir" != *..* && -d "$backup_dir" ]]; then
+  mkdir -p /etc/josi
+  printf '%s\n' "$backup_dir" > /etc/josi/backup-dir.new && chmod 0644 /etc/josi/backup-dir.new && mv /etc/josi/backup-dir.new /etc/josi/backup-dir
+else
+  backup_dir=''
+  rm -f /etc/josi/backup-dir
+fi
+
 echo "Josi is starting (this takes about a minute)…"
 # Data volumes from an earlier container: the service accounts and units an
 # install makes lived in that container, not in the volumes. Put them back
@@ -75,6 +90,15 @@ echo "Josi is starting (this takes about a minute)…"
 url=$(/usr/bin/josi-ce-server-install "${args[@]}" 2>/tmp/josi-firstboot.err) || {
   echo "Josi did not start:"; tail -n 20 /tmp/josi-firstboot.err; exit 1
 }
+if [ -n "$backup_dir" ]; then
+  # Group josi-ce-app is what the web and worker services share; the folder is theirs to write and anyone's to list.
+  chgrp josi-ce-app "$backup_dir" 2>/dev/null && chmod 2775 "$backup_dir" 2>/dev/null || chmod 0777 "$backup_dir" 2>/dev/null || true
+fi
+# Tells the web service that a restored backup's installation key can be put in place (josi-keyswap).
+if [ -d /var/lib/josi/data/state ] && [ -x /usr/local/sbin/josi-keyswap ]; then
+  : > /var/lib/josi/data/state/keyswap.ready && chmod 0644 /var/lib/josi/data/state/keyswap.ready
+  systemctl enable --now josi-keyswap.path >/dev/null 2>&1 || true
+fi
 # The installer prints the machine's own address; people reach it on the published one.
 fragment=${url#*#}
 if [ "$fragment" != "$url" ]; then

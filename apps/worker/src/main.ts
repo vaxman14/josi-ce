@@ -48,6 +48,7 @@ const backupWriter = josiArchiveWriter({
   passwordFile: process.env.PGPASSWORD_FILE, password: process.env.PGPASSWORD_FILE ? undefined : process.env.PGPASSWORD,
   toolsDirectory: process.env.JOSI_PG_BIN,
 }, { attachmentsDir: attachmentRoot(), version: process.env.JOSI_VERSION ?? '0.1.0',
+  masterKeyFile: process.env.MASTER_KEY_FILE ?? null, versionsDir: resolveDataPath('/data/versions'),
   installationId: async () => (await db.query<{ install_id: string }>(`select install_id from install_identity where id = true`))[0]?.install_id ?? null });
 // A restore in progress holds the queue: the database is being replaced.
 const PAUSE_FILE = resolveDataPath('/data/state/worker.pause');

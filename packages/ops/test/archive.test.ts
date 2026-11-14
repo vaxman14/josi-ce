@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { ZipReader, crc32, writeZip } from '../src/zip.js';
-import { buildArchive, compareVersions, isSealed, openArchive, openWithPassphrase, sealWithPassphrase } from '../src/archive.js';
+import { buildArchive, compareVersions, isSealed, openArchive, openWithPassphrase, passphraseMatchesRecipient, recipientFromPassphrase, sealWithPassphrase } from '../src/archive.js';
 import { inspectArchive, restoreFromFile } from '../src/restore.js';
 import { testDb, type TestDb } from '../../core/test/helpers.js';
 
@@ -116,5 +116,70 @@ describe('a Josi backup archive', () => {
     expect(out.attachmentsRestored).toBe(2);
     await expect(readFile(join(target, 'stale.txt'))).rejects.toThrow();
     expect((await readFile(join(target, 'note.txt'))).toString()).toBe('a note');
+  });
+});
+
+describe('a backup sealed to a stored backup password', () => {
+  const dump = gzipSync(Buffer.from('select 2;'));
+  const key = Buffer.from('ab'.repeat(32));
+
+  it('is sealed by the server without the password, opens only with it, and carries the key and relay keys', async () => {
+    await mkdir(join(base, 'keys'), { recursive: true });
+    await writeFile(join(base, 'keys', 'relay.pem'), 'relay key bytes');
+    await mkdir(join(base, 'versions', 'a'), { recursive: true });
+    await writeFile(join(base, 'versions', 'a', 'old.bin'), 'older copy');
+    await writeFile(join(base, 'master-key'), key);
+    const recipient = recipientFromPassphrase('nightly password');
+    expect(passphraseMatchesRecipient('nightly password', recipient)).toBe(true);
+    expect(passphraseMatchesRecipient('another password', recipient)).toBe(false);
+    const destination = join(base, 'nightly.josi-backup');
+    const written = await buildArchive({ destination, kind: 'full', databaseDump: dump, attachmentsDir: join(base, 'attachments'), josiVersion: '0.7.0',
+      recipient, masterKeyFile: join(base, 'master-key'), keysDir: join(base, 'keys'), versionsDir: join(base, 'versions') });
+    expect(written.encrypted).toBe(true);
+    const bytes = await readFile(destination);
+    expect(isSealed(bytes)).toBe(true);
+    expect(bytes.includes(key)).toBe(false);
+    expect(bytes.includes(Buffer.from('not really a photo'))).toBe(false);
+    await expect(openArchive(destination, 'wrong password')).rejects.toThrow(/passphrase does not open/);
+    await expect(openArchive(destination)).rejects.toThrow(/encrypted/);
+    const opened = await openArchive(destination, 'nightly password');
+    try {
+      expect(opened.manifest.contents).toMatchObject({ masterKey: true, relayKeys: 1, versions: 1, attachments: 2 });
+      expect((await opened.masterKey())!.equals(key)).toBe(true);
+      expect((await opened.databaseDump()).equals(dump)).toBe(true);
+      const keys = join(base, 'keys-restored');
+      expect(await opened.restoreFolder('keys', keys)).toBe(1);
+      expect((await readFile(join(keys, 'relay.pem'))).toString()).toBe('relay key bytes');
+    } finally { await opened.close(); }
+  });
+
+  it('puts no key in a backup that is not sealed', async () => {
+    const destination = join(base, 'plain-with-key.zip');
+    await buildArchive({ destination, kind: 'full', databaseDump: dump, josiVersion: '0.7.0', masterKeyFile: join(base, 'master-key'), keysDir: join(base, 'keys') });
+    expect((await readFile(destination)).includes(key)).toBe(false);
+    const opened = await openArchive(destination);
+    try { expect(await opened.masterKey()).toBeNull(); expect(opened.manifest.contents.masterKey).toBe(false); } finally { await opened.close(); }
+  });
+
+  it('a one-off password still seals the same way, and a restore installs the key the backup carries', async () => {
+    const destination = join(base, 'oneoff.josi-backup');
+    await buildArchive({ destination, kind: 'full', databaseDump: dump, josiVersion: '0.7.0', passphrase: 'one off pass', masterKeyFile: join(base, 'master-key') });
+    const inspection = await inspectArchive(destination, { passphrase: 'one off pass', serverVersion: '0.7.0', masterKeyPresent: true, installationId: 'x', encrypted: true });
+    expect(inspection.carriesMasterKey).toBe(true);
+    const installed: Buffer[] = [];
+    const out = await restoreFromFile(db, { path: destination, passphrase: 'one off pass', reader: { async apply() { return { rowsRestored: 1 }; } },
+      masterKeyPresent: true, currentMasterKey: Buffer.from('cd'.repeat(32)), installMasterKey: async (k) => { installed.push(k); }, serverVersion: '0.7.0' });
+    expect(installed).toHaveLength(1);
+    expect(installed[0].equals(key)).toBe(true);
+    expect(out.restartNeeded).toBe(true);
+    expect(out.credentialsRecovered).toBe(true);
+    const same = await restoreFromFile(db, { path: destination, passphrase: 'one off pass', reader: { async apply() { return { rowsRestored: 1 }; } },
+      masterKeyPresent: true, currentMasterKey: key, installMasterKey: async (k) => { installed.push(k); }, serverVersion: '0.7.0' });
+    expect(installed).toHaveLength(1);
+    expect(same.restartNeeded).toBe(false);
+    const cannot = await restoreFromFile(db, { path: destination, passphrase: 'one off pass', reader: { async apply() { return { rowsRestored: 1 }; } },
+      masterKeyPresent: true, currentMasterKey: Buffer.from('cd'.repeat(32)), serverVersion: '0.7.0' });
+    expect(cannot.credentialsRecovered).toBe(false);
+    expect(cannot.warning).toMatch(/cannot replace its own key/);
   });
 });

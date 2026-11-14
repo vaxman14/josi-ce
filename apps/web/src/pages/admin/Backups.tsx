@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { copyText } from '@/lib/clipboard';
 import { Badge, Button, Card, CardTitle, Empty, ErrorNote, Input } from '@/components/ui';
+import { RestoreBackup } from '@/components/RestoreBackup';
 
 interface BackupRow {
   id: string;
@@ -31,9 +32,18 @@ interface BackupRow {
   progress_steps: number;
 }
 
+interface ScheduleView {
+  enabled: boolean; hour: number; keep: number; copy_to: string | null;
+  last_run_at: string | null; last_copy_ok: boolean | null; last_copy_error: string | null;
+  password_set: boolean; password_set_at: string | null;
+  /** The folder the container was given for backups (JOSI_BACKUP_DIR), when there is one. */
+  containerFolder: string | null;
+}
+
 interface BackupsView {
   backups: BackupRow[];
   masterKeyGuidance: string;
+  schedule: ScheduleView | null;
 }
 
 interface DestinationField {
@@ -131,8 +141,8 @@ export function AdminBackups() {
     setError('');
     setNote('');
     try {
-      const res = await api.post<{ description: string }>('/ops/admin/backups', { kind });
-      setNote(res.description);
+      const res = await api.post<{ description: string; copiedToFolder?: boolean | null }>('/ops/admin/backups', { kind });
+      setNote(res.description + (res.copiedToFolder === true ? ' A copy is in your backup folder.' : res.copiedToFolder === false ? ' The copy to your backup folder failed: check that Josi may write there.' : ''));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That backup could not be taken');
@@ -176,14 +186,27 @@ export function AdminBackups() {
 
       {/* Stated once, prominently, rather than repeated beside every row: an
           archive on its own does not restore this installation. */}
-      {view?.masterKeyGuidance ? (
+      {view ? <BackupProtection schedule={view.schedule} reload={load} /> : null}
+
+      {view?.masterKeyGuidance && !view.schedule?.password_set ? (
         <Card>
-          <CardTitle>The master key is not in any of these</CardTitle>
+          <CardTitle>The master key is not in these backups</CardTitle>
           <p className="mt-2 text-sm text-muted-foreground">{view.masterKeyGuidance}</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Set a backup password above and the key goes inside each backup, protected by it.
+          </p>
         </Card>
       ) : null}
 
       <BackupDestination />
+
+      <Card>
+        <CardTitle>Restore a backup</CardTitle>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Replaces everything on this server with what is in the backup. A copy of what is here now is taken first.
+        </p>
+        <div className="mt-3"><RestoreBackup mode="admin" /></div>
+      </Card>
 
       <Card>
         <CardTitle>History</CardTitle>
@@ -555,6 +578,114 @@ function BackupDestination() {
           </p>
         </form>
       ) : null}
+    </Card>
+  );
+}
+
+/** The backup password and the nightly backup.
+ *
+ * The password is turned into a public key once; the server keeps only that, so
+ * it can seal every backup (the nightly one too) but cannot open one. That is
+ * also why it cannot be recovered: the card says so, and offers a check that
+ * the password somebody remembers is the one in use. */
+function BackupProtection({ schedule, reload }: { schedule: ScheduleView | null; reload: () => Promise<void> }) {
+  const [password, setPassword] = useState('');
+  const [again, setAgain] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [note, setNote] = useState('');
+  const [changing, setChanging] = useState(false);
+  const [folder, setFolder] = useState(schedule?.copy_to ?? '');
+  const [hour, setHour] = useState(schedule?.hour ?? 3);
+  const [keep, setKeep] = useState(schedule?.keep ?? 7);
+  if (!schedule) return null;
+
+  async function run(work: () => Promise<unknown>, done: string) {
+    setBusy(true); setError(''); setNote('');
+    try { await work(); setNote(done); await reload(); }
+    catch (err) { setError(err instanceof Error ? err.message : 'That could not be saved'); }
+    finally { setBusy(false); }
+  }
+  const setPasswordNow = () => run(async () => {
+    if (password.length < 8) throw new Error('Use a backup password of at least 8 characters.');
+    if (password !== again) throw new Error('The two passwords are not the same.');
+    await api.put('/ops/admin/backups/password', { password });
+    setPassword(''); setAgain(''); setChanging(false);
+  }, 'Backup password saved. From now on every backup is protected with it.');
+  const checkPassword = () => run(async () => {
+    const r = await api.post<{ ok: boolean }>('/ops/admin/backups/password/check', { password });
+    if (!r.ok) throw new Error('That is not the backup password.');
+    setPassword('');
+  }, 'That is the backup password.');
+  const saveSchedule = (body: Record<string, unknown>) => run(() => api.put('/ops/admin/backups/schedule', body), 'Saved.');
+
+  const folderShown = schedule.copy_to || schedule.containerFolder;
+  return (
+    <Card>
+      <CardTitle>Automatic backups</CardTitle>
+      {error ? <div className="mt-2"><ErrorNote>{error}</ErrorNote></div> : null}
+      {note ? <p className="mt-2 text-sm text-muted-foreground" role="status">{note}</p> : null}
+
+      <div className="mt-3 space-y-1">
+        <p className="text-sm font-medium">Backup password {schedule.password_set ? <Badge tone="ok">Set</Badge> : <Badge tone="danger">Not set</Badge>}</p>
+        <p className="text-sm text-muted-foreground">
+          {schedule.password_set
+            ? 'Every backup is protected with it, and includes the installation key so a restore on a new install brings back your connected accounts and saved logins.'
+            : 'Without a backup password, backups are not protected and do not include your connected accounts and saved logins. Set one so a restore on a new install gets everything back.'}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          <strong>Write it down somewhere safe.</strong> Josi cannot recover it: it only keeps what it needs to protect new backups, not to open them.
+        </p>
+        {!schedule.password_set || changing ? (
+          <div className="mt-2 grid max-w-sm gap-2">
+            <Input type="password" autoComplete="new-password" placeholder="Backup password (8 or more characters)" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Input type="password" autoComplete="new-password" placeholder="Type it again" value={again} onChange={(e) => setAgain(e.target.value)} />
+            <div className="flex gap-2">
+              <Button type="button" disabled={busy} onClick={() => void setPasswordNow()}>Save the backup password</Button>
+              {changing ? <Button type="button" variant="secondary" onClick={() => { setChanging(false); setPassword(''); setAgain(''); }}>Cancel</Button> : null}
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 flex max-w-sm flex-wrap gap-2">
+            <Input type="password" autoComplete="off" placeholder="Check a password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Button type="button" variant="secondary" disabled={busy || !password} onClick={() => void checkPassword()}>Check it</Button>
+            <Button type="button" variant="secondary" disabled={busy} onClick={() => setChanging(true)}>Change it</Button>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-5 space-y-2 border-t border-border pt-4">
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={schedule.enabled} disabled={busy} onChange={(e) => void saveSchedule({ enabled: e.target.checked })} />
+          Back up automatically every night
+        </label>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <label className="flex items-center gap-1">At
+            <select className="rounded-md border border-border bg-background px-2 py-1" value={hour} onChange={(e) => { const h = Number(e.target.value); setHour(h); void saveSchedule({ hour: h }); }}>
+              {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1">Keep the last
+            <input className="w-16 rounded-md border border-border bg-background px-2 py-1" type="number" min={1} max={60} value={keep}
+                   onChange={(e) => setKeep(Number(e.target.value))} onBlur={() => { if (keep >= 1 && keep <= 60) void saveSchedule({ keep }); }} />
+          </label>
+        </div>
+        <div className="text-sm">
+          <p className="font-medium">Backup folder</p>
+          {schedule.containerFolder && !schedule.copy_to ? (
+            <p className="text-muted-foreground">Backups are copied to <code>{schedule.containerFolder}</code>, the folder this install was given on your computer or server.</p>
+          ) : (
+            <p className="text-muted-foreground">{folderShown ? <>Backups are copied to <code>{folderShown}</code>.</> : 'Backups stay inside Josi only. Choose a folder outside it, so a lost or rebuilt install does not take them too.'}</p>
+          )}
+          <div className="mt-2 flex max-w-lg gap-2">
+            <Input value={folder} placeholder={schedule.containerFolder ?? '/path/to/a/folder'} onChange={(e) => setFolder(e.target.value)} />
+            <Button type="button" variant="secondary" disabled={busy} onClick={() => void saveSchedule({ copyTo: folder.trim() })}>Use this folder</Button>
+          </div>
+          {schedule.last_run_at ? <p className="mt-2 text-xs text-muted-foreground">Last automatic backup: {new Date(schedule.last_run_at).toLocaleString()}</p> : null}
+          {schedule.last_copy_ok === false ? <p className="mt-1 text-xs text-red-600">The last copy to the folder failed: {schedule.last_copy_error ?? 'unknown reason'}.</p> : null}
+          {schedule.last_copy_ok === true ? <p className="mt-1 text-xs text-muted-foreground">The last copy to the folder worked.</p> : null}
+        </div>
+      </div>
     </Card>
   );
 }

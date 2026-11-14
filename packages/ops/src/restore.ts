@@ -9,6 +9,8 @@ export interface ArchiveInspection {
   legacy: boolean;
   encrypted: boolean;
   attachments: number;
+  /** The backup carries the installation master key, so saved logins come back with it. */
+  carriesMasterKey: boolean;
   /** Facts the person should read before saying "restore". */
   warnings: string[];
   /** Refusals: the restore will not run while any of these stand. */
@@ -25,12 +27,15 @@ export async function inspectArchive(path: string, options: { passphrase?: strin
     if (!opened.legacy && compareVersions(manifest.josiVersion, options.serverVersion) > 0)
       refusals.push(`This backup was made by Josi ${manifest.josiVersion}; this server runs ${options.serverVersion}. Update the server first.`);
     if (manifest.kind === 'portable') refusals.push('This is a portable export, not a backup: it has no recovery copies and cannot restore an installation.');
-    if (!options.masterKeyPresent) warnings.push('The installation master key is not present on this server. Your data comes back, but saved logins, connected accounts and API keys stay sealed until the key is restored too.');
+    const carriesMasterKey = opened.legacy ? false : (manifest.contents.masterKey === true);
+    if (!options.masterKeyPresent && !carriesMasterKey) warnings.push('The installation master key is not present on this server. Your data comes back, but saved logins, connected accounts and API keys stay sealed until the key is restored too.');
     if (manifest.installationId && options.installationId && manifest.installationId !== options.installationId)
       warnings.push('This backup comes from a different Josi installation. Restoring it replaces everything here with that installation.');
+    if (!carriesMasterKey && !opened.legacy && manifest.contents.recoveryCopies && manifest.installationId && options.installationId && manifest.installationId !== options.installationId)
+      warnings.push('This backup is not encrypted, so it does not carry the installation key: connected accounts and saved logins will have to be connected again on this server.');
     if (opened.legacy) warnings.push('This is an older backup with the database only; chat attachments are not in it.');
     warnings.push('Restoring replaces every person, conversation, setting and connection on this server with what is in the backup, and signs everyone out. A snapshot is taken first so it can be undone.');
-    return { manifest, legacy: opened.legacy, encrypted: options.encrypted, attachments: opened.attachments.length, warnings, refusals };
+    return { manifest, legacy: opened.legacy, encrypted: options.encrypted, attachments: opened.attachments.length, carriesMasterKey, warnings, refusals };
   } finally { await opened.close(); }
 }
 
@@ -44,6 +49,13 @@ export interface RestoreFromFileArgs {
   serverVersion: string;
   /** The backup row this file belongs to, when it is one of the server's own. */
   backupId?: string | null;
+  /** The key this server holds now, to tell whether the backup's differs. */
+  currentMasterKey?: Buffer | null;
+  /** Hands the backup's master key to whatever can put it in place (it needs more rights than the web service has). */
+  installMasterKey?: (key: Buffer) => Promise<void>;
+  /** Where previous-version copies and relay keys live; swapped in like the attachments. */
+  versionsDir?: string | null;
+  keysDir?: string | null;
   /** Taken before anything is replaced; its failure stops the restore. */
   snapshot?: () => Promise<void>;
   /** Hold background work while the database is swapped. */
@@ -81,6 +93,8 @@ export async function reconcileBackupRows(db: Db, writer: { physicalPath?: (p: s
 }
 
 export interface RestoreFromFileOutcome extends RestoreOutcome {
+  /** True when the master key was replaced: the services must restart to use it. */
+  restartNeeded: boolean;
   attachmentsRestored: number;
   manifest: ArchiveManifest;
 }
@@ -97,7 +111,27 @@ export async function restoreFromFile(db: Db, args: RestoreFromFileArgs): Promis
     if (args.snapshot) await args.snapshot();
     if (args.pause) await args.pause();
     try {
-      const outcome = await restoreBackup(db, { backupId: args.backupId ?? null, archive: dump, masterKeyPresent: args.masterKeyPresent, reader: args.reader });
+      // The backup's own key beats whatever this server has: a new install made
+      // its own key, and the backup's logins are sealed with the old one.
+      const archiveKey = await opened.masterKey();
+      const sameKey = !!archiveKey && !!args.currentMasterKey && archiveKey.equals(args.currentMasterKey);
+      const keyInstallable = !!archiveKey && !sameKey && !!args.installMasterKey;
+      const outcome = await restoreBackup(db, { backupId: args.backupId ?? null, archive: dump,
+        masterKeyPresent: archiveKey ? (sameKey || keyInstallable) : args.masterKeyPresent, reader: args.reader });
+      let keyNote: string | undefined;
+      let restartNeeded = false;
+      if (keyInstallable) {
+        try { await args.installMasterKey!(archiveKey!); restartNeeded = true; }
+        catch { outcome.credentialsRecovered = false; keyNote = 'The data is back, but the installation key from the backup could not be put in place, so connected accounts and saved logins stay sealed. Connect them again, or restore the key by hand.'; }
+      } else if (archiveKey && !sameKey) {
+        outcome.credentialsRecovered = false;
+        keyNote = 'This backup carries the installation key, but this server cannot replace its own key. Connected accounts and saved logins stay sealed until the key is restored.';
+      }
+      for (const [prefix, dir] of [['versions', args.versionsDir], ['keys', args.keysDir]] as const) {
+        if (dir && !opened.legacy && (opened.manifest.contents as Record<string, unknown>)[prefix === 'keys' ? 'relayKeys' : 'versions']) {
+          await opened.restoreFolder(prefix, dir).catch(() => undefined);
+        }
+      }
       let attachmentsRestored = 0;
       if (args.attachmentsDir && !opened.legacy) {
         try { attachmentsRestored = await opened.restoreAttachments(args.attachmentsDir); }
@@ -110,8 +144,8 @@ export async function restoreFromFile(db: Db, args: RestoreFromFileArgs): Promis
         actorUserId: args.actorUserId ?? undefined, actor: args.actorUserId ? 'super_admin' : 'system', kind: 'backup.restored',
         payload: { backupId: args.backupId ?? null, fromFile: !args.backupId, josiVersion: opened.manifest.josiVersion, attachmentsRestored, credentialsRecovered: outcome.credentialsRecovered },
       }).catch(() => undefined);
-      return { ...outcome, attachmentsRestored, manifest: opened.manifest,
-        warning: [outcome.warning, attachmentsRestored < 0 ? 'The database was restored but the chat attachments could not be written back; attach files again where needed.' : undefined].filter(Boolean).join(' ') || undefined };
+      return { ...outcome, attachmentsRestored, manifest: opened.manifest, restartNeeded,
+        warning: [archiveKey && outcome.credentialsRecovered ? undefined : outcome.warning, keyNote, attachmentsRestored < 0 ? 'The database was restored but the chat attachments could not be written back; attach files again where needed.' : undefined].filter(Boolean).join(' ') || undefined };
     } finally { if (args.resume) await args.resume().catch(() => undefined); }
   } finally { await opened.close(); }
 }

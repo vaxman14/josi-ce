@@ -73,7 +73,7 @@ export function contentsFor(kind: BackupKind): BackupContents {
  * line of this should still learn that the database backup alone cannot restore
  * their credentials.
  */
-export function describeBackup(kind: BackupKind, masterKeyConfirmed: boolean): string {
+export function describeBackup(kind: BackupKind, masterKeyConfirmed: boolean, keyIncluded = false): string {
   const parts: string[] = [];
   if (kind === 'full') {
     parts.push(
@@ -88,6 +88,14 @@ export function describeBackup(kind: BackupKind, masterKeyConfirmed: boolean): s
     );
   }
 
+  if (kind === 'full' && keyIncluded) {
+    parts.push(
+      'It is protected with your backup password and includes the installation key, so restoring it on a new '
+      + 'install brings back every connected account and saved login. Keep the password somewhere safe: Josi cannot '
+      + 'recover it, and without it this backup cannot be opened. The offline Vault recovery key is separate and is not inside.',
+    );
+    return parts.join(' ');
+  }
   parts.push(
     'It does NOT contain the installation master key. That is deliberate — a copy of '
     + 'this file is useless to anyone who does not also have the key.',
@@ -129,7 +137,9 @@ export interface BackupRow {
 export interface BackupWriter {
   /** Writes the archive to `destination`. Throws `BackupError` with a category.
    * A passphrase, when the writer supports one, seals the file on disk. */
-  write(args: { kind: BackupKind; contents: BackupContents; destination: string; passphrase?: string }): Promise<{
+  write(args: { kind: BackupKind; contents: BackupContents; destination: string; passphrase?: string;
+    /** Seals to a stored public key instead: the nightly backup, which cannot ask for a passphrase. */
+    recipient?: { salt: string; publicKey: string } }): Promise<{
     byteSize: number;
     sha256: string;
     attachments?: number;
@@ -159,6 +169,8 @@ export async function createBackup(
     deferCompletion?: boolean;
     /** Seals the file with this passphrase; never stored anywhere. */
     passphrase?: string;
+    /** Seals the file to the stored backup password's public half (see archive.ts). */
+    recipient?: { salt: string; publicKey: string };
     /** Made by the schedule, not a person; pruned by the schedule's keep count. */
     automatic?: boolean;
   },
@@ -174,7 +186,7 @@ export async function createBackup(
      returning *`,
     [
       args.kind, storedPath, contents.recoveryCopies, contents.uploads,
-      args.masterKeyConfirmed === true, args.createdBy || null, !!args.passphrase, args.automatic === true,
+      args.masterKeyConfirmed === true, args.createdBy || null, !!args.passphrase || !!args.recipient, args.automatic === true,
     ],
   );
 
@@ -184,7 +196,7 @@ export async function createBackup(
       [row.id],
     );
     const { byteSize, sha256, attachments } = await args.writer.write({
-      kind: args.kind, contents, destination: storedPath, passphrase: args.passphrase,
+      kind: args.kind, contents, destination: storedPath, passphrase: args.passphrase, recipient: args.recipient,
     });
     const [done] = await db.query<BackupRow>(
       `update backups set state = $4, byte_size = $2, sha256 = $3, attachment_count = $5,
@@ -205,7 +217,7 @@ export async function createBackup(
       // log is read by whoever can read the audit trail.
       payload: { kind: args.kind, byteSize, masterKeyConfirmed: args.masterKeyConfirmed === true },
     });
-    return { backup: done, description: describeBackup(args.kind, args.masterKeyConfirmed === true) };
+    return { backup: done, description: describeBackup(args.kind, args.masterKeyConfirmed === true, !!args.passphrase || !!args.recipient) };
   } catch (err) {
     const category = err instanceof BackupError ? err.category : 'unknown';
     await db.query(

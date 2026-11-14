@@ -16,9 +16,9 @@
 import { isIP } from 'node:net';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import multer from 'multer';
-import { RestoreError, reconcileBackupRows, restoreFromFile } from '@josi-ce/ops';
+import { RestoreError, backupFolderFile, currentMasterKeyBytes, keySwapAvailable, listBackupFolder, queueMasterKey, reconcileBackupRows, restoreFromFile } from '@josi-ce/ops';
 import {
   appendEvent, asSecret, ensureWorkspace, getInstallId, getSetupState, getVerifications, initializeVault, json, loadMasterKey, resolveDataPath,
   updateWorkspace,
@@ -260,9 +260,31 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
    * happens in one call; a fresh server has nothing worth a snapshot. */
   const incomingDir = resolveDataPath('/data/backups/incoming');
   const receiveArchive = archiveUpload(incomingDir, 'setup');
-  r.post('/restore', asyncRoute(async (req, res) => {
+  const noOwner = async () => {
     const [owner] = await db.query<{ present: boolean }>("select exists(select 1 from users where role='super_admin') as present");
-    if (owner?.present) { res.status(409).json({ error: 'This server already has an owner. Restore from Administration → Backups instead.' }); return; }
+    return !owner?.present;
+  };
+  /** Restores `path` onto this empty server; the same answer for an upload and a file from the backup folder. */
+  const restoreHere = async (path: string, passphrase: string | undefined, res: Response) => {
+    const masterKeyPresent = !!process.env.MASTER_KEY_FILE && existsSync(process.env.MASTER_KEY_FILE);
+    try {
+      const out = await restoreFromFile(db, {
+        path, passphrase, reader: ctx.restoreReader!, attachmentsDir: ctx.attachmentsDir ?? null, masterKeyPresent,
+        currentMasterKey: currentMasterKeyBytes(), installMasterKey: keySwapAvailable() ? queueMasterKey : undefined,
+        versionsDir: resolveDataPath('/data/versions'), keysDir: resolveDataPath('/data/keys'),
+        serverVersion: ctx.version ?? process.env.JOSI_VERSION ?? '0.1.0', actorUserId: null,
+      });
+      await reconcileBackupRows(db, ctx.backupWriter!).catch(() => undefined);
+      res.json({ ok: true, rowsRestored: out.rowsRestored, credentialsRecovered: out.credentialsRecovered, attachmentsRestored: out.attachmentsRestored,
+        restartNeeded: out.restartNeeded, josiVersion: out.manifest.josiVersion, warning: out.warning ?? null });
+    } catch (error) {
+      if (error instanceof RestoreError) { res.status(error.category === 'version_too_new' ? 409 : 400).json({ error: error.message, category: error.category }); return; }
+      throw error;
+    }
+  };
+  const owned = (res: Response) => { res.status(409).json({ error: 'This server already has an owner. Restore from Administration → Backups instead.' }); };
+  r.post('/restore', asyncRoute(async (req, res) => {
+    if (!(await noOwner())) { owned(res); return; }
     if (!ctx.restoreReader || !ctx.backupWriter) { res.status(503).json({ error: 'restore is not available on this installation' }); return; }
     try {
       await new Promise<void>((resolve, reject) => receiveArchive.single('archive')(req, res, (error) => error ? reject(error) : resolve()));
@@ -273,19 +295,22 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
     if (!req.file) { res.status(400).json({ error: 'choose a backup file' }); return; }
     const path = req.file.path;
     const passphrase = typeof req.body?.passphrase === 'string' ? req.body.passphrase.slice(0, 512) : undefined;
-    const masterKeyPresent = !!process.env.MASTER_KEY_FILE && existsSync(process.env.MASTER_KEY_FILE);
-    try {
-      const out = await restoreFromFile(db, {
-        path, passphrase, reader: ctx.restoreReader, attachmentsDir: ctx.attachmentsDir ?? null, masterKeyPresent,
-        serverVersion: ctx.version ?? process.env.JOSI_VERSION ?? '0.1.0', actorUserId: null,
-      });
-      await reconcileBackupRows(db, ctx.backupWriter).catch(() => undefined);
-      res.json({ ok: true, rowsRestored: out.rowsRestored, credentialsRecovered: out.credentialsRecovered, attachmentsRestored: out.attachmentsRestored,
-        josiVersion: out.manifest.josiVersion, warning: out.warning ?? null });
-    } catch (error) {
-      if (error instanceof RestoreError) { res.status(error.category === 'version_too_new' ? 409 : 400).json({ error: error.message, category: error.category }); return; }
-      throw error;
-    } finally { await rm(path, { force: true }).catch(() => undefined); }
+    try { await restoreHere(path, passphrase, res); } finally { await rm(path, { force: true }).catch(() => undefined); }
+  }));
+
+  /** Backup files already sitting in the folder the container was given: a reinstall finds its own backups. */
+  r.get('/restore/folder', asyncRoute(async (_req, res) => {
+    if (!(await noOwner())) { owned(res); return; }
+    const dir = process.env.JOSI_BACKUP_DIR || null;
+    res.json({ configured: !!dir, files: await listBackupFolder(dir) });
+  }));
+  r.post('/restore/folder', asyncRoute(async (req, res) => {
+    if (!(await noOwner())) { owned(res); return; }
+    if (!ctx.restoreReader || !ctx.backupWriter) { res.status(503).json({ error: 'restore is not available on this installation' }); return; }
+    const path = backupFolderFile(process.env.JOSI_BACKUP_DIR || null, req.body?.file);
+    if (!path || !existsSync(path)) { res.status(404).json({ error: 'that file is not in the backup folder' }); return; }
+    const passphrase = typeof req.body?.passphrase === 'string' ? req.body.passphrase.slice(0, 512) : undefined;
+    await restoreHere(path, passphrase, res);
   }));
 
   /** Current position. The only thing a client is told about where it is. */

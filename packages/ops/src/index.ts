@@ -31,10 +31,13 @@ export {
 } from './pgWriter.js';
 export {
   ARCHIVE_FORMAT, ARCHIVE_FORMAT_VERSION, buildArchive, compareVersions, isSealed, openArchive, openWithPassphrase, sealWithPassphrase,
-  type ArchiveManifest, type OpenedArchive,
+  passphraseMatchesRecipient, recipientFromPassphrase,
+  type ArchiveManifest, type BackupRecipient, type OpenedArchive,
 } from './archive.js';
 export { crc32, writeZip, ZipReader, type ZipEntry, type ZipSource } from './zip.js';
 export { inspectArchive, reconcileBackupRows, restoreFromFile, type ArchiveInspection, type RestoreFromFileArgs, type RestoreFromFileOutcome } from './restore.js';
 export { createNativeSnapshot, restoreNativeSnapshot, verifyNativeSnapshot } from './nativeSnapshot.js';
 export { BackupConfigurationError, prepareBackupDestinationSave, commitBackupDestinationSave, loadBackupDestination,
   recordBackupDestinationCheck, removeBackupDestination, type BackupDestinationRow, type BackupDestinationInput } from './backupCredentials.js';
+export { KEYSWAP_PENDING_FILE, KEYSWAP_READY_FILE, currentMasterKeyBytes, keySwapAvailable, queueMasterKey } from './masterKeyHandoff.js';
+export { backupFolderFile, listBackupFolder, publishToFolder, type FolderBackup } from './backupFolder.js';

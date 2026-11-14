@@ -1,16 +1,15 @@
 // The backup nobody has to remember: once a day, into the server's own
 // backups folder, the last few kept, the newest copied to a folder of the
 // administrator's choosing when they named one.
-import { copyFile, mkdir, rm } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import { appendEvent, resolveDataPath, type Db } from '@josi-ce/core';
-import { createBackup, type BackupWriter } from '@josi-ce/ops';
+import { createBackup, publishToFolder, type BackupWriter } from '@josi-ce/ops';
 
-interface Schedule { enabled: boolean; hour: number; keep: number; copy_to: string | null; last_run_at: string | null }
+interface Schedule { enabled: boolean; hour: number; keep: number; copy_to: string | null; last_run_at: string | null; recipient_salt: string | null; recipient_public: string | null }
 
 /** Runs at most once a day, after the scheduled hour. Returns what it did. */
 export async function runDailyBackup(db: Db, writer: BackupWriter, now = new Date()): Promise<'skipped' | 'done' | 'failed'> {
-  const [schedule] = await db.query<Schedule>(`select enabled, hour, keep, copy_to, last_run_at from backup_schedule where id = true`).catch(() => []);
+  const [schedule] = await db.query<Schedule>(`select enabled, hour, keep, copy_to, last_run_at, recipient_salt, recipient_public from backup_schedule where id = true`).catch(() => []);
   if (!schedule?.enabled) return 'skipped';
   if (now.getHours() < schedule.hour) return 'skipped';
   const today = new Date(now); today.setHours(schedule.hour, 0, 0, 0);
@@ -23,8 +22,11 @@ export async function runDailyBackup(db: Db, writer: BackupWriter, now = new Dat
 
   const stamp = now.toISOString().slice(0, 10);
   let stored: string;
+  // Sealed to the stored backup password's public half when there is one: the
+  // file then carries the installation key, and this process cannot open it.
+  const recipient = schedule.recipient_salt && schedule.recipient_public ? { salt: schedule.recipient_salt, publicKey: schedule.recipient_public } : undefined;
   try {
-    const { backup } = await createBackup(db, { kind: 'full', createdBy: null, writer, filename: `josi-daily-${stamp}-${Date.now()}.zip`, automatic: true });
+    const { backup } = await createBackup(db, { kind: 'full', createdBy: null, writer, filename: `josi-daily-${stamp}-${Date.now()}${recipient ? '.josi-backup' : '.zip'}`, automatic: true, recipient });
     stored = backup.stored_path;
   } catch (error) {
     console.error('josi-ce worker: daily backup failed:', error instanceof Error ? error.message : error);
@@ -40,15 +42,13 @@ export async function runDailyBackup(db: Db, writer: BackupWriter, now = new Dat
     await db.query(`delete from backups where id = $1`, [row.id]);
   }
 
-  if (schedule.copy_to) {
+  // The folder the person chose, or the one the container was given (JOSI_BACKUP_DIR).
+  const copyTo = schedule.copy_to || process.env.JOSI_BACKUP_DIR || null;
+  if (copyTo) {
     const source = writer.physicalPath ? writer.physicalPath(stored) : resolveDataPath(stored);
-    const target = join(schedule.copy_to, basename(stored));
     try {
-      await mkdir(schedule.copy_to, { recursive: true });
-      await copyFile(source, `${target}.part`);
-      await rm(target, { force: true });
-      await copyFile(`${target}.part`, target);
-      await rm(`${target}.part`, { force: true });
+      // The folder is not left to grow for ever: the newest `keep` nightly files stay.
+      await publishToFolder(source, copyTo, { sealed: !!recipient, keep: schedule.keep });
       await db.query(`update backup_schedule set last_copy_ok = true, last_copy_error = null where id = true`);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
@@ -56,6 +56,6 @@ export async function runDailyBackup(db: Db, writer: BackupWriter, now = new Dat
       await db.query(`update backup_schedule set last_copy_ok = false, last_copy_error = $1 where id = true`, [why]);
     }
   }
-  await appendEvent(db, { actor: 'system', kind: 'backup.daily', payload: { pruned: old.length, copied: !!schedule.copy_to } }).catch(() => undefined);
+  await appendEvent(db, { actor: 'system', kind: 'backup.daily', payload: { pruned: old.length, copied: !!copyTo, sealed: !!recipient } }).catch(() => undefined);
   return 'done';
 }

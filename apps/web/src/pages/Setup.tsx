@@ -19,6 +19,7 @@ import {
 import { Button, Card, CardTitle, ErrorNote, Input } from '@/components/ui';
 import { GreetingGhost } from '@/components/ghost/Ghost';
 import { LegalLinks } from '@/components/LegalLinks';
+import { RestoreBackup } from '@/components/RestoreBackup';
 
 /** The outcome of a real attempt to use something that was configured. */
 interface Verification {
@@ -113,6 +114,8 @@ export function Setup({ onDone }: { onDone: () => void }) {
   const [busy, setBusy] = useState(false);
 
   const [review, setReview] = useState<Review | null>(null);
+  /** The first screen offers to restore a backup instead of setting up from nothing. */
+  const [restoring, setRestoring] = useState(false);
   /** A completed step the operator has chosen to redo from the review screen. */
   const [revising, setRevising] = useState<string | null>(null);
 
@@ -210,7 +213,15 @@ export function Setup({ onDone }: { onDone: () => void }) {
 
       {error ? <div className="mb-3"><ErrorNote>{error}</ErrorNote></div> : null}
 
-      {revisingStep ? (
+      {restoring ? (
+        <Card>
+          <CardTitle>Restore a backup</CardTitle>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Bring back everything from an earlier Josi: people, conversations, settings and, with a protected backup, your connected accounts.
+          </p>
+          <RestoreBackup mode="setup" onCancel={() => setRestoring(false)} />
+        </Card>
+      ) : revisingStep ? (
         <Card>
           <CardTitle>{revisingStep.title}</CardTitle>
           <p className="mb-4 text-sm text-muted-foreground">
@@ -250,6 +261,13 @@ export function Setup({ onDone }: { onDone: () => void }) {
           </Button>
         </Card>
       )}
+
+      {!restoring && !revisingStep && !state.ownerExists && state.completedSteps.length === 0 ? (
+        <p className="mt-4 text-center text-sm text-muted-foreground">
+          Already have a Josi backup?{' '}
+          <button type="button" className="text-primary underline" onClick={() => setRestoring(true)}>Restore it instead</button>
+        </p>
+      ) : null}
 
       {review && (!current || current.id === 'review') ? (
         <div className="mt-4">

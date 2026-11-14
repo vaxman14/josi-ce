@@ -1,0 +1,9 @@
+[Unit]
+Description=Put the installation key from a restored backup in place
+
+[Path]
+PathExists=/var/lib/josi/data/state/master-key.pending
+Unit=josi-keyswap.service
+
+[Install]
+WantedBy=multi-user.target

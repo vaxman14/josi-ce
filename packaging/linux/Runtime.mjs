@@ -61,6 +61,16 @@ try {
     }
   }
 
+  // The folder a Docker install hands to Josi for backups (/etc/josi/backup-dir, root's, one absolute path).
+  let backupDir = '';
+  try {
+    const st = lstatSync('/etc/josi/backup-dir');
+    if (st.isFile() && st.uid === 0 && !(st.mode & 0o022) && st.size < 512) {
+      const wanted = readFileSync('/etc/josi/backup-dir', 'utf8').trim();
+      if (/^\/[A-Za-z0-9._\/ -]{1,200}$/.test(wanted) && !wanted.includes('..')) backupDir = wanted;
+    }
+  } catch {}
+
   for (const key of Object.keys(process.env)) delete process.env[key];
   const secret = join(data, 'secrets', role);
   Object.assign(process.env, {
@@ -88,6 +98,8 @@ try {
     ...(address.email ? { JOSI_ACME_EMAIL: address.email } : {}),
     // Lets the first visitor on the LAN start setup without the one-use link (setupGate.ts).
     ...(address.openSetup ? { JOSI_OPEN_SETUP: '1' } : {}),
+    // Backups are copied here as well, outside the data volume (web and worker only).
+    ...(backupDir && (role === 'web' || role === 'worker') ? { JOSI_BACKUP_DIR: backupDir } : {}),
     // The PC control spool, shared with josi-pc.service (group josi-pc).
     ...(role === 'web' ? { JOSI_PC_SPOOL: join(data, 'pc-spool') } : {}),
     WEB_DIR: join(PROGRAM, 'app/apps/web/dist'),

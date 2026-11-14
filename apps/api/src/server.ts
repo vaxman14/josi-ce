@@ -1,6 +1,6 @@
 // Josi CE API entrypoint.
 import { josiArchiveWriter, pgRestoreReader } from '@josi-ce/ops';
-import { apiListenHost, connectFromEnv, loadMasterKey, createNativeInspectionRuntime, installCrashHandlers, importQueuedReports } from '@josi-ce/core';
+import { apiListenHost, connectFromEnv, loadMasterKey, createNativeInspectionRuntime, installCrashHandlers, importQueuedReports, resolveDataPath } from '@josi-ce/core';
 import { attachmentRoot, probeAttachmentStorage, reconcileWorkspaceMount } from '@josi-ce/storage';
 import { createApp } from './app.js';
 import type { CookieSecurePolicy } from './http/cookies.js';
@@ -90,6 +90,7 @@ const app = createApp(db, {
   // One file with everything important (item 42): the dump, the chat
   // attachments and a manifest, optionally sealed with a passphrase.
   backupWriter: josiArchiveWriter(pgConn, { attachmentsDir: attachmentRoot(), version: process.env.JOSI_VERSION ?? '0.1.0',
+    masterKeyFile: process.env.MASTER_KEY_FILE ?? null, keysDir: resolveDataPath('/data/keys'), versionsDir: resolveDataPath('/data/versions'),
     installationId: async () => (await db.query<{ install_id: string }>(`select install_id from install_identity where id = true`))[0]?.install_id ?? null }),
   restoreReader: pgRestoreReader(pgConn),
   // M115: no gateway ships. An operator who wants one sets it.

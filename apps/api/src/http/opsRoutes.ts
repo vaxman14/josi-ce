@@ -31,7 +31,7 @@ import { join, normalize } from 'node:path';
 import multer from 'multer';
 import { archiveUpload } from './archiveUpload.js';
 import { resolveDataPath } from '@josi-ce/core';
-import { inspectArchive, reconcileBackupRows, restoreFromFile } from '@josi-ce/ops';
+import { backupFolderFile, currentMasterKeyBytes, inspectArchive, keySwapAvailable, listBackupFolder, passphraseMatchesRecipient, publishToFolder, queueMasterKey, reconcileBackupRows, recipientFromPassphrase, restoreFromFile } from '@josi-ce/ops';
 import { asyncRoute, param } from './async.js';
 import type { NasController } from './nasController.js';
 import { NasShareError } from './nasWindows.js';
@@ -365,11 +365,13 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
                 progress_steps, created_at, completed_at, encrypted, automatic, attachment_count
          from backups order by created_at desc limit 50`,
       );
-      const [schedule] = await db.query(`select enabled, hour, keep, copy_to, last_run_at, last_copy_ok, last_copy_error from backup_schedule where id = true`);
+      const schedule = await scheduleView();
       // The path is deployment detail and is deliberately not returned.
-      return res.json({ backups, masterKeyGuidance: MASTER_KEY_DOC, schedule: schedule ?? null,
+      return res.json({ backups, masterKeyGuidance: MASTER_KEY_DOC, schedule,
         contents: 'A backup holds the whole database (people, conversations, settings, calendar and contact copies, sealed logins), every chat attachment, and recovery copies. '
-          + 'It does not hold the installation master key (keep that separately), the files Josi indexes from your folders and cloud accounts (they re-sync), or the voice models and runtimes (they come with the installer).' });
+          + 'When it is protected with a backup password it also holds the installation key, so a restore on a new install gets every connected account and saved login back. '
+          + 'Without a backup password it does not hold the key (keep that separately). '
+          + 'It never holds the files Josi indexes from your folders and cloud accounts (they re-sync), or the voice models and runtimes (they come with the installer).' });
     }),
   );
 
@@ -392,14 +394,19 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       // types it again when restoring.
       const passphrase = typeof req.body?.passphrase === 'string' ? req.body.passphrase.slice(0, 512) : '';
       if (passphrase && passphrase.length < 8) throw new RouteError(400, 'use a passphrase of at least 8 characters');
+      // No password typed: a full backup is sealed to the backup password the
+      // server holds the public half of, so one click is still encrypted.
+      const recipient = kind === 'full' && !passphrase ? await storedRecipient() : undefined;
+      const sealed = !!passphrase || !!recipient;
       const { backup, description } = await createBackup(db, {
         kind,
         createdBy: req.user!.id,
-        masterKeyConfirmed: req.body?.masterKeyConfirmed === true,
+        masterKeyConfirmed: req.body?.masterKeyConfirmed === true || !!recipient,
         writer: ctx.backupWriter,
-        filename: `josi-${kind}-${Date.now()}${passphrase ? '.josi-backup' : '.zip'}`,
+        filename: `josi-${kind}-${Date.now()}${sealed ? '.josi-backup' : '.zip'}`,
         deferCompletion: kind === 'full' && destination?.last_check_ok === true,
         passphrase: passphrase || undefined,
+        recipient,
       });
       if (kind === 'full' && destination?.last_check_ok === true) {
         try {
@@ -423,12 +430,20 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
           throw new BackupError('the off-site copy could not be verified');
         }
       }
+      // A copy in the folder the install was given, so it survives losing this one.
+      const folder = kind === 'full' ? await backupFolder() : null;
+      let copied: boolean | null = null;
+      if (folder) {
+        try { await publishToFolder(ctx.backupWriter.physicalPath ? ctx.backupWriter.physicalPath(backup.stored_path) : resolveDataPath(backup.stored_path), folder, { sealed }); copied = true; }
+        catch { copied = false; }
+      }
       return res.status(201).json({
+        copiedToFolder: copied,
         backup: {
           id: backup.id, kind: backup.kind, byteSize: backup.byte_size,
           state: kind === 'full' && destination?.last_check_ok === true ? 'complete' : backup.state,
           includesRecoveryCopies: backup.includes_recovery_copies,
-          encrypted: !!passphrase,
+          encrypted: sealed,
         },
         description,
       });
@@ -801,11 +816,28 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
     }),
   );
 
+  /** The schedule as the page needs it; the password's public half is never returned. */
+  async function scheduleView() {
+    const [row] = await db.query<Record<string, unknown>>(`select enabled, hour, keep, copy_to, last_run_at, last_copy_ok, last_copy_error, recipient_public is not null as password_set, password_set_at from backup_schedule where id = true`);
+    if (!row) return null;
+    return { ...row, containerFolder: process.env.JOSI_BACKUP_DIR || null, keySwap: keySwapAvailable() };
+  }
+  async function storedRecipient(): Promise<{ salt: string; publicKey: string } | undefined> {
+    const [row] = await db.query<{ recipient_salt: string | null; recipient_public: string | null }>(`select recipient_salt, recipient_public from backup_schedule where id = true`);
+    return row?.recipient_salt && row.recipient_public ? { salt: row.recipient_salt, publicKey: row.recipient_public } : undefined;
+  }
+  /** Where copies go: the folder chosen on the schedule, else the one the container was given. */
+  async function backupFolder(): Promise<string | null> {
+    const [row] = await db.query<{ copy_to: string | null }>(`select copy_to from backup_schedule where id = true`);
+    return row?.copy_to || process.env.JOSI_BACKUP_DIR || null;
+  }
+
   /** What you would be told before restoring, without restoring. */
   r.get(
     '/admin/restore/preflight',
     requireSuperAdmin,
     handle(async (_req, res) => res.json({
+      keyCanBeReplaced: keySwapAvailable(),
       masterKeyPresent: !!process.env.MASTER_KEY_FILE && existsSync(process.env.MASTER_KEY_FILE),
       guidance: MASTER_KEY_DOC,
       warning: describeBackup('full', false),
@@ -831,11 +863,16 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         throw new RouteError(400, 'confirm the restore — this replaces the current database');
       }
 
-      // One of the server's own backups, or a file staged a moment ago.
+      // One of the server's own backups, a file in the backup folder, or a file staged a moment ago.
       const backupId = str(req.body?.backupId, 64) || null;
       const stagedId = str(req.body?.stagedId, 64) || null;
+      const folderPath = req.body?.folderFile ? backupFolderFile(await backupFolder(), req.body.folderFile) : null;
+      if (req.body?.folderFile && !folderPath) throw new RouteError(404, 'that file is not in the backup folder');
       let path: string, temp: string | null = null;
-      if (stagedId) {
+      if (folderPath) {
+        if (!existsSync(folderPath)) throw new RouteError(404, 'that file is not in the backup folder');
+        path = folderPath;
+      } else if (stagedId) {
         const staged = stagedFiles.get(stagedId);
         if (!staged || staged.owner !== req.user!.id) throw new RouteError(404, 'that uploaded file is no longer here; upload it again');
         path = staged.path;
@@ -867,6 +904,8 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
       try {
         out = await restoreFromFile(db, {
           path, passphrase, reader: ctx.restoreReader, attachmentsDir: ctx.attachmentsDir ?? null, masterKeyPresent,
+          currentMasterKey: currentMasterKeyBytes(), installMasterKey: keySwapAvailable() ? queueMasterKey : undefined,
+          versionsDir: resolveDataPath('/data/versions'), keysDir: resolveDataPath('/data/keys'),
           serverVersion: ctx.version ?? process.env.JOSI_VERSION ?? '0.1.0', backupId, actorUserId: actor, keepSessionId: req.user!.session_id,
           // The way back: a plain backup of what is about to be replaced. Its
           // row is written again after the restore, since the restore replaces
@@ -918,7 +957,7 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
         const head = Buffer.alloc(6); const file = await open(path, 'r');
         try { await file.read(head, 0, 6, 0); } finally { await file.close(); }
         inspection = await inspectArchive(path, { passphrase, serverVersion: ctx.version ?? process.env.JOSI_VERSION ?? '0.1.0', masterKeyPresent,
-          installationId: identity?.install_id ?? null, encrypted: head.toString('latin1') === 'JOSIP1' });
+          installationId: identity?.install_id ?? null, encrypted: head.toString('latin1').startsWith('JOSIP') });
       } catch (error) {
         await rm(path, { force: true }).catch(() => undefined);
         if (error instanceof RestoreError) throw new RouteError(error.category === 'version_too_new' ? 409 : 400, error.message);
@@ -932,8 +971,40 @@ export function opsRoutes(ctx: OpsRoutesCtx): Router {
 
   // ------------------------------------------------------- the schedule
   r.get('/admin/backups/schedule', requireSuperAdmin, handle(async (_req, res) => {
-    const [row] = await db.query(`select enabled, hour, keep, copy_to, last_run_at, last_copy_ok, last_copy_error from backup_schedule where id = true`);
-    return res.json({ schedule: row ?? null });
+    return res.json({ schedule: await scheduleView() });
+  }));
+
+  // ------------------------------------------------- the backup password
+  //
+  // Turned into a public key once; the server keeps only the public half and
+  // the salt, seals every backup to it (nightly ones too) and cannot open any
+  // of them. The password is never stored, so it cannot be recovered: say so.
+  r.put('/admin/backups/password', requireSuperAdmin, handle(async (req, res) => {
+    const password = typeof req.body?.password === 'string' ? req.body.password.slice(0, 512) : '';
+    if (password.length < 8) throw new RouteError(400, 'use a backup password of at least 8 characters');
+    const recipient = recipientFromPassphrase(password);
+    await db.query(`update backup_schedule set recipient_salt = $1, recipient_public = $2, password_set_at = now(), updated_at = now() where id = true`, [recipient.salt, recipient.publicKey]);
+    await appendEvent(db, { actorUserId: req.user!.id, actor: 'super_admin', kind: 'backup.password_set', payload: {} });
+    return res.json({ schedule: await scheduleView() });
+  }));
+  /** Whether the password somebody remembers is the one that seals the backups. */
+  r.post('/admin/backups/password/check', requireSuperAdmin, handle(async (req, res) => {
+    const password = typeof req.body?.password === 'string' ? req.body.password.slice(0, 512) : '';
+    const recipient = await storedRecipient();
+    if (!recipient) throw new RouteError(404, 'no backup password is set');
+    return res.json({ ok: passphraseMatchesRecipient(password, recipient) });
+  }));
+  r.delete('/admin/backups/password', requireSuperAdmin, handle(async (req, res) => {
+    if (req.body?.confirm !== 'remove') throw new RouteError(400, 'confirm removing the backup password');
+    await db.query(`update backup_schedule set recipient_salt = null, recipient_public = null, password_set_at = null, updated_at = now() where id = true`);
+    await appendEvent(db, { actorUserId: req.user!.id, actor: 'super_admin', kind: 'backup.password_removed', payload: {} });
+    return res.json({ schedule: await scheduleView() });
+  }));
+
+  /** Josi's backup files in the folder the container was given (or the one chosen in the schedule). */
+  r.get('/admin/backups/folder', requireSuperAdmin, handle(async (_req, res) => {
+    const dir = await backupFolder();
+    return res.json({ configured: !!dir, files: await listBackupFolder(dir) });
   }));
   r.put('/admin/backups/schedule', requireSuperAdmin, handle(async (req, res) => {
     const b = req.body ?? {};

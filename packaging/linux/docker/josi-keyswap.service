@@ -1,0 +1,6 @@
+[Unit]
+Description=Replace the installation key with the one from a restored backup
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/josi-keyswap

@@ -171,15 +171,22 @@ export async function dumpDatabase(conn: PgConnection, kind: BackupKind): Promis
 /** The one-file backup (item 42): a zip with the dump, the chat attachments
  * and a manifest, optionally sealed with a passphrase. Reads and removes work
  * on any file under the backup folder, old gzip-only backups included. */
-export function josiArchiveWriter(conn: PgConnection, options: { attachmentsDir?: string | null; version: string; installationId?: () => Promise<string | null> }): BackupWriter {
+export function josiArchiveWriter(conn: PgConnection, options: {
+  attachmentsDir?: string | null; version: string; installationId?: () => Promise<string | null>;
+  /** Goes inside a sealed backup so a restore on a new install can open the saved logins. */
+  masterKeyFile?: string | null;
+  /** Relay keys and previous-version copies, kept outside the database. */
+  keysDir?: string | null; versionsDir?: string | null;
+}): BackupWriter {
   return {
-    async write({ kind, destination, passphrase }) {
+    async write({ kind, destination, passphrase, recipient }) {
       const databaseDump = await dumpDatabase(conn, kind);
       const physicalDestination = resolveDataPath(destination);
       try {
         return await buildArchive({
           destination: physicalDestination, kind, databaseDump, attachmentsDir: options.attachmentsDir ?? null,
-          josiVersion: options.version, installationId: options.installationId ? await options.installationId().catch(() => null) : null, passphrase,
+          josiVersion: options.version, installationId: options.installationId ? await options.installationId().catch(() => null) : null, passphrase, recipient,
+          masterKeyFile: options.masterKeyFile ?? null, keysDir: options.keysDir ?? null, versionsDir: options.versionsDir ?? null,
         });
       } catch (e) {
         if (e instanceof BackupError) throw e;
