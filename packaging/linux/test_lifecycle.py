@@ -42,6 +42,9 @@ class LinuxLifecycleTests(unittest.TestCase):
         self.assertEqual((self.obj.data/'secrets/web/master-key').stat().st_mode&0o777,0o640)
         unit=self.obj.unit('web').decode();self.assertIn('User=josi-ce-web',unit);self.assertIn('NoNewPrivileges=yes',unit)
         self.assertNotIn((self.obj.data/'secrets/web/master-key').read_text(),unit)
+        # The backup folder a Docker install mounts is the only place outside the data folder the web and worker may write.
+        for role in ('web','worker'):self.assertIn(' -/backups',self.obj.unit(role).decode())
+        self.assertNotIn('/backups',self.obj.unit('proxy').decode())
         self.assertEqual((self.obj.data/'state').stat().st_mode&0o7777,0o2770)
         proxy = self.obj.caddyfile({'publicPort':8080,'apiPort':18080}).decode()
         self.assertIn('\n:8080 {\n', proxy)

@@ -707,7 +707,7 @@ class Lifecycle:
                  'Environment=TMPDIR='+str(self.data/'temp'/role),'NoNewPrivileges=yes','PrivateTmp=yes',
                  'ProtectSystem=strict','ProtectHome=read-only','ProtectKernelTunables=yes','ProtectKernelModules=yes',
                  'ProtectControlGroups=yes','RestrictSUIDSGID=yes','LockPersonality=yes',
-                 'ReadWritePaths='+str(self.data),'[Install]','WantedBy=multi-user.target','']
+                 'ReadWritePaths='+str(self.data)+(' -/backups' if role in ('web','worker') else ''),'[Install]','WantedBy=multi-user.target','']
         return '\n'.join(lines).encode()
 
     def pc_unit(self, user, group, cfg, program=None):

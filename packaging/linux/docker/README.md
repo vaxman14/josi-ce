@@ -45,6 +45,26 @@ Or with Compose, from this folder: set `JOSI_HOST_ADDRESS` in the environment
 | `JOSI_PUBLIC_URL` | none | the `https://` address when Josi is published through a tunnel or your own proxy (see below) |
 | `JOSI_PC_CONTROL` | `1` | `0`: Josi may not control the container |
 | `JOSI_BROWSER` | `1` | `0`: no hidden-screen Chrome |
+| `JOSI_BACKUP_DIR` | none | a folder mounted into the container (`-v /srv/josi-backups:/backups -e JOSI_BACKUP_DIR=/backups`): nightly and one-click backups are copied there (see Backups) |
+
+## Backups
+
+Josi keeps its data in the volumes (fast, and no network file system under the
+database), so backups go somewhere else: mount a folder from the host and set
+`JOSI_BACKUP_DIR` (the all-in-one installer does this for you, `--backup-dir`).
+
+- In Josi, Administration, Backups: set a **backup password** once. Josi turns it
+  into a public key and keeps only that, so it can protect every backup,
+  the nightly one too, and cannot open one. The password cannot be recovered.
+- A protected backup also holds the installation key, so restoring it on a new
+  install brings back connected accounts and saved logins, not just the data.
+- Nightly (and "Back up now") copies land in the folder; the newest few nightly
+  files are kept.
+- To restore after losing the container and its volumes: start a new container
+  with the same folder. The first setup screen lists the backups it finds
+  ("Restore it instead"); choose one and type the password. A restore that
+  carries the installation key replaces the new install's key (`josi-keyswap`)
+  and restarts the web and worker services.
 
 ## Upgrading, or starting again with other options
 
