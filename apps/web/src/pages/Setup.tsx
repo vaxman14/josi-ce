@@ -90,6 +90,8 @@ interface SetupState {
   providerCatalog: ProviderCatalogEntry[];
   /** The address chosen in the Linux installer, to prefill the Address step. */
   installerAddress?: InstallerAddress | null;
+  /** A model server found on this machine, to prefill the model step. */
+  localModel?: { baseUrl: string; model: string } | null;
   /** The Linux server's own PC service, when it is installed. */
   localPc?: LocalPc | null;
 }
@@ -214,7 +216,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-4 text-sm text-muted-foreground">
             {revisingStep.summary} Saving this replaces what is stored and tests it again.
           </p>
-          <StepForm step={revisingStep.id} busy={busy} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress} localPc={state.localPc}
+          <StepForm step={revisingStep.id} busy={busy} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress} localModel={state.localModel} localPc={state.localPc}
                     smtpInitial={review?.summary?.smtp?.find((profile) => profile.kind === 'system')}
                     onSubmit={submit} />
           <div className="mt-3">
@@ -228,7 +230,7 @@ export function Setup({ onDone }: { onDone: () => void }) {
           <p className="mb-1 text-xs text-muted-foreground">Step {position} of {state.steps.length}</p>
           <CardTitle>{current.title}</CardTitle>
           <p className="mb-4 text-sm text-muted-foreground">{current.summary}</p>
-          <StepForm step={current.id} busy={busy} ownerExists={state.ownerExists} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress} localPc={state.localPc} onSubmit={submit} />
+          <StepForm step={current.id} busy={busy} ownerExists={state.ownerExists} catalog={state.providerCatalog ?? []} installerAddress={state.installerAddress} localModel={state.localModel} localPc={state.localPc} onSubmit={submit} />
         </Card>
       ) : (
         <Card>
@@ -279,11 +281,12 @@ export function Setup({ onDone }: { onDone: () => void }) {
 }
 
 function StepForm({
-  step, busy, catalog, smtpInitial, onSubmit, ownerExists = false, installerAddress, localPc,
+  step, busy, catalog, smtpInitial, onSubmit, ownerExists = false, installerAddress, localPc, localModel,
 }: {
   step: string; busy: boolean; catalog: ProviderCatalogEntry[];
   installerAddress?: InstallerAddress | null;
   localPc?: LocalPc | null;
+  localModel?: { baseUrl: string; model: string } | null;
   ownerExists?: boolean;
   smtpInitial?: {
     host: string | null; port: number | null; security: string | null; username: string | null;
@@ -386,7 +389,7 @@ function StepForm({
       );
 
     case 'llm':
-      return <LlmStep busy={busy} catalog={catalog} onSubmit={onSubmit} />;
+      return <LlmStep busy={busy} catalog={catalog} onSubmit={onSubmit} suggested={localModel} />;
 
     case 'smtp':
       return (
@@ -781,15 +784,17 @@ function EmailStep({
  * endpoints. The form itself lives in components/ProviderForm.tsx so the admin
  * Model page offers exactly the same choices after installation. */
 function LlmStep({
-  busy, catalog, onSubmit,
+  busy, catalog, onSubmit, suggested,
 }: {
   busy: boolean; catalog: ProviderCatalogEntry[];
   onSubmit: (step: string, body: Record<string, unknown>) => Promise<void>;
+  suggested?: { baseUrl: string; model: string } | null;
 }) {
   return (
     <ProviderForm
       busy={busy}
       catalog={catalog}
+      suggested={suggested}
       paths={{
         models: '/setup/models',
         codexBase: '/setup/subscription',

@@ -56,7 +56,8 @@ try {
         || (saved.addressMode === 'lan' ? url.protocol !== 'http:' : url.protocol !== 'https:')
         || (saved.email !== null && (typeof saved.email !== 'string' || saved.email.length > 254
           || !/^[^\s@]+@[^\s@]+$/.test(saved.email)))) throw Error('Invalid /etc/josi/install.json');
-      address = { addressMode: saved.addressMode, appUrl: saved.appUrl, email: saved.email };
+      address = { addressMode: saved.addressMode, appUrl: saved.appUrl, email: saved.email,
+        openSetup: saved.openSetup === true && saved.addressMode === 'lan' };
     }
   }
 
@@ -85,6 +86,8 @@ try {
     LD_LIBRARY_PATH: join(PROGRAM, 'postgresql/lib'),
     APP_URL: address.appUrl, JOSI_ACCESS_MODE: address.addressMode,
     ...(address.email ? { JOSI_ACME_EMAIL: address.email } : {}),
+    // Lets the first visitor on the LAN start setup without the one-use link (setupGate.ts).
+    ...(address.openSetup ? { JOSI_OPEN_SETUP: '1' } : {}),
     // The PC control spool, shared with josi-pc.service (group josi-pc).
     ...(role === 'web' ? { JOSI_PC_SPOOL: join(data, 'pc-spool') } : {}),
     WEB_DIR: join(PROGRAM, 'app/apps/web/dist'),

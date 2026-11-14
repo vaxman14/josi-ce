@@ -12,6 +12,8 @@
 #                      setup link then use it, and JOSI_HOST_ADDRESS is not used.
 #   JOSI_PC_CONTROL    1 (default) or 0: let Josi control the container as user josi
 #   JOSI_BROWSER       1 (default) or 0: Josi's own browser on a hidden screen
+#   JOSI_OPEN_SETUP    1 (default) or 0: the first visitor on the LAN starts setup without the one-use
+#                      link (lan address only; a published https address always needs the link)
 set -uo pipefail
 # `docker logs` shows the console, and a container has one only when it was
 # started with a terminal (docker run -t, or `tty: true` in Compose). Without
@@ -23,7 +25,7 @@ if [ -c /dev/console ]; then exec > >(tee /dev/console) 2>&1; fi
 # systemd does not pass `docker run -e` on to its services; the container's
 # first process (PID 1) still holds them.
 while IFS= read -r -d '' pair; do
-  case $pair in JOSI_HOST_ADDRESS=* | JOSI_HOST_PORT=* | JOSI_PUBLIC_URL=* | JOSI_PC_CONTROL=* | JOSI_BROWSER=* | JOSI_TESTER_TOKEN=* | JOSI_DOCKER_VERSION=* | JOSI_REPORT_URL=*) export "$pair" ;; esac
+  case $pair in JOSI_HOST_ADDRESS=* | JOSI_HOST_PORT=* | JOSI_PUBLIC_URL=* | JOSI_PC_CONTROL=* | JOSI_BROWSER=* | JOSI_TESTER_TOKEN=* | JOSI_DOCKER_VERSION=* | JOSI_REPORT_URL=* | JOSI_OPEN_SETUP=*) export "$pair" ;; esac
 done < /proc/1/environ
 
 # A beta tester's token, for crash reports (see docs/CRASH_REPORTS.md). The token is the only
@@ -53,6 +55,9 @@ if [ -n "$public" ]; then
 else
   args=(--address-mode lan --lan-address "$address" --port 8080)
   open="http://${address}:${port}"
+  # Nobody sees this console on Unraid or in a Docker GUI, so the first person to open the page on the
+  # LAN starts setup by themselves. JOSI_OPEN_SETUP=0 keeps the one-use link instead.
+  if [ "${JOSI_OPEN_SETUP:-1}" = 1 ]; then args+=(--open-setup); else args+=(--no-open-setup); fi
 fi
 if [ "${JOSI_PC_CONTROL:-1}" = 1 ]; then
   args+=(--pc-control-user josi)

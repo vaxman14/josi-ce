@@ -18,7 +18,7 @@
 import type { NextFunction, Request, Response } from 'express';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { getSetupState, type Db } from '@josi-ce/core';
-import { cookieSecureFor, readCookie } from './cookies.js';
+import { clientIp, cookieSecureFor, readCookie } from './cookies.js';
 import type { CookieSecurePolicy } from './cookies.js';
 import { HANDOFF_TTL, SETUP_SESSION_COOKIE, SETUP_SESSION_TTL, SetupHandoffs } from './setupHandoffs.js';
 
@@ -45,8 +45,31 @@ function isSetupPath(path: string): boolean {
   return SETUP_EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
 }
 
-export function setupGate(db: Db, setupTokenSha256?: string | null, cookieSecure: CookieSecurePolicy = false) {
+/** Headers a tunnel or an outside proxy adds. A request carrying one did not come straight from the LAN. */
+const OUTSIDE_PROXY_HEADERS = ['cf-connecting-ip', 'cf-ray', 'forwarded', 'x-real-ip', 'true-client-ip'];
+
+/** A client on this machine or on a private network: loopback, 10/8, 172.16/12, 192.168/16, link-local, or an IPv6 unique-local address. */
+export function isPrivateClient(ip: string | null): boolean {
+  if (!ip) return false;
+  if (ip === '::1' || /^f[cd][0-9a-f]{2}:/i.test(ip) || /^fe80:/i.test(ip)) return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(ip);
+  if (!m) return false;
+  const a = Number(m[1]), b = Number(m[2]);
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+}
+
+export interface SetupGateOptions {
+  /** The first person to open an unconfigured, LAN-only install may start its setup without the setup link. Off unless the installer says so (the Docker image does). */
+  openSetup?: boolean;
+}
+
+export function setupGate(db: Db, setupTokenSha256?: string | null, cookieSecure: CookieSecurePolicy = false, options: SetupGateOptions = {}) {
   const handoffs = new SetupHandoffs();
+  // Only an unconfigured install with the switch on, and only for a client
+  // that is itself on the LAN and did not come through a tunnel or proxy.
+  const openAllowed = (req: Request) => options.openSetup === true
+    && isPrivateClient(clientIp(req))
+    && !OUTSIDE_PROXY_HEADERS.some((h) => req.headers[h] !== undefined);
   const expected = setupTokenSha256
     ? Buffer.from(setupTokenSha256, 'hex')
     : null;
@@ -70,12 +93,22 @@ export function setupGate(db: Db, setupTokenSha256?: string | null, cookieSecure
       createHash('sha256').update(req.get('x-josi-setup-token') ?? '').digest(), expected);
 
     if (req.path === '/onboarding/state' && req.method === 'GET' && expected) {
-      res.set('Cache-Control', 'no-store').json({ completed }); return;
+      res.set('Cache-Control', 'no-store').json({ completed, ...(!completed && openAllowed(req) ? { openSetup: true } : {}) }); return;
     }
-    if (req.path === '/onboarding/launch' || req.path === '/onboarding/consume') {
+    if (req.path === '/onboarding/launch' || req.path === '/onboarding/consume' || req.path === '/onboarding/claim') {
       res.set('Cache-Control', 'no-store');
       if (completed || !expected || req.method !== 'POST') {
         res.status(404).json({ error: 'not found' }); return;
+      }
+      if (req.path === '/onboarding/claim') {
+        // Same result as opening the one-use setup link, without needing it.
+        if (!openAllowed(req)) { res.status(404).json({ error: 'not found' }); return; }
+        let session: string | null = null;
+        try { session = handoffs.consume(handoffs.issue()); } catch { /* too many pending */ }
+        if (!session) { res.status(429).json({ error: 'too many setup sessions; retry shortly' }); return; }
+        res.cookie(SETUP_SESSION_COOKIE, session, { httpOnly: true, secure: cookieSecureFor(req, cookieSecure),
+          sameSite: 'strict', path: '/api/setup', maxAge: SETUP_SESSION_TTL });
+        res.status(204).end(); return;
       }
       if (req.path === '/onboarding/launch') {
         if (!rootAuthorized()) { res.status(404).json({ error: 'not found' }); return; }

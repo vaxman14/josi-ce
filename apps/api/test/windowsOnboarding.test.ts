@@ -76,4 +76,41 @@ describe('Windows private browser handoff', () => {
     expect((await fetch(base+'/setup/state', {headers:{cookie:cookie.split(';')[0]}})).status).toBe(404);
     expect(await (await fetch(base+'/onboarding/state')).json()).toEqual({completed:true});
   });
+  it('lets a LAN client start the first setup without the link only when the install allows it, and never through a tunnel', async () => {
+    db = await testDb(); const root = 'a'.repeat(64);
+    const start = async (openSetup: boolean) => {
+      const app = express(); app.use(express.json()); app.use(requireCsrf);
+      app.use(setupGate(db!, createHash('sha256').update(root).digest('hex'), false, { openSetup }));
+      app.get('/setup/state', (_req, res) => res.json({ ok: true }));
+      server = app.listen(0, '127.0.0.1'); await new Promise<void>((resolve) => server!.once('listening', resolve));
+      return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    };
+    const post = (base: string, path: string, headers: Record<string,string> = {}) => fetch(base+path, {method:'POST',
+      headers:{'Content-Type':'application/json',cookie:'josi_csrf=fixture','x-josi-csrf':'fixture',...headers}, body:'{}'});
+    // Off by default: no claim, and the state does not offer one.
+    let base = await start(false);
+    expect((await post(base, '/onboarding/claim')).status).toBe(404);
+    expect(await (await fetch(base+'/onboarding/state')).json()).toEqual({completed:false});
+    await new Promise<void>((resolve) => server!.close(() => resolve()));
+    // On: a loopback or private client claims, and the cookie opens the setup routes.
+    base = await start(true);
+    expect(await (await fetch(base+'/onboarding/state')).json()).toEqual({completed:false, openSetup:true});
+    const claim = await post(base, '/onboarding/claim');
+    expect(claim.status).toBe(204);
+    const cookie = claim.headers.get('set-cookie')!;
+    expect(cookie).toContain('HttpOnly'); expect(cookie).toContain('SameSite=Strict'); expect(cookie).toContain('Path=/api/setup');
+    expect((await fetch(base+'/setup/state')).status).toBe(404);
+    expect((await fetch(base+'/setup/state', {headers:{cookie:cookie.split(';')[0]}})).status).toBe(200);
+    // A request that came through a tunnel, or from a public address, is refused.
+    expect((await post(base, '/onboarding/claim', {'cf-connecting-ip':'203.0.113.9'})).status).toBe(404);
+    expect(await (await fetch(base+'/onboarding/state', {headers:{'cf-ray':'abc'}})).json()).toEqual({completed:false});
+    // Once setup is done there is nothing to claim.
+    await db.query('update setup_state set completed=true where id=true');
+    expect((await post(base, '/onboarding/claim')).status).toBe(404);
+  });
+  it('knows which addresses are private', async () => {
+    const { isPrivateClient } = await import('../src/http/setupGate.js');
+    for (const ip of ['127.0.0.1','10.1.2.3','172.16.0.1','172.31.255.255','192.168.1.5','169.254.1.1','::1','fd12::1','fe80::1']) expect(isPrivateClient(ip), ip).toBe(true);
+    for (const ip of ['8.8.8.8','172.32.0.1','172.15.0.1','192.169.0.1','203.0.113.9','2001:db8::1','', null, 'abc']) expect(isPrivateClient(ip as string | null), String(ip)).toBe(false);
+  });
 });

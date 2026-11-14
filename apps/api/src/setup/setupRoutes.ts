@@ -206,6 +206,20 @@ async function applyInstallerDeployment(db: Db): Promise<void> {
   );
 }
 
+/** A model server already running on this machine (the Docker image bundles Ollama), so the model step can
+ * offer it instead of an empty box. Loopback only, a short timeout, and any failure means "none". */
+export async function localModelSuggestion(fetchImpl: typeof fetch = fetch): Promise<{ baseUrl: string; model: string } | null> {
+  if (process.env.JOSI_LINUX_SERVER !== '1') return null;
+  try {
+    const res = await fetchImpl('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(800) });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { models?: Array<{ name?: unknown }> };
+    const names = (body.models ?? []).map((m) => m.name).filter((n): n is string => typeof n === 'string' && n.length > 0 && n.length < 200);
+    const name = names.find((n) => /josi/i.test(n)) ?? names[0];
+    return name ? { baseUrl: 'http://127.0.0.1:11434/v1', model: name.replace(/:latest$/, '') } : null;
+  } catch { return null; }
+}
+
 /** What the Linux installer chose, for prefilling the Address step: the
  * domain field, the HTTPS select and the certificate email. Null elsewhere. */
 async function linuxInstallerAddress(db: Db): Promise<Record<string, unknown> | null> {
@@ -308,6 +322,8 @@ export function setupRoutes(ctx: SetupRoutesCtx): Router {
         providerCatalog: providerCatalog(),
         // Linux: the address chosen in the installer, to prefill the Address step.
         installerAddress: await linuxInstallerAddress(db),
+        // A model server on this machine, to prefill the model step.
+        localModel: await localModelSuggestion(),
         // The Linux server's own PC service, so the step can pair it here.
         localPc: readLocalExecutors().map(({ pcId, user, host }) => ({ pcId, user, host }))[0] ?? null,
       });

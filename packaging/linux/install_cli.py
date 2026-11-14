@@ -15,6 +15,8 @@ The answers (the one-command installer asks for them, or passes its own flags):
     --port N                          the browser port (default 8080)
     --pc-control-user USER | --no-pc-control
     --browser | --no-browser          with PC control: Josi's own browser (default: yes)
+    --open-setup | --no-open-setup    lan only: the first visitor on the LAN may start setup without the
+                                      one-use link (default: no; the Docker image turns it on)
 
 Anything not given keeps the saved answer in /etc/josi/install.json, or the
 default. The one-command installer (`curl ... | sudo bash`) runs the first
@@ -175,6 +177,8 @@ def parse(argv):
             answers['pcControlUser'] = None; index += 1; continue
         if name in ('--browser', '--no-browser') and value is None:
             answers['browser'] = name == '--browser'; index += 1; continue
+        if name in ('--open-setup', '--no-open-setup') and value is None:
+            answers['openSetup'] = name == '--open-setup'; index += 1; continue
         if name not in FLAGS and name != '--interactive-uid':
             fail(f'unknown option {name[:40]}; see the top of {__file__}')
         if value is None:

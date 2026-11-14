@@ -46,6 +46,8 @@ VERSION_PATTERN = r'\d+\.\d+\.\d+(?:-[a-z0-9.]+)?'
 # Written by josi-ce-server-install (root), read here and by Runtime.mjs.
 SETTINGS = Path('/etc/josi/install.json')
 SETTINGS_KEYS = {'schemaVersion','addressMode','appUrl','lanAddress','domain','email','publicUrl','port','pcControlUser','browser'}
+# Keys that older files do not have, and that are only written when set.
+OPTIONAL_SETTINGS_KEYS = {'browser','openSetup'}
 # Josi's own browser (josi-browser.service): Chrome for Testing on a hidden
 # Xvfb screen, run by the launcher as the PC control account.
 BROWSER_UNIT = 'josi-browser.service'
@@ -98,6 +100,11 @@ def normalize_settings(value):
               'pcControlUser':None,'browser':False}
     browser = value.get('browser', False)
     if not isinstance(browser, bool): raise ValueError('Invalid browser answer')
+    open_setup = value.get('openSetup', False)
+    if not isinstance(open_setup, bool): raise ValueError('Invalid open setup answer')
+    # The first visitor may start setup without the one-use link: plain-HTTP LAN installs only
+    # (the Docker image turns it on); never behind a tunnel or a public address.
+    if open_setup and mode == 'lan': result['openSetup'] = True
     if mode == 'lan':
         result['lanAddress'] = _host(value.get('lanAddress') or '127.0.0.1')
         result['appUrl'] = f"http://{result['lanAddress']}:{port}"
@@ -137,7 +144,7 @@ def load_settings(path=SETTINGS):
         value = json.loads(os.read(descriptor, 4097))
     finally: os.close(descriptor)
     # A file saved before the browser answer existed has no 'browser' key.
-    if not isinstance(value, dict) or set(value) not in (SETTINGS_KEYS, SETTINGS_KEYS - {'browser'}):
+    if not isinstance(value, dict) or not SETTINGS_KEYS - OPTIONAL_SETTINGS_KEYS <= set(value) <= SETTINGS_KEYS | OPTIONAL_SETTINGS_KEYS:
         raise ValueError('Invalid install settings')
     normal = normalize_settings(value)
     if normal['appUrl'] != value['appUrl']: raise ValueError('Invalid install settings address')

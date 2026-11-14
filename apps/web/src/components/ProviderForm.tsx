@@ -152,10 +152,12 @@ export interface ProviderFormProps {
   onSubmit: (body: Record<string, unknown>) => Promise<void>;
   submitLabel?: string;
   onCancel?: () => void;
+  /** A model server found on this machine: fills the address and model of the "your own hardware" provider. */
+  suggested?: { baseUrl: string; model: string } | null;
 }
 
 export function ProviderForm({
-  busy, compact = false, catalog, paths, loadSubscriptionInfo, onSubmit, submitLabel, initialProvider, onCancel,
+  busy, compact = false, catalog, paths, loadSubscriptionInfo, onSubmit, submitLabel, initialProvider, onCancel, suggested,
 }: ProviderFormProps) {
   const [provider, setProvider] = useState(initialProvider ?? 'openai_compatible');
   /** Every credential field the chosen provider takes, keyed by the catalogue's
@@ -212,6 +214,14 @@ export function ProviderForm({
     setModels(null); setDiscovery(null); setChosen(''); setManualModel(''); setLooking(false);
   }, [provider, values, baseUrl]);
   useEffect(() => { if (initialProvider) setProvider(initialProvider); }, [initialProvider]);
+
+  // Declared after the effects above so these win when all of them run in one commit.
+  useEffect(() => {
+    if (suggested && provider === 'openai_compatible') setBaseUrl(suggested.baseUrl);
+  }, [suggested, provider]);
+  useEffect(() => {
+    if (suggested && provider === 'openai_compatible' && baseUrl === suggested.baseUrl) setManualModel(suggested.model);
+  }, [suggested, provider, baseUrl]);
 
   const setField = (key: string, value: string) => setValues((v) => ({ ...v, [key]: value }));
 

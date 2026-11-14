@@ -153,6 +153,8 @@ export interface AppConfig {
   outboundResolve?: (hostname: string) => Promise<string[]>;
   /** Hash of the browser installer's one-time first-admin handoff token. */
   setupTokenSha256?: string | null;
+  /** JOSI_OPEN_SETUP: a LAN client may start the first setup without the setup link (see setupGate). */
+  openSetup?: boolean;
   /** The relay, LAN path and hosted account link. Absent = those routes answer 404. */
   relay?: RelayService;
 }
@@ -219,7 +221,7 @@ export function createApp(db: Db, cfg: AppConfig): Express {
   api.use(requireCsrf);
   // Before the routes, after CSRF: an unconfigured installation refuses
   // everything except the wizard, and a configured one refuses the wizard.
-  api.use(setupGate(db, cfg.setupTokenSha256, cfg.cookieSecure));
+  api.use(setupGate(db, cfg.setupTokenSha256, cfg.cookieSecure, { openSetup: cfg.openSetup === true }));
   const voice = cfg.voiceBoxHelper ?? voiceHelper(process.env.JOSI_VOICE_HELPER_SOCKET);
   const voiceBox = voiceBoxRoutes(voice);
   api.use('/admin/voice-box', voiceBox.admin);

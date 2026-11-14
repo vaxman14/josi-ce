@@ -95,6 +95,7 @@ const app = createApp(db, {
   // M115: no gateway ships. An operator who wants one sets it.
   supportGatewayUrl: process.env.JOSI_SUPPORT_GATEWAY || null,
   setupTokenSha256: process.env.JOSI_SETUP_TOKEN_SHA256 || null,
+  openSetup: process.env.JOSI_OPEN_SETUP === '1',
 });
 
 // The native proxy is the only public listener. Container network isolation

@@ -133,6 +133,16 @@ class LinuxLifecycleTests(unittest.TestCase):
         self.assertEqual(lifecycle.normalize_settings({'addressMode':'proxy','publicUrl':'https://josi.example.com:8443'})['appUrl'],'https://josi.example.com:8443')
         self.assertEqual(lifecycle.normalize_settings({})['appUrl'],'http://127.0.0.1:8080')
         self.assertEqual(set(lan),lifecycle.SETTINGS_KEYS)
+    def test_open_setup_is_off_unless_asked_and_only_for_a_lan_address(self):
+        self.assertNotIn('openSetup',lifecycle.normalize_settings({'addressMode':'lan','lanAddress':'192.168.50.20'}))
+        self.assertIs(lifecycle.normalize_settings({'addressMode':'lan','lanAddress':'192.168.50.20','openSetup':True})['openSetup'],True)
+        for mode,extra in (('proxy',{'publicUrl':'https://josi.example.com'}),('domain',{'domain':'josi.example.com'})):
+            self.assertNotIn('openSetup',lifecycle.normalize_settings({'addressMode':mode,'openSetup':True,**extra}))
+        with self.assertRaises(ValueError):lifecycle.normalize_settings({'addressMode':'lan','openSetup':'yes'})
+        path=self.root/'install-open.json'
+        saved=lifecycle.normalize_settings({'addressMode':'lan','lanAddress':'192.168.50.20','openSetup':True})
+        path.write_text(json.dumps(saved));os.chmod(path,0o644)
+        self.assertEqual(lifecycle.load_settings(path),saved)
     def test_settings_refuse_unsafe_values(self):
         for value in ({'addressMode':'cloud'},{'port':80},{'port':True},{'port':'8080'},
                       {'addressMode':'domain','domain':'10.0.0.5'},{'addressMode':'domain','domain':'josi.example.com\n admin on'},

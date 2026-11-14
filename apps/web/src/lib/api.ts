@@ -22,7 +22,7 @@ let csrfPriming: Promise<void> | null = null;
 
 export function consumeSetupHandoff(): Promise<void> {
   if (!handoffConsumption) handoffConsumption = (async () => {
-    if (!launchToken) return;
+    if (!launchToken) { await claimOpenSetup(); return; }
     const token = launchToken; launchToken = null;
     sessionStorage.removeItem(SETUP_HANDOFF_KEY);
     await primeCsrf();
@@ -31,6 +31,19 @@ export function consumeSetupHandoff(): Promise<void> {
     if (!res.ok) throw new ApiError(res.status, res.status === 410 ? 'This setup link expired or was already used. Reopen Josi, or on a Linux server run the install command again, for a fresh link.' : 'This setup link could not be used. Reopen Josi to resume setup safely.');
   })();
   return handoffConsumption;
+}
+
+/** A fresh install that allows it (the Docker image, for a client on the LAN) lets the first visitor start
+ * setup without the one-use link: the server says so in /onboarding/state, and this asks for the setup
+ * session. Any failure is silent; the page then behaves as it always did. */
+async function claimOpenSetup(): Promise<void> {
+  try {
+    const state = await fetch('/api/onboarding/state', { credentials: 'same-origin', cache: 'no-store' });
+    if (!state.ok || (await state.json().catch(() => null))?.openSetup !== true) return;
+    await primeCsrf();
+    await fetch('/api/onboarding/claim', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', 'x-josi-csrf': csrfToken() ?? '' }, body: '{}' });
+  } catch { /* the normal sign-in or setup link still works */ }
 }
 
 function setupHandoffToken(): string | null {
